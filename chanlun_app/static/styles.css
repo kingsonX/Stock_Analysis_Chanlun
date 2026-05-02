@@ -1,0 +1,407 @@
+:root {
+  color-scheme: light;
+  --bg: #f5f7f8;
+  --surface: #ffffff;
+  --ink: #20272d;
+  --muted: #68737d;
+  --line: #dce2e6;
+  --accent: #256f92;
+  --accent-strong: #174f69;
+  --buy: #14845f;
+  --sell: #c24136;
+  --warn: #a86f00;
+  --center: rgba(168, 111, 0, 0.12);
+  --shadow: 0 12px 36px rgba(34, 44, 52, 0.08);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+.shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  gap: 16px;
+  min-height: 100vh;
+  padding: 16px;
+}
+
+.workspace,
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
+}
+
+.workspace {
+  display: grid;
+  grid-template-rows: auto auto auto minmax(420px, 1fr);
+  min-width: 0;
+}
+
+.topbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 380px);
+  gap: 16px;
+  align-items: end;
+  padding: 20px;
+  border-bottom: 1px solid var(--line);
+}
+
+h1,
+h2,
+p {
+  margin: 0;
+}
+
+h1 {
+  font-size: 24px;
+  line-height: 1.25;
+  letter-spacing: 0;
+}
+
+h2 {
+  font-size: 15px;
+  line-height: 1.3;
+}
+
+.topbar p {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.searchBox {
+  position: relative;
+  display: grid;
+  gap: 6px;
+}
+
+label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+input {
+  width: 100%;
+  height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0 10px;
+  color: var(--ink);
+  background: #fff;
+}
+
+input:focus {
+  outline: 2px solid rgba(37, 111, 146, 0.2);
+  border-color: var(--accent);
+}
+
+.suggestions {
+  position: absolute;
+  z-index: 5;
+  top: 66px;
+  left: 0;
+  right: 0;
+  max-height: 280px;
+  overflow: auto;
+  background: #fff;
+  border: 1px solid var(--line);
+  box-shadow: 0 14px 32px rgba(32, 39, 45, 0.14);
+}
+
+.suggestions button {
+  display: grid;
+  grid-template-columns: 86px minmax(0, 1fr);
+  width: 100%;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: #fff;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.suggestions button:hover {
+  background: #eef6f9;
+}
+
+.suggestions small {
+  display: block;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: end;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--line);
+}
+
+.segmented {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.segmented button,
+#refreshBtn {
+  height: 38px;
+  border: 0;
+  background: #fff;
+  color: var(--ink);
+  padding: 0 14px;
+  cursor: pointer;
+}
+
+.segmented button + button {
+  border-left: 1px solid var(--line);
+}
+
+.segmented button.active,
+#refreshBtn {
+  background: var(--accent);
+  color: #fff;
+}
+
+#refreshBtn:hover,
+.segmented button.active:hover {
+  background: var(--accent-strong);
+}
+
+.errorBox {
+  margin: 14px 20px 0;
+  border: 1px solid rgba(194, 65, 54, 0.28);
+  background: rgba(194, 65, 54, 0.08);
+  color: #8f2e26;
+  padding: 10px 12px;
+  border-radius: 6px;
+  font-size: 14px;
+}
+
+.chartArea {
+  position: relative;
+  min-height: 420px;
+  padding: 12px 12px 16px;
+}
+
+#chartCanvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: 420px;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+#chartCanvas.dragging {
+  cursor: grabbing;
+}
+
+.tooltip {
+  position: absolute;
+  min-width: 180px;
+  pointer-events: none;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 12px 28px rgba(32, 39, 45, 0.16);
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.sidePanel {
+  display: grid;
+  gap: 16px;
+  align-content: start;
+}
+
+.panel {
+  padding: 16px;
+}
+
+.panel h2 {
+  margin-bottom: 12px;
+}
+
+.empty {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.signalCard {
+  border-left: 4px solid var(--accent);
+  padding: 10px 12px;
+  background: #f8fafb;
+  margin-bottom: 10px;
+}
+
+.signalCard.buy {
+  border-left-color: var(--buy);
+}
+
+.signalCard.sell {
+  border-left-color: var(--sell);
+}
+
+.signalCard strong {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 14px;
+}
+
+.signalCard p {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.divergenceCard {
+  border-left: 4px solid var(--accent);
+  background: #f8fafb;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+
+.divergenceCard.buy {
+  border-left-color: var(--buy);
+}
+
+.divergenceCard.sell {
+  border-left-color: var(--sell);
+}
+
+.divergenceCard strong {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.divergenceCard p {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: normal;
+}
+
+.divergenceCard small {
+  display: block;
+  margin-top: 6px;
+  color: var(--warn);
+  font-size: 12px;
+}
+
+.stats {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px 12px;
+  margin: 0;
+  font-size: 13px;
+}
+
+.stats dt {
+  color: var(--muted);
+}
+
+.stats dd {
+  margin: 0;
+  font-weight: 650;
+}
+
+.tableWrap {
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+th,
+td {
+  padding: 8px 6px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  white-space: nowrap;
+}
+
+th {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.side-buy {
+  color: var(--buy);
+}
+
+.side-sell {
+  color: var(--sell);
+}
+
+@media (max-width: 980px) {
+  .shell {
+    grid-template-columns: 1fr;
+  }
+
+  .topbar {
+    grid-template-columns: 1fr;
+  }
+
+  .sidePanel {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .shell {
+    padding: 8px;
+  }
+
+  .workspace {
+    grid-template-rows: auto auto auto 460px;
+  }
+
+  .topbar,
+  .controls {
+    padding: 14px;
+  }
+
+  .sidePanel {
+    grid-template-columns: 1fr;
+  }
+
+  .segmented {
+    width: 100%;
+  }
+
+  .segmented button {
+    flex: 1;
+  }
+}
