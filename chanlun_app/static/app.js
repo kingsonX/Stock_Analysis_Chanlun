@@ -306,12 +306,7 @@ function drawGrid(ctx, rect, plot, range, klines, x, showDates = true) {
   ctx.textAlign = "center";
   ctx.textBaseline = "top";
   if (!showDates) return;
-  const steps = Math.min(6, klines.length);
-  for (let i = 0; i < steps; i += 1) {
-    const idx = Math.floor((klines.length - 1) * (i / Math.max(steps - 1, 1)));
-    const bar = klines[idx];
-    ctx.fillText(formatDate(bar.date), x(bar.index), plot.top + plot.height + 10);
-  }
+  drawDateTicks(ctx, klines, x, plot);
 }
 
 function chartPlots(rect) {
@@ -444,14 +439,23 @@ function drawMacd(ctx, rect, plot, macdRows, divergences, x, candleW) {
   ctx.fillStyle = "#a86f00";
   ctx.fillText("DEA", plot.left + 78, plot.top + 6);
 
+  drawDateTicks(ctx, macdRows, x, plot);
+}
+
+function drawDateTicks(ctx, rows, x, plot) {
+  if (!rows.length) return;
+  ctx.fillStyle = "#68737d";
+  ctx.font = "12px sans-serif";
   ctx.textAlign = "center";
   ctx.textBaseline = "top";
-  const steps = Math.min(6, macdRows.length);
+  const steps = Math.min(6, rows.length);
   for (let i = 0; i < steps; i += 1) {
-    const idx = Math.floor((macdRows.length - 1) * (i / Math.max(steps - 1, 1)));
-    const item = macdRows[idx];
-    ctx.fillStyle = "#68737d";
-    ctx.fillText(formatDate(item.date), x(item.index), plot.top + plot.height + 10);
+    const idx = Math.floor((rows.length - 1) * (i / Math.max(steps - 1, 1)));
+    const item = rows[idx];
+    const label = formatDate(item.date);
+    const halfWidth = ctx.measureText(label).width / 2;
+    const px = clamp(x(item.index), plot.left + halfWidth + 2, plot.left + plot.width - halfWidth - 2);
+    ctx.fillText(label, px, plot.top + plot.height + 10);
   }
 }
 
@@ -684,6 +688,11 @@ function priceRange(klines, centers, bbiRows = []) {
   return { high: high + padding, low: low - padding };
 }
 
+function clamp(value, min, max) {
+  if (max < min) return min;
+  return Math.max(min, Math.min(value, max));
+}
+
 function resetChartView() {
   const total = state.analysis?.klines?.length || 0;
   state.visibleCount = Math.min(total || defaultVisibleCount(), defaultVisibleCount());
@@ -752,6 +761,85 @@ function indexFromPointer(event) {
   const ratio = Math.max(0, Math.min(0.999999, relative / plotWidth));
   const view = visibleWindow();
   return Math.max(0, Math.min(analysis.klines.length - 1, view.start + Math.floor(ratio * view.count)));
+}
+
+function chartRegionFromPointer(event) {
+  const rect = els.canvas.getBoundingClientRect();
+  const plots = chartPlots(rect);
+  const y = event.clientY - rect.top;
+  if (y >= plots.main.top && y <= plots.main.top + plots.main.height) return "main";
+  if (y >= plots.macd.top && y <= plots.macd.top + plots.macd.height) return "macd";
+  return "gap";
+}
+
+function positionTooltip(event, width = 220) {
+  const rect = els.canvas.getBoundingClientRect();
+  els.tooltip.style.left = `${clamp(event.clientX - rect.left + 12, 8, rect.width - width)}px`;
+  els.tooltip.style.top = `${clamp(event.clientY - rect.top - 20, 12, rect.height - 130)}px`;
+}
+
+function showMainTooltip(event, analysis, idx) {
+  const bar = analysis.klines[idx];
+  const macd = analysis.indicators?.macd?.[idx];
+  const bbi = analysis.indicators?.bbi?.[idx];
+  const divergences = (analysis.divergences || []).filter((item) => divergenceIndex(item) === idx);
+  const divergenceText = divergences.length
+    ? `<br>${divergences.map((item) => `${divergenceLabel(item)}：${item.reason}`).join("<br>")}`
+    : "";
+
+  els.tooltip.hidden = false;
+  positionTooltip(event, 220);
+  els.tooltip.innerHTML = `
+    <strong>${formatDate(bar.date)}</strong><br>
+    开 ${formatPrice(bar.open)} 高 ${formatPrice(bar.high)}<br>
+    低 ${formatPrice(bar.low)} 收 ${formatPrice(bar.close)}<br>
+    BBI ${bbi?.value !== null && bbi?.value !== undefined ? formatPrice(bbi.value) : "-"}<br>
+    量 ${Math.round(bar.vol).toLocaleString()}<br>
+    MACD ${macd ? formatMacd(macd.hist) : "-"} · DIF ${macd ? formatMacd(macd.dif) : "-"} · DEA ${macd ? formatMacd(macd.dea) : "-"}${divergenceText}
+  `;
+}
+
+function showMacdTooltip(event, analysis) {
+  const divergence = divergenceFromMacdPointer(event, analysis);
+  if (!divergence) {
+    els.tooltip.hidden = true;
+    return;
+  }
+  const idx = divergenceIndex(divergence);
+  const macd = analysis.indicators?.macd?.[idx];
+
+  els.tooltip.hidden = false;
+  positionTooltip(event, 220);
+  els.tooltip.innerHTML = `
+    <strong>${divergenceLabel(divergence)} · ${formatDate(divergence.date)}</strong><br>
+    ${divergence.reason}<br>
+    MACD ${macd ? formatMacd(macd.hist) : "-"} · DIF ${macd ? formatMacd(macd.dif) : "-"} · DEA ${macd ? formatMacd(macd.dea) : "-"}
+  `;
+}
+
+function divergenceFromMacdPointer(event, analysis) {
+  const rect = els.canvas.getBoundingClientRect();
+  const plots = chartPlots(rect);
+  const xPos = event.clientX - rect.left;
+  const yPos = event.clientY - rect.top;
+  if (yPos < plots.macd.top || yPos > plots.macd.top + plots.macd.height) return null;
+
+  const view = visibleWindow();
+  const x = (idx) => plots.macd.left + ((idx - view.start + 0.5) / view.count) * plots.macd.width;
+  const hitRadius = Math.max(8, plots.macd.width / view.count);
+  let best = null;
+  let bestDistance = Number.POSITIVE_INFINITY;
+
+  for (const item of analysis.divergences || []) {
+    const idx = divergenceIndex(item);
+    if (idx < view.start || idx >= view.end) continue;
+    const distance = Math.abs(x(idx) - xPos);
+    if (distance <= hitRadius && distance < bestDistance) {
+      best = item;
+      bestDistance = distance;
+    }
+  }
+  return best;
 }
 
 function panByPixels(deltaX) {
@@ -861,28 +949,17 @@ function bindEvents() {
       return;
     }
 
-    const rect = els.canvas.getBoundingClientRect();
     const idx = indexFromPointer(event);
     if (idx === null) return;
     state.hoverIndex = idx;
-    const bar = analysis.klines[idx];
-    const macd = analysis.indicators?.macd?.[idx];
-    const bbi = analysis.indicators?.bbi?.[idx];
-    const divergences = (analysis.divergences || []).filter((item) => divergenceIndex(item) === idx);
-    const divergenceText = divergences.length
-      ? `<br>${divergences.map((item) => `${divergenceLabel(item)}：${item.reason}`).join("<br>")}`
-      : "";
-    els.tooltip.hidden = false;
-    els.tooltip.style.left = `${Math.min(event.clientX - rect.left + 12, rect.width - 200)}px`;
-    els.tooltip.style.top = `${Math.max(event.clientY - rect.top - 20, 12)}px`;
-    els.tooltip.innerHTML = `
-      <strong>${formatDate(bar.date)}</strong><br>
-      开 ${formatPrice(bar.open)} 高 ${formatPrice(bar.high)}<br>
-      低 ${formatPrice(bar.low)} 收 ${formatPrice(bar.close)}<br>
-      BBI ${bbi?.value !== null && bbi?.value !== undefined ? formatPrice(bbi.value) : "-"}<br>
-      量 ${Math.round(bar.vol).toLocaleString()}<br>
-      MACD ${macd ? formatMacd(macd.hist) : "-"} · DIF ${macd ? formatMacd(macd.dif) : "-"} · DEA ${macd ? formatMacd(macd.dea) : "-"}${divergenceText}
-    `;
+    const region = chartRegionFromPointer(event);
+    if (region === "main") {
+      showMainTooltip(event, analysis, idx);
+    } else if (region === "macd") {
+      showMacdTooltip(event, analysis);
+    } else {
+      els.tooltip.hidden = true;
+    }
     renderChart();
   });
 
