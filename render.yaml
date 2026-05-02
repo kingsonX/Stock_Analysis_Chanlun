@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: stock-analysis-chanlun
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn run:app --bind 0.0.0.0:$PORT
+    healthCheckPath: /
+    autoDeployTrigger: commit
+    envVars:
+      - key: TUSHARE_TOKEN
+        sync: false
+      - key: PYTHON_VERSION
+        value: "3.14.3"
+      - key: FLASK_DEBUG
+        value: "0"
