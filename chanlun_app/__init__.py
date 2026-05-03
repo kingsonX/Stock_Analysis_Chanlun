@@ -5,9 +5,15 @@ from typing import Any
 from .chanlun import analyze_klines
 from .config import LEVELS, default_date_range, normalize_yyyymmdd
 from .data_provider import DataProviderError, TushareClient
+from .mx_provider import MXDataProvider, MXProviderError
+from .trading_profile import TradingProfileService
 
 
-def create_app(data_client: TushareClient | None = None):
+def create_app(
+    data_client: TushareClient | None = None,
+    mx_client: MXDataProvider | None = None,
+    profile_client: TradingProfileService | None = None,
+):
     from pathlib import Path
 
     from flask import Flask, jsonify, render_template, request
@@ -16,6 +22,8 @@ def create_app(data_client: TushareClient | None = None):
     app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
     app.config["TEMPLATES_AUTO_RELOAD"] = True
     client = data_client or TushareClient()
+    mx_provider = mx_client or MXDataProvider()
+    trading_profile = profile_client or TradingProfileService(mx_data_provider=mx_provider)
 
     def json_error(message: str, status_code: int):
         return jsonify({"error": {"message": message, "status_code": status_code}}), status_code
@@ -83,6 +91,31 @@ def create_app(data_client: TushareClient | None = None):
             }
             return jsonify(result)
         except DataProviderError as exc:
+            return json_error(exc.message, exc.status_code)
+
+    @app.get("/api/mx/summary")
+    def mx_summary():
+        ts_code = (request.args.get("ts_code") or "").strip()
+        name = (request.args.get("name") or "").strip()
+        if not ts_code and not name:
+            return json_error("请输入股票名称或代码。", 400)
+
+        try:
+            return jsonify(mx_provider.summary(ts_code=ts_code, name=name))
+        except MXProviderError as exc:
+            return json_error(exc.message, exc.status_code)
+
+    @app.post("/api/trading-profile")
+    def profile_summary():
+        payload = request.get_json(silent=True) or {}
+        stock = payload.get("stock") or {}
+        analysis = payload.get("analysis") or {}
+        if not stock:
+            return json_error("缺少股票信息，无法生成交易画像。", 400)
+
+        try:
+            return jsonify(trading_profile.build(stock=stock, analysis=analysis))
+        except MXProviderError as exc:
             return json_error(exc.message, exc.status_code)
 
     @app.errorhandler(404)

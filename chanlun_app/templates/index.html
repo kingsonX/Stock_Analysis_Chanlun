@@ -69,6 +69,7 @@
       <aside class="sidePanel">
         <nav id="sideTabs" class="sideTabs" aria-label="右侧信息切换">
           <button type="button" class="active" data-side-panel="levelPanel">联动</button>
+          <button type="button" data-side-panel="dataPanel">数据</button>
           <button type="button" data-side-panel="trendPanel">走势</button>
           <button type="button" data-side-panel="riskPanel">风控</button>
           <button type="button" data-side-panel="reviewPanel">复盘</button>
@@ -78,6 +79,10 @@
         <section id="levelPanel" class="panel sidePane active">
           <h2>级别联动</h2>
           <div id="levelContext" class="empty">暂无级别结构</div>
+        </section>
+        <section id="dataPanel" class="panel sidePane">
+          <h2>妙想数据</h2>
+          <div id="mxDataBox" class="empty">分析完成后加载行情、资金、估值、财务和公司资料。</div>
         </section>
         <section id="trendPanel" class="panel sidePane">
           <h2>走势类型</h2>

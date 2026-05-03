@@ -15,6 +15,7 @@
 - 图表支持横向拖动、鼠标滚轮缩放、历史回放、图层开关、悬浮查看 K 线和指标。
 - API 返回多级别联动摘要、线段、走势类型、中枢生命周期、买卖点状态和背驰证据。
 - API 返回信号复盘统计和失效价风险卡，用于训练和复盘，不用于自动交易。
+- 可选接入东方财富妙想 `mx-data`，在后端汇总行情、资金、估值、财务和公司资料，作为缠论之外的辅助信息。
 
 ## 运行与验证
 
@@ -29,6 +30,7 @@ python3 -m venv --system-site-packages .venv
 环境变量：
 
 - `TUSHARE_TOKEN` 必须通过环境变量或本地 `.env` 提供。
+- `MX_APIKEY` 可选；配置后右侧“数据”页会加载妙想金融数据增强卡片。
 - `.env` 已在 `.gitignore` 中，绝不要提交真实 token。
 - `.env.example` 只保留占位符。
 - `PORT` 默认 `5000`，`FLASK_DEBUG=1` 才开启 debug。
@@ -52,9 +54,11 @@ http://127.0.0.1:5000
 ## 代码结构
 
 - `run.py` / `chanlun_app/__main__.py`：启动 Flask 应用，读取 `PORT` 和 `FLASK_DEBUG`。
-- `chanlun_app/__init__.py`：Flask app factory，定义 `/`、`/api/stocks/search`、`/api/analysis`。静态资源用文件 mtime 加版本参数，避免浏览器缓存旧 JS/CSS。
+- `chanlun_app/__init__.py`：Flask app factory，定义 `/`、`/api/stocks/search`、`/api/analysis`、`/api/mx/summary`。静态资源用文件 mtime 加版本参数，避免浏览器缓存旧 JS/CSS。
 - `chanlun_app/config.py`：项目路径、缓存路径、周期配置和日期规范化。
 - `chanlun_app/data_provider.py`：Tushare 数据层，负责 token 读取、股票列表缓存、股票搜索、K 线获取和错误封装。
+- `chanlun_app/mx_provider.py`：东方财富妙想数据层，负责读取 `MX_APIKEY`、请求 `mx-data` 接口、宽容解析表格并隐藏密钥。
+- `chanlun_app/trading_profile.py`：综合交易画像服务，负责调用 `mx-data`、`mx-search`、`mx-xuangu`，并把缠论结构、情绪、容量和风险合成为统一结论卡。
 - `chanlun_app/chanlun.py`：缠论核心算法和指标计算。
 - `chanlun_app/templates/index.html`：单页工作台结构。
 - `chanlun_app/static/app.js`：前端状态管理、API 调用、Canvas 绘图、拖动缩放、tooltip。
@@ -89,6 +93,18 @@ http://127.0.0.1:5000
   - `level_context`：当前级别与上级别的结构摘要；分钟线包含月线/周线/日线，日线包含月线/周线，周线包含月线。
   - `backtest`：买卖点出现后固定窗口的顺向/逆向空间复盘统计。
   - `risk_cards`：最近买卖点的失效价、风险比例和纪律说明。
+
+`GET /api/mx/summary?ts_code=&name=`
+
+- 后端使用 `MX_APIKEY` 调用东方财富妙想金融数据，不把密钥返回给浏览器。
+- 返回 `cards`，固定包含行情、资金、估值、财务、公司五类卡片。
+- 单个卡片失败时只标记该卡片 `status=error`，不影响其它卡片，也不影响主图缠论分析。
+
+`POST /api/trading-profile`
+
+- 请求体包含 `stock` 与当前 `/api/analysis` 返回的 `analysis`，服务端不重复请求 Tushare。
+- 返回 `profile`：综合交易画像结论卡，含 `结构/情绪与主流/容量与资金/风险边界` 四个维度。
+- 同时返回 `mx_summary`、`news`、`market_scan` 作为证据层数据；任一外部源失败时允许部分降级。
 
 错误统一返回：
 
@@ -146,6 +162,8 @@ http://127.0.0.1:5000
 - 线段用更粗的虚线叠加在笔之上，帮助区分笔级噪音和更大一级推进。
 - 侧栏显示级别联动、走势类型、中枢生命周期和风险纪律；不常驻展示信号摘要或背驰候选。
 - 侧栏显示风险纪律卡和信号复盘统计；这些是后验训练辅助，不是交易指令。
+- 侧栏“数据”页异步显示 `mx-data` 增强信息；加载失败时只显示卡片错误，不阻塞主图。
+- 侧栏“数据”页顶部优先显示综合交易画像卡，再显示市场扫描、资讯催化和原始妙想表格卡片。
 - MACD 附图显示红绿柱、DIF、DEA，并标注 `趋势背驰/盘整背驰/线段背驰`。
 - tooltip 在普通 K 线悬停时显示 OHLC、成交量、BBI、MACD/DIF/DEA；悬停买卖点标记时显示该信号摘要；悬停 MACD 背驰标记时显示背驰理由和证据。
 
@@ -160,7 +178,9 @@ node --check chanlun_app/static/app.js
 ## 开发注意事项
 
 - 不要把 Tushare token 写进代码、README、AGENTS 或测试。
+- 不要把 `MX_APIKEY` 写进代码、README、AGENTS 或测试；只写 `.env` 或部署平台环境变量。
 - 不要依赖真实 Tushare 做单元测试；API 测试使用 fake client。
+- 不要依赖真实 `mx-data` 做单元测试；用 fake provider 或解析样例测试。
 - 真实接口测试可以用 `curl http://127.0.0.1:5000/...`，但不要把敏感配置输出到文档。
 - 改后端 Python 代码后需要重启正在运行的 Flask 进程；当前默认 `FLASK_DEBUG=0`，没有自动 reload。
 - 页面如果看不到最新 JS/CSS，确认访问的是 `http://127.0.0.1:5000`，并检查首页资源是否带 `?v=` 参数。

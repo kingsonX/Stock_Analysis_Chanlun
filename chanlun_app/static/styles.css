@@ -308,7 +308,7 @@ input:focus {
 
 .sideTabs {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 6px;
   padding: 6px;
   background: var(--surface);
@@ -511,6 +511,232 @@ input:focus {
 
 .tableWrap {
   overflow-x: auto;
+}
+
+.mxStack {
+  display: grid;
+  gap: 10px;
+}
+
+.profileCard {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  background: linear-gradient(180deg, #f9fcfd 0%, #f3f7f9 100%);
+}
+
+.profileCard.stance-positive {
+  border-left: 5px solid var(--buy);
+}
+
+.profileCard.stance-neutral {
+  border-left: 5px solid var(--accent);
+}
+
+.profileCard.stance-caution {
+  border-left: 5px solid var(--sell);
+}
+
+.profileHero {
+  display: grid;
+  gap: 10px;
+}
+
+.profileEyebrow {
+  display: inline-block;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.profileHero h3 {
+  margin: 4px 0 0;
+  font-size: 20px;
+  line-height: 1.2;
+}
+
+.profileTags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.profileTags span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: rgba(37, 111, 146, 0.1);
+  color: var(--accent-strong);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.profileHeadline,
+.profileConclusion {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.profileConclusion {
+  color: var(--muted);
+}
+
+.profileGrid {
+  display: grid;
+  gap: 10px;
+}
+
+.profileBlock {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.profileBlock strong {
+  font-size: 12px;
+}
+
+.profileBlock p,
+.profileBlock small {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.profileBlock p {
+  color: var(--ink);
+}
+
+.profileBlock small {
+  color: var(--muted);
+}
+
+.mxCard {
+  display: grid;
+  gap: 8px;
+  border-left: 4px solid var(--accent);
+  background: #f8fafb;
+  padding: 10px 12px;
+}
+
+.mxCard.status-error {
+  border-left-color: var(--sell);
+}
+
+.mxCard.status-empty {
+  border-left-color: var(--warn);
+}
+
+.mxCard.loading {
+  border-left-color: var(--line);
+}
+
+.mxCardHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.mxCardHeader small {
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.mxCardTitle,
+.mxEntity,
+.mxCardMessage {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.mxEntity {
+  color: var(--warn);
+}
+
+.mxTableWrap {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.scanGrid,
+.newsList {
+  display: grid;
+  gap: 8px;
+}
+
+.scanCard {
+  display: grid;
+  gap: 4px;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  background: #fff;
+}
+
+.scanCard strong,
+.newsItem strong {
+  font-size: 12px;
+}
+
+.scanCard span,
+.scanCard small,
+.newsItem span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.scanCard p,
+.newsItem p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink);
+}
+
+.newsItem {
+  display: grid;
+  gap: 4px;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  background: #fff;
+}
+
+.mxTable th,
+.mxTable td {
+  max-width: 132px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mxError {
+  border-left: 4px solid var(--sell);
+  background: rgba(194, 65, 54, 0.08);
+  padding: 10px 12px;
+  color: #8f2e26;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.mxSkeleton {
+  height: 12px;
+  border-radius: 4px;
+  background: linear-gradient(90deg, #e9eef2, #f8fafb, #e9eef2);
+}
+
+.mxSkeleton.short {
+  width: 62%;
 }
 
 table {

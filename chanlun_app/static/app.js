@@ -2,6 +2,8 @@ const state = {
   selectedStock: null,
   level: "daily",
   analysis: null,
+  mxSummary: null,
+  mxRequestId: 0,
   hoverIndex: null,
   viewStart: 0,
   visibleCount: 120,
@@ -37,6 +39,7 @@ const els = {
   backtestBox: document.querySelector("#backtestBox"),
   metaStats: document.querySelector("#metaStats"),
   centerList: document.querySelector("#centerList"),
+  mxDataBox: document.querySelector("#mxDataBox"),
 };
 
 let searchTimer = null;
@@ -105,6 +108,8 @@ async function loadAnalysis() {
   if (els.endDate.value) params.set("end_date", els.endDate.value);
 
   setLoading(true);
+  state.mxRequestId += 1;
+  state.mxSummary = null;
   try {
     const data = await fetchJson(`/api/analysis?${params.toString()}`);
     state.analysis = data;
@@ -114,6 +119,7 @@ async function loadAnalysis() {
     els.statusText.textContent = `${data.stock.name} ${data.stock.ts_code} · ${levelLabel(state.level)} · ${formatDate(data.query.start_date)} 至 ${formatDate(data.query.end_date)}`;
     hideError();
     renderAll();
+    loadMxSummary(data.stock);
   } catch (err) {
     showError(err.message);
   } finally {
@@ -121,13 +127,37 @@ async function loadAnalysis() {
   }
 }
 
-async function fetchJson(url) {
-  const response = await fetch(url);
+async function fetchJson(url, options = {}) {
+  const response = await fetch(url, options);
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     throw new Error(data.error?.message || `请求失败：${response.status}`);
   }
   return data;
+}
+
+async function loadMxSummary(stock) {
+  if (!stock) return;
+  const requestId = ++state.mxRequestId;
+  state.mxSummary = { status: "loading" };
+  renderMxData();
+
+  try {
+    const data = await fetchJson("/api/trading-profile", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        stock,
+        analysis: state.analysis,
+      }),
+    });
+    if (requestId !== state.mxRequestId) return;
+    state.mxSummary = { status: "ok", data };
+  } catch (err) {
+    if (requestId !== state.mxRequestId) return;
+    state.mxSummary = { status: "error", message: err.message };
+  }
+  renderMxData();
 }
 
 function setLoading(isLoading) {
@@ -154,6 +184,7 @@ function renderAll() {
   renderBacktest();
   renderStats();
   renderCenters();
+  renderMxData();
 }
 
 function renderLevelContext() {
@@ -335,6 +366,202 @@ function renderCenters() {
           .join("")}
       </tbody>
     </table>
+  `;
+}
+
+function renderMxData() {
+  if (!els.mxDataBox) return;
+  const summary = state.mxSummary;
+  if (!state.analysis) {
+    els.mxDataBox.className = "empty";
+    els.mxDataBox.textContent = "分析完成后加载行情、资金、估值、财务和公司资料。";
+    return;
+  }
+
+  if (!summary || summary.status === "loading") {
+    els.mxDataBox.className = "mxStack";
+    els.mxDataBox.innerHTML = ["综合画像", "市场扫描", "资讯催化", "行情", "资金", "估值"]
+      .map(
+        (label) => `
+          <article class="mxCard loading">
+            <div class="mxCardHeader">
+              <strong>${label}</strong>
+              <small>加载中</small>
+            </div>
+            <div class="mxSkeleton"></div>
+            <div class="mxSkeleton short"></div>
+          </article>
+        `
+      )
+      .join("");
+    return;
+  }
+
+  if (summary.status === "error") {
+    els.mxDataBox.className = "mxError";
+    els.mxDataBox.textContent = summary.message || "妙想数据加载失败。";
+    return;
+  }
+
+  els.mxDataBox.className = "mxStack";
+  els.mxDataBox.innerHTML = [
+    renderProfileCard(summary.data?.profile),
+    renderMarketScan(summary.data?.market_scan),
+    renderNewsDigest(summary.data?.news),
+    ...((summary.data?.mx_summary?.data?.cards || []).map(renderMxCard)),
+  ]
+    .filter(Boolean)
+    .join("");
+}
+
+function renderMxCard(card) {
+  const statusText = card.status === "ok" ? "已更新" : card.status === "empty" ? "无数据" : "失败";
+  const body = card.status === "ok" ? renderMxTable(card) : `<p class="mxCardMessage">${escapeHtml(card.error || "暂无有效数据。")}</p>`;
+  const title = card.title || card.query_text || card.label;
+  const entity = (card.entities || [])
+    .map((item) => `${item.name || ""}${item.code ? ` ${item.code}` : ""}`.trim())
+    .filter(Boolean)
+    .slice(0, 2)
+    .join(" · ");
+
+  return `
+    <article class="mxCard status-${escapeHtml(card.status || "empty")}">
+      <div class="mxCardHeader">
+        <strong>${escapeHtml(card.label || "数据")}</strong>
+        <small>${escapeHtml(statusText)}</small>
+      </div>
+      <p class="mxCardTitle">${escapeHtml(title)}</p>
+      ${entity ? `<p class="mxEntity">${escapeHtml(entity)}</p>` : ""}
+      ${body}
+    </article>
+  `;
+}
+
+function renderProfileCard(profile) {
+  if (!profile) return "";
+  const sections = [profile.structure, profile.emotion, profile.capacity, profile.risk]
+    .filter(Boolean)
+    .map(
+      (item) => `
+        <div class="profileBlock">
+          <strong>${escapeHtml(item.title || "")}</strong>
+          <p>${escapeHtml(item.summary || "")}</p>
+          <small>${escapeHtml(item.detail || "")}</small>
+        </div>
+      `
+    )
+    .join("");
+
+  return `
+    <article class="profileCard stance-${escapeHtml(profile.stance || "neutral")}">
+      <div class="profileHero">
+        <div>
+          <span class="profileEyebrow">综合交易画像</span>
+          <h3>${escapeHtml(profile.stance_label || "先观察")}</h3>
+        </div>
+        <div class="profileTags">
+          ${(profile.tags || []).slice(0, 4).map((tag) => `<span>${escapeHtml(tag)}</span>`).join("")}
+        </div>
+      </div>
+      <p class="profileHeadline">${escapeHtml(profile.headline || "")}</p>
+      <p class="profileConclusion">${escapeHtml(profile.conclusion || "")}</p>
+      <div class="profileGrid">${sections}</div>
+    </article>
+  `;
+}
+
+function renderMarketScan(scan) {
+  if (!scan) return "";
+  if (scan.status === "error") {
+    return `<article class="mxCard status-error"><div class="mxCardHeader"><strong>市场扫描</strong><small>失败</small></div><p class="mxCardMessage">${escapeHtml(scan.message || "市场扫描加载失败。")}</p></article>`;
+  }
+
+  const cards = scan.cards || [];
+  const body = cards.length
+    ? cards
+        .map(
+          (card) => `
+            <div class="scanCard ${escapeHtml(card.status || "empty")}">
+              <strong>${escapeHtml(card.label || "扫描")}</strong>
+              <span>${card.status === "ok" ? `${escapeHtml(String(card.total || 0))} 只` : escapeHtml(card.status === "empty" ? "无结果" : "失败")}</span>
+              <p>${escapeHtml(card.description || card.query_text || card.error || "")}</p>
+              ${card.hit_current_stock ? `<small>当前股票出现在该扫描结果中</small>` : ""}
+            </div>
+          `
+        )
+        .join("")
+    : `<p class="mxCardMessage">暂无市场扫描结果。</p>`;
+
+  return `
+    <article class="mxCard status-ok">
+      <div class="mxCardHeader">
+        <strong>市场扫描</strong>
+        <small>${escapeHtml(scan.industry || "全市场")}</small>
+      </div>
+      <div class="scanGrid">${body}</div>
+    </article>
+  `;
+}
+
+function renderNewsDigest(news) {
+  if (!news) return "";
+  if (news.status === "error") {
+    return `<article class="mxCard status-error"><div class="mxCardHeader"><strong>资讯催化</strong><small>失败</small></div><p class="mxCardMessage">${escapeHtml(news.message || "资讯加载失败。")}</p></article>`;
+  }
+
+  const items = news.items || [];
+  return `
+    <article class="mxCard status-${items.length ? "ok" : "empty"}">
+      <div class="mxCardHeader">
+        <strong>资讯催化</strong>
+        <small>${items.length ? `最近 ${items.length} 条` : "暂无"}</small>
+      </div>
+      ${
+        items.length
+          ? `<div class="newsList">
+              ${items
+                .map(
+                  (item) => `
+                    <article class="newsItem">
+                      <strong>${escapeHtml(item.title || "")}</strong>
+                      <span>${escapeHtml([item.type, formatDate(item.date), item.source].filter(Boolean).join(" · "))}</span>
+                      <p>${escapeHtml(item.summary || "")}</p>
+                    </article>
+                  `
+                )
+                .join("")}
+            </div>`
+          : `<p class="mxCardMessage">未检索到近期公告、研报或机构观点。</p>`
+      }
+    </article>
+  `;
+}
+
+function renderMxTable(card) {
+  const columns = (card.columns || []).slice(0, 5);
+  const rows = (card.rows || []).slice(0, 6);
+  if (!columns.length || !rows.length) {
+    return `<p class="mxCardMessage">MX 返回为空表。</p>`;
+  }
+  return `
+    <div class="mxTableWrap">
+      <table class="mxTable">
+        <thead>
+          <tr>${columns.map((column) => `<th>${escapeHtml(column)}</th>`).join("")}</tr>
+        </thead>
+        <tbody>
+          ${rows
+            .map(
+              (row) => `
+                <tr>
+                  ${columns.map((column) => `<td>${escapeHtml(row[column] ?? "")}</td>`).join("")}
+                </tr>
+              `
+            )
+            .join("")}
+        </tbody>
+      </table>
+    </div>
   `;
 }
 
@@ -1141,6 +1368,15 @@ function zeroLabel(position) {
   if (position === "below") return "零轴下";
   if (position === "crossing") return "穿越零轴";
   return "-";
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 function formatDate(value) {
