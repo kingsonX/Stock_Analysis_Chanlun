@@ -42,6 +42,9 @@ def sample_klines():
 
 
 class FakeClient:
+    def __init__(self):
+        self.calls = []
+
     def search_stocks(self, query, limit=20):
         if query in {"平安", "000001", "平安银行"}:
             return [
@@ -72,6 +75,7 @@ class FakeClient:
             "start_date": start_date,
             "end_date": end_date,
         }
+        self.calls.append(self.last_call)
         return sample_klines()
 
 
@@ -99,8 +103,23 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(data["query"]["level"], "weekly")
         self.assertEqual(self.fake.last_call["start_date"], "20240101")
         self.assertIn("strokes", data)
+        self.assertIn("segments", data)
+        self.assertIn("trend", data)
+        self.assertIn("level_context", data)
+        self.assertEqual([item["level"] for item in data["level_context"]["items"]], ["monthly", "weekly"])
         self.assertEqual(len(data["indicators"]["macd"]), len(data["klines"]))
         self.assertEqual(len(data["indicators"]["bbi"]), len(data["klines"]))
+
+    def test_analysis_maps_intraday_context(self):
+        response = self.app.get(
+            "/api/analysis?ts_code=000001&level=min60&start_date=2024-01-01&end_date=2024-02-01"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertEqual(data["query"]["level"], "min60")
+        self.assertEqual([item["level"] for item in data["level_context"]["items"]], ["monthly", "weekly", "daily", "min60"])
+        self.assertEqual(self.fake.last_call["level"], "min60")
 
     def test_analysis_rejects_bad_level(self):
         response = self.app.get("/api/analysis?ts_code=000001&level=yearly")

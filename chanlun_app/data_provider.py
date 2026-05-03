@@ -152,10 +152,14 @@ class TushareClient:
         end_date: str,
     ) -> list[dict[str, Any]]:
         if level not in LEVELS:
-            raise DataProviderError("level 只支持 daily、weekly、monthly。", 400)
+            raise DataProviderError(f"level 只支持 {_supported_levels_text()}。", 400)
 
+        config = LEVELS[level]
         pro = self._client()
-        api_name = LEVELS[level]["api"]
+        if config.get("intraday"):
+            return self._get_intraday_klines(pro, ts_code, level, start_date, end_date)
+
+        api_name = config["api"]
         fields = "ts_code,trade_date,open,high,low,close,vol,amount"
         try:
             df = getattr(pro, api_name)(
@@ -170,23 +174,31 @@ class TushareClient:
         if df is None or df.empty:
             raise DataProviderError("没有获取到 K 线数据，请检查股票代码、日期范围或 Tushare 权限。", 404)
 
-        df = df.fillna(0).sort_values("trade_date").reset_index(drop=True)
-        rows: list[dict[str, Any]] = []
-        for idx, row in df.iterrows():
-            rows.append(
-                {
-                    "index": int(idx),
-                    "ts_code": str(row["ts_code"]),
-                    "date": str(row["trade_date"]),
-                    "open": float(row["open"]),
-                    "high": float(row["high"]),
-                    "low": float(row["low"]),
-                    "close": float(row["close"]),
-                    "vol": float(row.get("vol", 0)),
-                    "amount": float(row.get("amount", 0)),
-                }
+        return _standardize_kline_rows(df, ts_code, "trade_date")
+
+    def _get_intraday_klines(
+        self,
+        pro: Any,
+        ts_code: str,
+        level: str,
+        start_date: str,
+        end_date: str,
+    ) -> list[dict[str, Any]]:
+        freq = LEVELS[level]["freq"]
+        try:
+            df = pro.stk_mins(
+                ts_code=ts_code,
+                freq=freq,
+                start_date=_minute_datetime(start_date, is_end=False),
+                end_date=_minute_datetime(end_date, is_end=True),
             )
-        return rows
+        except Exception as exc:
+            raise DataProviderError(f"Tushare 分钟K线数据获取失败：{exc}", 502) from exc
+
+        if df is None or df.empty:
+            raise DataProviderError("没有获取到分钟 K 线数据，请检查股票代码、日期范围或 Tushare 分钟权限。", 404)
+
+        return _standardize_kline_rows(df, ts_code, "trade_time")
 
     @staticmethod
     def _stock_kwargs(row: Any) -> dict[str, str]:
@@ -202,6 +214,56 @@ class TushareClient:
             "list_date": str(getter("list_date", "")),
             "cnspell": str(getter("cnspell", "")),
         }
+
+
+def _standardize_kline_rows(df: pd.DataFrame, ts_code: str, date_column: str) -> list[dict[str, Any]]:
+    if date_column not in df.columns:
+        raise DataProviderError(f"Tushare 返回数据缺少 {date_column} 字段。", 502)
+
+    df = df.fillna(0).sort_values(date_column).reset_index(drop=True)
+    missing_columns = [column for column in ("open", "high", "low", "close") if column not in df.columns]
+    if missing_columns:
+        raise DataProviderError(f"Tushare 返回数据缺少字段：{', '.join(missing_columns)}。", 502)
+
+    ts_codes = df["ts_code"] if "ts_code" in df.columns else pd.Series([ts_code] * len(df))
+    vol = df["vol"] if "vol" in df.columns else pd.Series([0] * len(df))
+    amount = df["amount"] if "amount" in df.columns else pd.Series([0] * len(df))
+
+    rows: list[dict[str, Any]] = []
+    for idx, row in df.iterrows():
+        rows.append(
+            {
+                "index": int(idx),
+                "ts_code": str(ts_codes.iloc[idx] or ts_code),
+                "date": _compact_datetime(row[date_column]) if date_column == "trade_time" else str(row[date_column]),
+                "open": float(row["open"]),
+                "high": float(row["high"]),
+                "low": float(row["low"]),
+                "close": float(row["close"]),
+                "vol": float(vol.iloc[idx] or 0),
+                "amount": float(amount.iloc[idx] or 0),
+            }
+        )
+    return rows
+
+
+def _compact_datetime(value: Any) -> str:
+    text = str(value).strip()
+    digits = "".join(ch for ch in text if ch.isdigit())
+    if len(digits) >= 12:
+        return digits[:12]
+    if len(digits) >= 8:
+        return digits[:8]
+    return text
+
+
+def _minute_datetime(value: str, is_end: bool) -> str:
+    day = f"{value[:4]}-{value[4:6]}-{value[6:8]}"
+    return f"{day} {'23:59:59' if is_end else '00:00:00'}"
+
+
+def _supported_levels_text() -> str:
+    return "、".join(LEVELS)
 
 
 def _env_value(name: str) -> str | None:

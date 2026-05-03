@@ -6,7 +6,9 @@ from chanlun_app.chanlun import (
     Fractal,
     MergedBar,
     Stroke,
+    analyze_klines,
     build_centers,
+    build_segments,
     build_strokes,
     detect_divergences,
     detect_signals,
@@ -77,6 +79,12 @@ def stroke(idx, direction, start_price, end_price, low, high, strength=0.1):
         price_change=end_price - start_price,
         price_strength=strength,
         momentum_strength=0,
+        macd_red_area=0,
+        macd_green_area=0,
+        macd_dif_end=0,
+        macd_dea_end=0,
+        macd_hist_end=0,
+        macd_zero_position="crossing",
     )
 
 
@@ -134,6 +142,22 @@ class ChanlunEngineTest(unittest.TestCase):
         self.assertEqual(len(centers), 1)
         self.assertEqual(centers[0].low, 9)
         self.assertEqual(centers[0].high, 12)
+        self.assertEqual(centers[0].status, "forming")
+
+    def test_build_segments_groups_three_strokes(self):
+        strokes = [
+            stroke(0, "up", 8, 12, 8, 12),
+            stroke(1, "down", 12, 9, 9, 12),
+            stroke(2, "up", 9, 13, 9, 13),
+            stroke(3, "down", 13, 10, 10, 13),
+            stroke(4, "up", 10, 14, 10, 14),
+        ]
+
+        segments = build_segments(strokes)
+
+        self.assertEqual(len(segments), 2)
+        self.assertEqual(segments[0].stroke_ids, ["b1", "b2", "b3"])
+        self.assertEqual(segments[-1].status, "active")
 
     def test_detect_divergence_and_first_signal(self):
         strokes = [
@@ -147,8 +171,45 @@ class ChanlunEngineTest(unittest.TestCase):
 
         self.assertEqual(len(divergences), 1)
         self.assertEqual(divergences[0].side, "sell")
+        self.assertEqual(divergences[0].evidence["previous_stroke_id"], "b1")
+        self.assertEqual(divergences[0].evidence["current_stroke_id"], "b3")
+        self.assertIn("previous_macd_red_area", divergences[0].evidence)
+        self.assertIn("current_macd_green_area", divergences[0].evidence)
+        self.assertIn("previous_dif_end", divergences[0].evidence)
+        self.assertIn("current_dea_end", divergences[0].evidence)
+        self.assertIn("current_zero_position", divergences[0].evidence)
         self.assertEqual(len(signals), 1)
         self.assertEqual(signals[0].type, "一类卖点")
+        self.assertEqual(signals[0].status, "candidate")
+        self.assertGreater(signals[0].invalidation_price, 0)
+
+    def test_analyze_returns_trend_and_signal_state_fields(self):
+        klines = [
+            {"index": item.index, "date": item.date, "open": item.open, "high": item.high, "low": item.low, "close": item.close}
+            for item in [
+                raw(0, 10, 8, close=9),
+                raw(1, 12, 10, close=11),
+                raw(2, 9, 7, close=8),
+                raw(3, 13, 11, close=12),
+                raw(4, 8, 6, close=7),
+                raw(5, 14, 12, close=13),
+                raw(6, 7, 5, close=6),
+                raw(7, 15, 13, close=14),
+                raw(8, 8, 6, close=7),
+                raw(9, 16, 14, close=15),
+                raw(10, 9, 7, close=8),
+                raw(11, 17, 15, close=16),
+            ]
+        ]
+
+        result = analyze_klines(klines, "daily")
+
+        self.assertIn("segments", result)
+        self.assertIn("trend", result)
+        self.assertIn("backtest", result)
+        self.assertIn("risk_cards", result)
+        self.assertIn("position_label", result["trend"])
+        self.assertIn("summary", result["backtest"])
 
 
 if __name__ == "__main__":

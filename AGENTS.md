@@ -8,11 +8,13 @@
 
 核心能力：
 
-- 支持 A 股个股 `daily`、`weekly`、`monthly` 三个级别。
-- Tushare 接口使用 `stock_basic`、`daily`、`weekly`、`monthly`。
+- 支持 A 股个股 `min30`、`min60`、`daily`、`weekly`、`monthly` 五个级别。
+- Tushare 接口使用 `stock_basic`、`daily`、`weekly`、`monthly`、`stk_mins`。
 - 主图绘制 K 线、分型、笔、中枢、买卖点、BBI。
 - 附图绘制 MACD，并标注趋势背驰、盘整背驰、线段内背驰。
-- 图表支持横向拖动、鼠标滚轮缩放、悬浮查看 K 线和指标。
+- 图表支持横向拖动、鼠标滚轮缩放、历史回放、图层开关、悬浮查看 K 线和指标。
+- API 返回多级别联动摘要、线段、走势类型、中枢生命周期、买卖点状态和背驰证据。
+- API 返回信号复盘统计和失效价风险卡，用于训练和复盘，不用于自动交易。
 
 ## 运行与验证
 
@@ -71,17 +73,22 @@ http://127.0.0.1:5000
 - 按 `symbol`、`ts_code`、`name`、`cnspell` 做精确和模糊匹配。
 - 返回 `items`，每项包含 `ts_code/symbol/name/area/industry/market/exchange/list_date/cnspell`。
 
-`GET /api/analysis?ts_code=&level=daily|weekly|monthly&start_date=&end_date=`
+`GET /api/analysis?ts_code=&level=min30|min60|daily|weekly|monthly&start_date=&end_date=`
 
 - `ts_code` 参数也可传股票名称或代码，后端会解析为 Tushare `ts_code`。
 - 日期可传 `YYYY-MM-DD` 或 `YYYYMMDD`。
 - 返回主要字段：
   - `stock`：股票信息。
   - `query`：实际查询周期和日期。
-  - `klines`：升序 K 线，字段为 `index/date/open/high/low/close/vol/amount`。
+  - `klines`：升序 K 线，字段为 `index/date/open/high/low/close/vol/amount`；分钟线 `date` 为 `YYYYMMDDHHMM`。
   - `indicators.macd`：`index/date/dif/dea/hist`。
   - `indicators.bbi`：`index/date/value`；前 23 根因 MA24 不足为 `null`。
   - `merged_klines/fractals/strokes/centers/divergences/signals`：缠论结构。
+  - `segments`：由笔组合出的线段第一版近似结构。
+  - `trend`：当前级别走势类型、方向、最后中枢位次和说明。
+  - `level_context`：当前级别与上级别的结构摘要；分钟线包含月线/周线/日线，日线包含月线/周线，周线包含月线。
+  - `backtest`：买卖点出现后固定窗口的顺向/逆向空间复盘统计。
+  - `risk_cards`：最近买卖点的失效价、风险比例和纪律说明。
 
 错误统一返回：
 
@@ -100,20 +107,24 @@ http://127.0.0.1:5000
 3. 识别顶/底分型，并压缩连续同类分型，只保留更极端者。
 4. 成笔规则：顶底分型交替，且跨度至少 `MIN_RAW_BARS_PER_STROKE = 5` 根原始 K 线。
 5. 中枢：连续三笔价格区间存在重叠时生成，记录上下沿、起止笔和方向。
-6. 背驰：
+6. 线段：第一版按三笔一组、前后衔接生成，用于显示更高一层推进结构；不是完整特征序列线段。
+7. 中枢生命周期：按后续笔是否延伸、离开、回抽回中枢，标记 `新生/延伸中/离开中/离开确认/扩张或升级观察`。
+8. 背驰：
    - 趋势背驰：两个以上同向中枢后，最后中枢离开段与进入段同向比较，价格继续创新高/新低但综合力度低于前段 `88%`。
    - 盘整背驰：盘整/单中枢中，离开段与进入段同向比较，价格继续创新高/新低但力度减弱。
    - 线段内背驰：同方向后一笔与前一同向笔比较，价格创新高/新低但力度减弱。
-7. 买卖点：
+9. 买卖点：
    - 一类买卖点来自背驰候选。
    - 二类买卖点来自一类点后的回踩/反弹确认。
    - 三类买卖点来自离开中枢后的回踩/反抽不回中枢。
+   - 每个信号都有 `candidate/confirmed/invalid` 状态、失效价和观察说明。
 
 力度计算：
 
 - 每笔 `price_strength = abs(price_change) / start_price`。
 - 每笔 `momentum_strength = 当前笔区间内 MACD hist 绝对值求和`。
 - 综合力度为 `price_strength + momentum_strength * 0.01`。
+- 背驰证据同时拆分 `MACD` 红柱面积、绿柱面积、`DIF`、`DEA`、柱端值和零轴位置，前端逐项展示。
 
 指标：
 
@@ -129,10 +140,14 @@ http://127.0.0.1:5000
 - Canvas 分为主图和 MACD 附图。
 - 主图默认显示最近一段 K 线，不把全量数据压缩到一屏。
 - 拖动 Canvas 横向浏览历史，滚轮缩放可见 K 线数量。
+- 回放模式下，图表和右侧中枢/背驰/风险列表只显示回放游标之前已经出现的结构。
 - 中国市场颜色：上涨 K 线和上涨笔为红色，下跌 K 线和下跌笔为绿色。
 - 主图叠加 BBI 紫色线、分型三角、笔、中枢矩形、`买1/买2/买3/卖1/卖2/卖3`。
+- 线段用更粗的虚线叠加在笔之上，帮助区分笔级噪音和更大一级推进。
+- 侧栏显示级别联动、走势类型、中枢生命周期和风险纪律；不常驻展示信号摘要或背驰候选。
+- 侧栏显示风险纪律卡和信号复盘统计；这些是后验训练辅助，不是交易指令。
 - MACD 附图显示红绿柱、DIF、DEA，并标注 `趋势背驰/盘整背驰/线段背驰`。
-- tooltip 显示 OHLC、成交量、BBI、MACD/DIF/DEA 和背驰理由。
+- tooltip 在普通 K 线悬停时显示 OHLC、成交量、BBI、MACD/DIF/DEA；悬停买卖点标记时显示该信号摘要；悬停 MACD 背驰标记时显示背驰理由和证据。
 
 修改前端后至少运行：
 

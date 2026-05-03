@@ -5,6 +5,10 @@ const state = {
   hoverIndex: null,
   viewStart: 0,
   visibleCount: 120,
+  showStrokes: true,
+  showSegments: true,
+  replayEnabled: false,
+  replayIndex: 0,
   isDragging: false,
   dragStartX: 0,
   dragStartViewStart: 0,
@@ -17,19 +21,29 @@ const els = {
   levelTabs: document.querySelector("#levelTabs"),
   startDate: document.querySelector("#startDate"),
   endDate: document.querySelector("#endDate"),
+  showStrokes: document.querySelector("#showStrokes"),
+  showSegments: document.querySelector("#showSegments"),
+  replayToggle: document.querySelector("#replayToggle"),
+  replaySlider: document.querySelector("#replaySlider"),
+  replayLabel: document.querySelector("#replayLabel"),
   refreshBtn: document.querySelector("#refreshBtn"),
   errorBox: document.querySelector("#errorBox"),
   canvas: document.querySelector("#chartCanvas"),
   tooltip: document.querySelector("#tooltip"),
-  signalList: document.querySelector("#signalList"),
+  sideTabs: document.querySelector("#sideTabs"),
+  levelContext: document.querySelector("#levelContext"),
+  structureDetail: document.querySelector("#structureDetail"),
+  riskList: document.querySelector("#riskList"),
+  backtestBox: document.querySelector("#backtestBox"),
   metaStats: document.querySelector("#metaStats"),
   centerList: document.querySelector("#centerList"),
-  divergenceList: document.querySelector("#divergenceList"),
 };
 
 let searchTimer = null;
-const MIN_VISIBLE_BARS = 24;
-const MAX_VISIBLE_BARS = 220;
+let chartRenderFrame = null;
+const MIN_VISIBLE_BARS = 12;
+const MAX_VISIBLE_BARS = 420;
+const WHEEL_ZOOM_SPEED = 0.0028;
 
 function debounceSearch() {
   window.clearTimeout(searchTimer);
@@ -97,7 +111,7 @@ async function loadAnalysis() {
     state.selectedStock = data.stock;
     resetChartView();
     els.stockInput.value = `${data.stock.name} ${data.stock.symbol}`;
-    els.statusText.textContent = `${data.stock.name} ${data.stock.ts_code} · ${levelLabel(state.level)} · ${data.query.start_date} 至 ${data.query.end_date}`;
+    els.statusText.textContent = `${data.stock.name} ${data.stock.ts_code} · ${levelLabel(state.level)} · ${formatDate(data.query.start_date)} 至 ${formatDate(data.query.end_date)}`;
     hideError();
     renderAll();
   } catch (err) {
@@ -132,37 +146,148 @@ function hideError() {
 }
 
 function renderAll() {
+  updateReplayControls();
   renderChart();
-  renderSignals();
+  renderLevelContext();
+  renderStructureDetail();
+  renderRiskCards();
+  renderBacktest();
   renderStats();
   renderCenters();
-  renderDivergences();
 }
 
-function renderSignals() {
-  const signals = state.analysis?.signals || [];
-  if (!signals.length) {
-    els.signalList.className = "empty";
-    els.signalList.textContent = "当前周期暂无买卖点候选。";
+function renderLevelContext() {
+  const items = state.analysis?.level_context?.items || [];
+  if (!items.length) {
+    els.levelContext.className = "empty";
+    els.levelContext.textContent = "暂无级别结构";
     return;
   }
 
-  els.signalList.className = "";
-  els.signalList.innerHTML = signals
-    .slice(-8)
+  els.levelContext.className = "levelStack";
+  els.levelContext.innerHTML = items
+    .map((item) => {
+      if (item.status === "error") {
+        return `
+          <article class="levelCard error">
+            <strong>${item.label || item.level}</strong>
+            <p>${item.error || "级别数据获取失败"}</p>
+          </article>
+        `;
+      }
+
+      const trend = item.trend || {};
+      const signal = item.last_signal;
+      const center = item.last_center;
+      return `
+        <article class="levelCard ${item.level === state.level ? "active" : ""}">
+          <strong>
+            <span>${item.label}</span>
+            <span>${trend.label || "结构不足"}</span>
+          </strong>
+          <p>${trend.position_label || "无位次"} · ${trend.active_center_status || "无中枢"}</p>
+          <small>${center ? `${center.id} ${formatDate(center.end_date)} · ${center.status_label}` : "无中枢"}${signal ? ` · ${signalLabel(signal)} ${signal.status_label}` : ""}</small>
+        </article>
+      `;
+    })
+    .join("");
+}
+
+function renderStructureDetail() {
+  const trend = state.analysis?.trend;
+  if (!trend) {
+    els.structureDetail.className = "empty";
+    els.structureDetail.textContent = "暂无走势结构";
+    return;
+  }
+
+  const segments = replayItemsByEnd(state.analysis?.segments || [], "end_index");
+  const lastSegment = segments[segments.length - 1];
+  els.structureDetail.className = "structureBox";
+  els.structureDetail.innerHTML = `
+    <div class="structureHeadline">
+      <strong>${trend.label || "结构不足"}</strong>
+      <span>${trend.position_label || "无位次"}</span>
+    </div>
+    <p>${trend.reason || ""}</p>
+    <dl class="miniStats">
+      <dt>当前线段</dt><dd>${lastSegment ? `${lastSegment.id} · ${lastSegment.status_label}` : "无"}</dd>
+      <dt>线段方向</dt><dd>${lastSegment ? directionLabel(lastSegment.direction) : "-"}</dd>
+      <dt>中枢状态</dt><dd>${trend.active_center_status || "无中枢"}</dd>
+      <dt>最后收盘</dt><dd>${trend.last_close !== null && trend.last_close !== undefined ? formatPrice(trend.last_close) : "-"}</dd>
+    </dl>
+  `;
+}
+
+function renderRiskCards() {
+  const cards = state.analysis?.risk_cards || [];
+  const visibleSignalIds = new Set(replayFilteredSignals(state.analysis?.signals || []).map((item) => item.id));
+  const visibleCards = cards.filter((item) => !state.replayEnabled || visibleSignalIds.has(item.signal_id));
+  if (!visibleCards.length) {
+    els.riskList.className = "empty";
+    els.riskList.textContent = "暂无风险卡";
+    return;
+  }
+
+  els.riskList.className = "";
+  els.riskList.innerHTML = visibleCards
+    .slice(-6)
     .reverse()
     .map(
       (item) => `
-        <article class="signalCard ${item.side}">
+        <article class="riskCard ${item.side}">
           <strong>
-            <span class="side-${item.side}">${signalLabel(item)}</span>
-            <span>${formatDate(item.date)} · ${formatPrice(item.price)}</span>
+            <span class="side-${item.side}">${item.label}</span>
+            <span>${formatPct(item.risk_pct)}</span>
           </strong>
-          <p>${item.reason}</p>
+          <dl class="miniStats">
+            <dt>日期</dt><dd>${formatDate(item.date)}</dd>
+            <dt>价格</dt><dd>${formatPrice(item.entry_price)}</dd>
+            <dt>失效</dt><dd>${formatPrice(item.invalidation_price)}</dd>
+            <dt>状态</dt><dd>${item.status_label || "-"}</dd>
+          </dl>
+          <p>${item.discipline || ""}</p>
         </article>
       `
     )
     .join("");
+}
+
+function renderBacktest() {
+  const backtest = state.analysis?.backtest;
+  if (!backtest) {
+    els.backtestBox.className = "empty";
+    els.backtestBox.textContent = "暂无复盘统计";
+    return;
+  }
+
+  const visibleSignalIds = new Set(replayFilteredSignals(state.analysis?.signals || []).map((item) => item.id));
+  const trades = (backtest.trades || []).filter((item) => !state.replayEnabled || visibleSignalIds.has(item.signal_id));
+  const summary = summarizeTradesForReplay(backtest.summary || {}, trades);
+  els.backtestBox.className = "backtestBox";
+  els.backtestBox.innerHTML = `
+    <dl class="miniStats">
+      <dt>信号</dt><dd>${summary.signals}</dd>
+      <dt>已观察</dt><dd>${summary.observed}</dd>
+      <dt>平均顺向</dt><dd>${formatPct(summary.avg_favorable_pct)}</dd>
+      <dt>平均逆向</dt><dd>${formatPct(summary.avg_adverse_pct)}</dd>
+    </dl>
+    <div class="tradeList">
+      ${trades
+        .slice(-5)
+        .reverse()
+        .map(
+          (item) => `
+            <div class="tradeRow ${item.side}">
+              <span>${item.label} ${formatDate(item.date)}</span>
+              <strong>${item.outcome}</strong>
+              <small>顺 ${formatPct(item.max_favorable_pct)} / 逆 ${formatPct(item.max_adverse_pct)}</small>
+            </div>
+          `
+        )
+        .join("") || `<div class="empty">暂无可复盘信号</div>`}
+    </div>
+  `;
 }
 
 function renderStats() {
@@ -177,6 +302,7 @@ function renderStats() {
     ["包含处理后", meta.merged_count],
     ["分型", counts.fractals || 0],
     ["笔", counts.strokes || 0],
+    ["线段", counts.segments || 0],
     ["中枢", counts.centers || 0],
     ["背驰", counts.divergences || 0],
     ["买卖点", counts.signals || 0],
@@ -186,14 +312,14 @@ function renderStats() {
 }
 
 function renderCenters() {
-  const centers = (state.analysis?.centers || []).slice(-6).reverse();
+  const centers = replayItemsByEnd(state.analysis?.centers || [], "end_index").slice(-6).reverse();
   if (!centers.length) {
     els.centerList.innerHTML = `<div class="empty">暂无中枢</div>`;
     return;
   }
   els.centerList.innerHTML = `
     <table>
-      <thead><tr><th>区间</th><th>低</th><th>高</th></tr></thead>
+      <thead><tr><th>区间</th><th>低</th><th>高</th><th>状态</th></tr></thead>
       <tbody>
         ${centers
           .map(
@@ -202,6 +328,7 @@ function renderCenters() {
                 <td>${formatDate(item.start_date)}-${formatDate(item.end_date)}</td>
                 <td>${formatPrice(item.low)}</td>
                 <td>${formatPrice(item.high)}</td>
+                <td>${item.status_label || "-"}</td>
               </tr>
             `
           )
@@ -211,26 +338,21 @@ function renderCenters() {
   `;
 }
 
-function renderDivergences() {
-  const divergences = (state.analysis?.divergences || []).slice(-6).reverse();
-  if (!divergences.length) {
-    els.divergenceList.innerHTML = `<div class="empty">暂无背驰候选</div>`;
-    return;
-  }
-  els.divergenceList.innerHTML = divergences
-    .map(
-      (item) => `
-        <article class="divergenceCard ${item.side}">
-          <strong>
-            <span class="side-${item.side}">${item.label}</span>
-            <span>${formatDate(item.date)}</span>
-          </strong>
-          <p>${item.reason}</p>
-          <small>${item.position} · 力度 ${formatMacd(item.current_strength)} / ${formatMacd(item.previous_strength)}</small>
-        </article>
-      `
-    )
-    .join("");
+function renderDivergenceEvidence(item) {
+  const evidence = item.evidence || {};
+  if (!Object.keys(evidence).length) return "";
+  return `
+    <dl class="evidenceGrid">
+      <dt>比较</dt><dd>${evidence.previous_stroke_id || "-"} / ${evidence.current_stroke_id || "-"}</dd>
+      <dt>价格力度</dt><dd>${formatMacd(evidence.previous_price_strength)} / ${formatMacd(evidence.current_price_strength)}</dd>
+      <dt>红柱面积</dt><dd>${formatMacd(evidence.previous_macd_red_area)} / ${formatMacd(evidence.current_macd_red_area)}</dd>
+      <dt>绿柱面积</dt><dd>${formatMacd(evidence.previous_macd_green_area)} / ${formatMacd(evidence.current_macd_green_area)}</dd>
+      <dt>DIF</dt><dd>${formatMacd(evidence.previous_dif_end)} / ${formatMacd(evidence.current_dif_end)}</dd>
+      <dt>DEA</dt><dd>${formatMacd(evidence.previous_dea_end)} / ${formatMacd(evidence.current_dea_end)}</dd>
+      <dt>零轴位置</dt><dd>${zeroLabel(evidence.previous_zero_position)} / ${zeroLabel(evidence.current_zero_position)}</dd>
+      <dt>阈值</dt><dd>${Math.round((evidence.threshold || 0) * 100)}%</dd>
+    </dl>
+  `;
 }
 
 function renderChart() {
@@ -239,8 +361,12 @@ function renderChart() {
   const ctx = canvas.getContext("2d");
   const rect = canvas.getBoundingClientRect();
   const dpr = window.devicePixelRatio || 1;
-  canvas.width = Math.max(1, Math.floor(rect.width * dpr));
-  canvas.height = Math.max(1, Math.floor(rect.height * dpr));
+  const nextWidth = Math.max(1, Math.floor(rect.width * dpr));
+  const nextHeight = Math.max(1, Math.floor(rect.height * dpr));
+  if (canvas.width !== nextWidth || canvas.height !== nextHeight) {
+    canvas.width = nextWidth;
+    canvas.height = nextHeight;
+  }
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, rect.width, rect.height);
 
@@ -256,7 +382,7 @@ function renderChart() {
   const plots = chartPlots(rect);
   const plot = plots.main;
   const macdPlot = plots.macd;
-  const visibleCenters = (analysis.centers || []).filter((item) => overlapsWindow(item.start_index, item.end_index, view));
+  const visibleCenters = replayItemsByEnd(analysis.centers || [], "end_index").filter((item) => overlapsWindow(item.start_index, item.end_index, view));
   const visibleMacd = (analysis.indicators?.macd || []).slice(view.start, view.end);
   const visibleBbi = (analysis.indicators?.bbi || []).slice(view.start, view.end);
   const range = priceRange(visibleKlines, visibleCenters, visibleBbi);
@@ -268,10 +394,15 @@ function renderChart() {
   drawCenters(ctx, visibleCenters, x, y, plot);
   drawCandles(ctx, visibleKlines, x, y, candleW);
   drawBbi(ctx, visibleBbi, x, y);
-  drawStrokes(ctx, visibleItems(analysis.strokes || [], "start_index", "end_index", view), x, y, view);
-  drawFractals(ctx, visibleItems(analysis.fractals || [], "raw_index", "raw_index", view), x, y);
-  drawSignals(ctx, visibleSignals(analysis.signals || [], view), x, y, plot);
-  drawMacd(ctx, rect, macdPlot, visibleMacd, visibleDivergences(analysis.divergences || [], view), x, candleW);
+  if (state.showStrokes) {
+    drawStrokes(ctx, visibleItems(replayItemsByEnd(analysis.strokes || [], "end_index"), "start_index", "end_index", view), x, y, view);
+  }
+  if (state.showSegments) {
+    drawSegments(ctx, visibleItems(replayItemsByEnd(analysis.segments || [], "end_index"), "start_index", "end_index", view), x, y, view);
+  }
+  drawFractals(ctx, visibleItems(replayItemsByEnd(analysis.fractals || [], "raw_index"), "raw_index", "raw_index", view), x, y);
+  drawSignals(ctx, visibleSignals(replayFilteredSignals(analysis.signals || []), view), x, y, plot);
+  drawMacd(ctx, rect, macdPlot, visibleMacd, visibleDivergences(replayFilteredDivergences(analysis.divergences || []), view), x, candleW);
 
   if (state.hoverIndex !== null && state.hoverIndex >= view.start && state.hoverIndex < view.end) {
     drawHover(ctx, klines[state.hoverIndex], x, plots, rect);
@@ -532,6 +663,21 @@ function drawStrokes(ctx, strokes, x, y, view) {
   ctx.lineWidth = 1;
 }
 
+function drawSegments(ctx, segments, x, y, view) {
+  ctx.lineWidth = 3.2;
+  ctx.setLineDash([8, 5]);
+  segments.forEach((item) => {
+    if (!overlapsWindow(item.start_index, item.end_index, view)) return;
+    ctx.strokeStyle = item.direction === "up" ? "rgba(169, 53, 45, 0.62)" : "rgba(15, 111, 82, 0.62)";
+    ctx.beginPath();
+    ctx.moveTo(x(item.start_index), y(item.start_price));
+    ctx.lineTo(x(item.end_index), y(item.end_price));
+    ctx.stroke();
+  });
+  ctx.setLineDash([]);
+  ctx.lineWidth = 1;
+}
+
 function drawFractals(ctx, fractals, x, y) {
   fractals.forEach((item) => {
     const px = x(item.raw_index);
@@ -568,13 +714,7 @@ function drawSignals(ctx, signals, x, y, plot) {
 }
 
 function drawSignalTag(ctx, { x, y, label, buy, plot }) {
-  const width = 34;
-  const height = 20;
-  const pointer = 6;
-  const gap = 7;
-  const tagX = Math.max(plot.left + 2, Math.min(x - width / 2, plot.left + plot.width - width - 2));
-  const idealY = buy ? y + gap + pointer : y - gap - pointer - height;
-  const tagY = Math.max(plot.top + 2, Math.min(idealY, plot.top + plot.height - height - 2));
+  const { tagX, tagY, width, height } = signalTagBounds(x, y, buy, plot);
   const color = buy ? "#14845f" : "#c24136";
 
   ctx.fillStyle = color;
@@ -612,6 +752,17 @@ function drawSignalTag(ctx, { x, y, label, buy, plot }) {
   ctx.fill();
   ctx.stroke();
   ctx.lineWidth = 1;
+}
+
+function signalTagBounds(x, y, buy, plot) {
+  const width = 34;
+  const height = 20;
+  const pointer = 6;
+  const gap = 7;
+  const tagX = Math.max(plot.left + 2, Math.min(x - width / 2, plot.left + plot.width - width - 2));
+  const idealY = buy ? y + gap + pointer : y - gap - pointer - height;
+  const tagY = Math.max(plot.top + 2, Math.min(idealY, plot.top + plot.height - height - 2));
+  return { tagX, tagY, width, height };
 }
 
 function roundedRect(ctx, x, y, width, height, radius) {
@@ -693,21 +844,33 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(value, max));
 }
 
+function scheduleChartRender() {
+  if (chartRenderFrame !== null) return;
+  chartRenderFrame = window.requestAnimationFrame(() => {
+    chartRenderFrame = null;
+    renderChart();
+  });
+}
+
 function resetChartView() {
   const total = state.analysis?.klines?.length || 0;
+  state.replayIndex = Math.max(0, total - 1);
   state.visibleCount = Math.min(total || defaultVisibleCount(), defaultVisibleCount());
   state.viewStart = Math.max(0, total - state.visibleCount);
   state.hoverIndex = null;
+  updateReplayControls();
 }
 
 function defaultVisibleCount() {
+  if (state.level === "min30") return 160;
+  if (state.level === "min60") return 140;
   if (state.level === "monthly") return 72;
   if (state.level === "weekly") return 104;
   return 120;
 }
 
 function clampChartView() {
-  const total = state.analysis?.klines?.length || 0;
+  const total = effectiveTotal();
   if (!total) {
     state.viewStart = 0;
     state.visibleCount = defaultVisibleCount();
@@ -719,12 +882,51 @@ function clampChartView() {
   state.viewStart = Math.max(0, Math.min(Math.round(state.viewStart), total - state.visibleCount));
 }
 
+function clampVisibleCount(count) {
+  const total = effectiveTotal();
+  if (!total) return defaultVisibleCount();
+  const maxVisible = Math.min(MAX_VISIBLE_BARS, total);
+  const minVisible = Math.min(MIN_VISIBLE_BARS, total);
+  return Math.max(minVisible, Math.min(Math.round(count), maxVisible));
+}
+
 function visibleWindow() {
   clampChartView();
-  const total = state.analysis?.klines?.length || 0;
+  const total = effectiveTotal();
   const start = state.viewStart;
   const end = Math.min(total, start + state.visibleCount);
   return { start, end, count: Math.max(end - start, 1) };
+}
+
+function effectiveTotal() {
+  const total = state.analysis?.klines?.length || 0;
+  if (!total) return 0;
+  if (!state.replayEnabled) return total;
+  return clamp(state.replayIndex + 1, 1, total);
+}
+
+function replayCutoffIndex() {
+  const total = state.analysis?.klines?.length || 0;
+  if (!total) return -1;
+  return state.replayEnabled ? clamp(state.replayIndex, 0, total - 1) : total - 1;
+}
+
+function replayItemsByEnd(items, endKey) {
+  const cutoff = replayCutoffIndex();
+  if (cutoff < 0) return [];
+  return items.filter((item) => Number(item[endKey]) <= cutoff);
+}
+
+function replayFilteredSignals(signals) {
+  const cutoff = replayCutoffIndex();
+  if (cutoff < 0) return [];
+  return signals.filter((item) => signalIndex(item) <= cutoff);
+}
+
+function replayFilteredDivergences(divergences) {
+  const cutoff = replayCutoffIndex();
+  if (cutoff < 0) return [];
+  return divergences.filter((item) => divergenceIndex(item) <= cutoff);
 }
 
 function overlapsWindow(startIndex, endIndex, view) {
@@ -760,7 +962,7 @@ function indexFromPointer(event) {
   const relative = event.clientX - rect.left - plotLeft;
   const ratio = Math.max(0, Math.min(0.999999, relative / plotWidth));
   const view = visibleWindow();
-  return Math.max(0, Math.min(analysis.klines.length - 1, view.start + Math.floor(ratio * view.count)));
+  return Math.max(0, Math.min(effectiveTotal() - 1, view.start + Math.floor(ratio * view.count)));
 }
 
 function chartRegionFromPointer(event) {
@@ -778,14 +980,65 @@ function positionTooltip(event, width = 220) {
   els.tooltip.style.top = `${clamp(event.clientY - rect.top - 20, 12, rect.height - 130)}px`;
 }
 
+function signalFromMainPointer(event, analysis) {
+  const rect = els.canvas.getBoundingClientRect();
+  const plots = chartPlots(rect);
+  const plot = plots.main;
+  const pointerX = event.clientX - rect.left;
+  const pointerY = event.clientY - rect.top;
+  if (pointerY < plot.top || pointerY > plot.top + plot.height) return null;
+
+  const view = visibleWindow();
+  const visibleKlines = analysis.klines.slice(view.start, view.end);
+  const visibleCenters = replayItemsByEnd(analysis.centers || [], "end_index").filter((item) => overlapsWindow(item.start_index, item.end_index, view));
+  const visibleBbi = (analysis.indicators?.bbi || []).slice(view.start, view.end);
+  const range = priceRange(visibleKlines, visibleCenters, visibleBbi);
+  const x = (idx) => plot.left + ((idx - view.start + 0.5) / view.count) * plot.width;
+  const y = (price) => plot.top + ((range.high - price) / (range.high - range.low)) * plot.height;
+  const candidates = visibleSignals(replayFilteredSignals(analysis.signals || []), view);
+  const barHit = Math.max(10, plot.width / view.count);
+
+  let best = null;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (const item of candidates) {
+    const px = x(signalIndex(item));
+    const py = y(item.price);
+    const buy = item.side === "buy";
+    const bounds = signalTagBounds(px, py, buy, plot);
+    const insideTag =
+      pointerX >= bounds.tagX - 4 &&
+      pointerX <= bounds.tagX + bounds.width + 4 &&
+      pointerY >= bounds.tagY - 4 &&
+      pointerY <= bounds.tagY + bounds.height + 4;
+    const nearAnchor = Math.abs(pointerX - px) <= barHit && Math.abs(pointerY - py) <= 18;
+    if (!insideTag && !nearAnchor) continue;
+
+    const distance = Math.hypot(pointerX - px, pointerY - py);
+    if (distance < bestDistance) {
+      best = item;
+      bestDistance = distance;
+    }
+  }
+  return best;
+}
+
+function showSignalTooltip(event, signal) {
+  els.tooltip.hidden = false;
+  positionTooltip(event, 280);
+  els.tooltip.innerHTML = `
+    <strong>${signalLabel(signal)} · ${formatDate(signal.date)}</strong><br>
+    状态 ${signal.status_label || "候选"} · 价格 ${formatPrice(signal.price)}<br>
+    失效 ${formatPrice(signal.invalidation_price)}<br>
+    ${signal.reason || ""}<br>
+    <span class="tooltipNote">${signal.confirmation || ""}</span>
+    ${signal.observation ? `<br><span class="tooltipNote">${signal.observation}</span>` : ""}
+  `;
+}
+
 function showMainTooltip(event, analysis, idx) {
   const bar = analysis.klines[idx];
   const macd = analysis.indicators?.macd?.[idx];
   const bbi = analysis.indicators?.bbi?.[idx];
-  const divergences = (analysis.divergences || []).filter((item) => divergenceIndex(item) === idx);
-  const divergenceText = divergences.length
-    ? `<br>${divergences.map((item) => `${divergenceLabel(item)}：${item.reason}`).join("<br>")}`
-    : "";
 
   els.tooltip.hidden = false;
   positionTooltip(event, 220);
@@ -795,7 +1048,7 @@ function showMainTooltip(event, analysis, idx) {
     低 ${formatPrice(bar.low)} 收 ${formatPrice(bar.close)}<br>
     BBI ${bbi?.value !== null && bbi?.value !== undefined ? formatPrice(bbi.value) : "-"}<br>
     量 ${Math.round(bar.vol).toLocaleString()}<br>
-    MACD ${macd ? formatMacd(macd.hist) : "-"} · DIF ${macd ? formatMacd(macd.dif) : "-"} · DEA ${macd ? formatMacd(macd.dea) : "-"}${divergenceText}
+    MACD ${macd ? formatMacd(macd.hist) : "-"} · DIF ${macd ? formatMacd(macd.dif) : "-"} · DEA ${macd ? formatMacd(macd.dea) : "-"}
   `;
 }
 
@@ -809,11 +1062,13 @@ function showMacdTooltip(event, analysis) {
   const macd = analysis.indicators?.macd?.[idx];
 
   els.tooltip.hidden = false;
-  positionTooltip(event, 220);
+  positionTooltip(event, 360);
   els.tooltip.innerHTML = `
     <strong>${divergenceLabel(divergence)} · ${formatDate(divergence.date)}</strong><br>
+    <span class="tooltipNote">${divergence.position || "背驰候选"} · 力度 ${formatMacd(divergence.current_strength)} / ${formatMacd(divergence.previous_strength)}</span><br>
     ${divergence.reason}<br>
     MACD ${macd ? formatMacd(macd.hist) : "-"} · DIF ${macd ? formatMacd(macd.dif) : "-"} · DEA ${macd ? formatMacd(macd.dea) : "-"}
+    ${renderDivergenceEvidence(divergence)}
   `;
 }
 
@@ -857,24 +1112,42 @@ function zoomAtPointer(event) {
   event.preventDefault();
   const rect = els.canvas.getBoundingClientRect();
   const plotLeft = 62;
-  const plotWidth = rect.width - 84;
+  const plotWidth = Math.max(rect.width - 84, 1);
   const ratio = Math.max(0, Math.min(1, (event.clientX - rect.left - plotLeft) / plotWidth));
   const view = visibleWindow();
   const anchorIndex = view.start + ratio * view.count;
-  const scale = event.deltaY > 0 ? 1.16 : 0.86;
-  const nextCount = Math.round(view.count * scale);
-  state.visibleCount = nextCount;
-  clampChartView();
+  const normalizedDelta = event.deltaMode === WheelEvent.DOM_DELTA_LINE ? event.deltaY * 16 : event.deltaY;
+  const scale = Math.exp(clamp(normalizedDelta, -240, 240) * WHEEL_ZOOM_SPEED);
+  state.visibleCount = clampVisibleCount(view.count * scale);
   state.viewStart = Math.round(anchorIndex - ratio * state.visibleCount);
   clampChartView();
+  state.hoverIndex = indexFromPointer(event);
+  els.tooltip.hidden = true;
+  scheduleChartRender();
 }
 
 function levelLabel(level) {
-  return { daily: "日线", weekly: "周线", monthly: "月线" }[level] || level;
+  return { min30: "30分钟", min60: "60分钟", daily: "日线", weekly: "周线", monthly: "月线" }[level] || level;
+}
+
+function directionLabel(direction) {
+  if (direction === "up") return "向上";
+  if (direction === "down") return "向下";
+  return "未定";
+}
+
+function zeroLabel(position) {
+  if (position === "above") return "零轴上";
+  if (position === "below") return "零轴下";
+  if (position === "crossing") return "穿越零轴";
+  return "-";
 }
 
 function formatDate(value) {
   const text = String(value || "");
+  if (text.length >= 12 && /^\d+$/.test(text)) {
+    return `${text.slice(0, 4)}-${text.slice(4, 6)}-${text.slice(6, 8)} ${text.slice(8, 10)}:${text.slice(10, 12)}`;
+  }
   if (text.length !== 8) return text;
   return `${text.slice(0, 4)}-${text.slice(4, 6)}-${text.slice(6)}`;
 }
@@ -889,6 +1162,40 @@ function formatMacd(value) {
   const num = Number(value);
   if (!Number.isFinite(num)) return "-";
   return num.toFixed(3);
+}
+
+function formatPct(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "-";
+  return `${(num * 100).toFixed(2)}%`;
+}
+
+function summarizeTradesForReplay(summary, trades) {
+  if (!state.replayEnabled) return summary;
+  const observed = trades.filter((item) => item.bars > 0);
+  const favorable = observed.map((item) => Number(item.max_favorable_pct)).filter(Number.isFinite);
+  const adverse = observed.map((item) => Number(item.max_adverse_pct)).filter(Number.isFinite);
+  return {
+    signals: trades.length,
+    observed: observed.length,
+    avg_favorable_pct: average(favorable),
+    avg_adverse_pct: average(adverse),
+  };
+}
+
+function average(values) {
+  if (!values.length) return 0;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function updateReplayControls() {
+  const total = state.analysis?.klines?.length || 0;
+  els.replayToggle.checked = state.replayEnabled;
+  els.replaySlider.disabled = !state.replayEnabled || total <= 1;
+  els.replaySlider.max = String(Math.max(total - 1, 0));
+  els.replaySlider.value = String(clamp(state.replayIndex, 0, Math.max(total - 1, 0)));
+  const bar = total ? state.analysis.klines[Number(els.replaySlider.value)] : null;
+  els.replayLabel.textContent = state.replayEnabled && bar ? formatDate(bar.date) : "--";
 }
 
 function bindEvents() {
@@ -929,6 +1236,41 @@ function bindEvents() {
 
   els.refreshBtn.addEventListener("click", loadAnalysis);
 
+  els.showStrokes.addEventListener("change", () => {
+    state.showStrokes = els.showStrokes.checked;
+    renderChart();
+  });
+
+  els.showSegments.addEventListener("change", () => {
+    state.showSegments = els.showSegments.checked;
+    renderChart();
+  });
+
+  els.replayToggle.addEventListener("change", () => {
+    state.replayEnabled = els.replayToggle.checked;
+    clampChartView();
+    updateReplayControls();
+    renderAll();
+  });
+
+  els.replaySlider.addEventListener("input", () => {
+    state.replayIndex = Number(els.replaySlider.value);
+    clampChartView();
+    renderAll();
+  });
+
+  els.sideTabs.addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-side-panel]");
+    if (!button) return;
+    const targetId = button.dataset.sidePanel;
+    els.sideTabs.querySelectorAll("button[data-side-panel]").forEach((item) => {
+      item.classList.toggle("active", item === button);
+    });
+    document.querySelectorAll(".sidePane").forEach((panel) => {
+      panel.classList.toggle("active", panel.id === targetId);
+    });
+  });
+
   els.canvas.addEventListener("pointerdown", (event) => {
     if (!state.analysis?.klines?.length) return;
     state.isDragging = true;
@@ -945,7 +1287,7 @@ function bindEvents() {
       panByPixels(event.clientX - state.dragStartX);
       state.hoverIndex = indexFromPointer(event);
       els.tooltip.hidden = true;
-      renderChart();
+      scheduleChartRender();
       return;
     }
 
@@ -954,13 +1296,15 @@ function bindEvents() {
     state.hoverIndex = idx;
     const region = chartRegionFromPointer(event);
     if (region === "main") {
-      showMainTooltip(event, analysis, idx);
+      const signal = signalFromMainPointer(event, analysis);
+      if (signal) showSignalTooltip(event, signal);
+      else showMainTooltip(event, analysis, idx);
     } else if (region === "macd") {
       showMacdTooltip(event, analysis);
     } else {
       els.tooltip.hidden = true;
     }
-    renderChart();
+    scheduleChartRender();
   });
 
   els.canvas.addEventListener("pointerup", (event) => {
@@ -983,12 +1327,12 @@ function bindEvents() {
     if (state.isDragging) return;
     state.hoverIndex = null;
     els.tooltip.hidden = true;
-    renderChart();
+    scheduleChartRender();
   });
 
   els.canvas.addEventListener("wheel", zoomAtPointer, { passive: false });
 
-  window.addEventListener("resize", renderChart);
+  window.addEventListener("resize", scheduleChartRender);
 }
 
 bindEvents();

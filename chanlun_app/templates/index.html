@@ -23,6 +23,8 @@
 
         <section class="controls" aria-label="分析参数">
           <div class="segmented" id="levelTabs">
+            <button type="button" data-level="min30">30分</button>
+            <button type="button" data-level="min60">60分</button>
             <button type="button" class="active" data-level="daily">日线</button>
             <button type="button" data-level="weekly">周线</button>
             <button type="button" data-level="monthly">月线</button>
@@ -35,6 +37,24 @@
             结束
             <input id="endDate" type="date">
           </label>
+          <div class="layerToggles" aria-label="图层开关">
+            <label class="toggleControl">
+              <input id="showStrokes" type="checkbox" checked>
+              <span>笔</span>
+            </label>
+            <label class="toggleControl">
+              <input id="showSegments" type="checkbox" checked>
+              <span>线段</span>
+            </label>
+          </div>
+          <div class="replayControls">
+            <label class="toggleControl">
+              <input id="replayToggle" type="checkbox">
+              <span>回放</span>
+            </label>
+            <input id="replaySlider" type="range" min="0" max="0" value="0" disabled>
+            <span id="replayLabel">--</span>
+          </div>
           <button id="refreshBtn" type="button">分析</button>
         </section>
 
@@ -47,21 +67,37 @@
       </section>
 
       <aside class="sidePanel">
-        <section class="panel">
-          <h2>信号摘要</h2>
-          <div id="signalList" class="empty">暂无分析结果</div>
+        <nav id="sideTabs" class="sideTabs" aria-label="右侧信息切换">
+          <button type="button" class="active" data-side-panel="levelPanel">联动</button>
+          <button type="button" data-side-panel="trendPanel">走势</button>
+          <button type="button" data-side-panel="riskPanel">风控</button>
+          <button type="button" data-side-panel="reviewPanel">复盘</button>
+          <button type="button" data-side-panel="statsPanel">统计</button>
+          <button type="button" data-side-panel="centerPanel">中枢</button>
+        </nav>
+        <section id="levelPanel" class="panel sidePane active">
+          <h2>级别联动</h2>
+          <div id="levelContext" class="empty">暂无级别结构</div>
         </section>
-        <section class="panel">
+        <section id="trendPanel" class="panel sidePane">
+          <h2>走势类型</h2>
+          <div id="structureDetail" class="empty">暂无走势结构</div>
+        </section>
+        <section id="riskPanel" class="panel sidePane">
+          <h2>风险纪律</h2>
+          <div id="riskList" class="empty">暂无风险卡</div>
+        </section>
+        <section id="reviewPanel" class="panel sidePane">
+          <h2>信号复盘</h2>
+          <div id="backtestBox" class="empty">暂无复盘统计</div>
+        </section>
+        <section id="statsPanel" class="panel sidePane">
           <h2>结构统计</h2>
           <dl id="metaStats" class="stats"></dl>
         </section>
-        <section class="panel">
+        <section id="centerPanel" class="panel sidePane">
           <h2>最近中枢</h2>
           <div id="centerList" class="tableWrap"></div>
-        </section>
-        <section class="panel">
-          <h2>背驰候选</h2>
-          <div id="divergenceList" class="tableWrap"></div>
         </section>
       </aside>
     </main>

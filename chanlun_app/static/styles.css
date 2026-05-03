@@ -158,6 +158,39 @@ input:focus {
   border-bottom: 1px solid var(--line);
 }
 
+.layerToggles {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+}
+
+.toggleControl {
+  display: inline-flex;
+  grid-template-columns: none;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0 9px;
+  color: var(--ink);
+  background: #fff;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.toggleControl input {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.toggleControl span {
+  line-height: 1;
+}
+
 .segmented {
   display: inline-flex;
   border: 1px solid var(--line);
@@ -188,6 +221,26 @@ input:focus {
 #refreshBtn:hover,
 .segmented button.active:hover {
   background: var(--accent-strong);
+}
+
+.replayControls {
+  display: grid;
+  grid-template-columns: auto minmax(120px, 180px) 112px;
+  gap: 8px;
+  align-items: center;
+  min-height: 38px;
+}
+
+.replayControls input[type="range"] {
+  height: 24px;
+  padding: 0;
+  accent-color: var(--accent);
+}
+
+.replayControls span {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 .errorBox {
@@ -232,18 +285,77 @@ input:focus {
   line-height: 1.5;
 }
 
+.tooltipNote {
+  color: var(--warn);
+}
+
+.tooltip .evidenceGrid {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
 .sidePanel {
+  position: sticky;
+  top: 16px;
   display: grid;
-  gap: 16px;
-  align-content: start;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 10px;
+  align-self: start;
+  max-height: calc(100vh - 32px);
+  min-width: 0;
+}
+
+.sideTabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  padding: 6px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
+}
+
+.sideTabs button {
+  height: 32px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: #f5f8fa;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.sideTabs button:hover {
+  border-color: rgba(37, 111, 146, 0.24);
+  color: var(--accent);
+}
+
+.sideTabs button.active {
+  background: var(--accent);
+  color: #fff;
 }
 
 .panel {
   padding: 16px;
 }
 
+.sidePane {
+  display: none;
+  min-height: 0;
+  max-height: calc(100vh - 96px);
+  overflow: auto;
+}
+
+.sidePane.active {
+  display: block;
+}
+
 .panel h2 {
-  margin-bottom: 12px;
+  margin-bottom: 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
 }
 
 .empty {
@@ -251,70 +363,133 @@ input:focus {
   font-size: 14px;
 }
 
-.signalCard {
-  border-left: 4px solid var(--accent);
-  padding: 10px 12px;
+.levelStack,
+.structureBox {
+  display: grid;
+  gap: 10px;
+}
+
+.levelCard {
+  border-left: 4px solid var(--line);
   background: #f8fafb;
-  margin-bottom: 10px;
+  padding: 10px 12px;
 }
 
-.signalCard.buy {
-  border-left-color: var(--buy);
+.levelCard.active {
+  border-left-color: var(--accent);
 }
 
-.signalCard.sell {
+.levelCard.error {
   border-left-color: var(--sell);
 }
 
-.signalCard strong {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  font-size: 14px;
-}
-
-.signalCard p {
-  margin-top: 6px;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.45;
-}
-
-.divergenceCard {
-  border-left: 4px solid var(--accent);
-  background: #f8fafb;
-  padding: 10px 12px;
-  margin-bottom: 10px;
-}
-
-.divergenceCard.buy {
-  border-left-color: var(--buy);
-}
-
-.divergenceCard.sell {
-  border-left-color: var(--sell);
-}
-
-.divergenceCard strong {
+.levelCard strong,
+.structureHeadline {
   display: flex;
   justify-content: space-between;
   gap: 8px;
   font-size: 13px;
 }
 
-.divergenceCard p {
+.levelCard p,
+.structureBox p {
   margin-top: 6px;
   color: var(--muted);
   font-size: 12px;
   line-height: 1.45;
-  white-space: normal;
 }
 
-.divergenceCard small {
+.levelCard small {
   display: block;
   margin-top: 6px;
   color: var(--warn);
   font-size: 12px;
+  line-height: 1.4;
+}
+
+.structureHeadline span {
+  color: var(--accent);
+  font-size: 12px;
+}
+
+.miniStats,
+.evidenceGrid {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 6px 10px;
+  margin: 8px 0 0;
+  font-size: 12px;
+}
+
+.miniStats dt,
+.evidenceGrid dt {
+  color: var(--muted);
+}
+
+.miniStats dd,
+.evidenceGrid dd {
+  margin: 0;
+  min-width: 0;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.riskCard {
+  border-left: 4px solid var(--accent);
+  padding: 10px 12px;
+  background: #f8fafb;
+  margin-bottom: 10px;
+}
+
+.riskCard.buy,
+.tradeRow.buy {
+  border-left-color: var(--buy);
+}
+
+.riskCard.sell,
+.tradeRow.sell {
+  border-left-color: var(--sell);
+}
+
+.riskCard strong {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.riskCard p {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.backtestBox {
+  display: grid;
+  gap: 10px;
+}
+
+.tradeList {
+  display: grid;
+  gap: 8px;
+}
+
+.tradeRow {
+  display: grid;
+  gap: 3px;
+  border-left: 4px solid var(--accent);
+  background: #f8fafb;
+  padding: 8px 10px;
+  font-size: 12px;
+}
+
+.tradeRow span {
+  color: var(--muted);
+}
+
+.tradeRow small {
+  color: var(--warn);
 }
 
 .stats {
@@ -375,7 +550,12 @@ th {
   }
 
   .sidePanel {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    position: static;
+    max-height: none;
+  }
+
+  .sidePane {
+    max-height: none;
   }
 }
 
@@ -393,15 +573,20 @@ th {
     padding: 14px;
   }
 
-  .sidePanel {
-    grid-template-columns: 1fr;
-  }
-
   .segmented {
     width: 100%;
   }
 
   .segmented button {
     flex: 1;
+  }
+
+  .replayControls {
+    width: 100%;
+    grid-template-columns: auto minmax(0, 1fr) 94px;
+  }
+
+  .sideTabs {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
