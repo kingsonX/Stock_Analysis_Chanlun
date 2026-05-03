@@ -10,7 +10,9 @@ services:
     envVars:
       - key: TUSHARE_TOKEN
         sync: false
+      - key: MX_APIKEY
+        sync: false
       - key: PYTHON_VERSION
-        value: "3.14.3"
+        value: "3.11.11"
       - key: FLASK_DEBUG
         value: "0"
