@@ -89,11 +89,16 @@ class TradingProfileTest(unittest.TestCase):
 
         result = service.build(stock=stock, analysis=analysis)
 
-        self.assertEqual(result["profile"]["stance"], "positive")
+        self.assertEqual(result["profile"]["stance"], "neutral")
         self.assertIn("结构偏多", result["profile"]["headline"])
+        self.assertIn("是否值得买", result["profile"]["decision"])
         self.assertEqual(result["profile"]["emotion"]["label"], "主流活跃")
+        self.assertEqual(result["profile"]["emotion"]["title"], "养家视角")
         self.assertEqual(result["profile"]["capacity"]["label"], "容量充足")
+        self.assertEqual(result["profile"]["capacity"]["title"], "章盟主视角")
         self.assertEqual(result["profile"]["risk"]["label"], "风险需盯")
+        self.assertTrue(result["profile"]["structure"]["basis"])
+        self.assertIn("是否值得买", result["profile"]["structure"]["action"])
 
     def test_profile_degrades_when_external_source_errors(self):
         class BrokenNewsProvider:
@@ -117,6 +122,7 @@ class TradingProfileTest(unittest.TestCase):
         self.assertEqual(result["profile"]["stance"], "neutral")
         self.assertEqual(result["news"]["status"], "error")
         self.assertEqual(result["market_scan"]["status"], "error")
+        self.assertIn("是否值得买", result["profile"]["decision"])
 
 
 if __name__ == "__main__":

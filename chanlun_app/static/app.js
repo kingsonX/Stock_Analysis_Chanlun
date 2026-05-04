@@ -1,6 +1,7 @@
 const state = {
   selectedStock: null,
   level: "daily",
+  currentPage: "analysisPage",
   analysis: null,
   mxSummary: null,
   mxRequestId: 0,
@@ -14,9 +15,30 @@ const state = {
   isDragging: false,
   dragStartX: 0,
   dragStartViewStart: 0,
+  smartPicker: {
+    overview: null,
+    screen: null,
+    detail: null,
+    watchlist: null,
+    ai: null,
+    selectedTsCode: "",
+    overviewRequestId: 0,
+    screenRequestId: 0,
+    detailRequestId: 0,
+    watchlistRequestId: 0,
+    aiRequestId: 0,
+    focusReadyOnly: false,
+    structureFilter: "all",
+    emotionFilter: "all",
+    overallFilter: "all",
+    sortBy: "overall_score",
+    sortDirection: "desc",
+    loaded: false,
+  },
 };
 
 const els = {
+  mainMenu: document.querySelector("#mainMenu"),
   stockInput: document.querySelector("#stockInput"),
   suggestions: document.querySelector("#suggestions"),
   statusText: document.querySelector("#statusText"),
@@ -40,6 +62,30 @@ const els = {
   metaStats: document.querySelector("#metaStats"),
   centerList: document.querySelector("#centerList"),
   mxDataBox: document.querySelector("#mxDataBox"),
+  pages: document.querySelectorAll(".appPage"),
+  pickerStatusText: document.querySelector("#pickerStatusText"),
+  pickerOverviewBtn: document.querySelector("#pickerOverviewBtn"),
+  pickerWatchlistBtn: document.querySelector("#pickerWatchlistBtn"),
+  pickerQueryInput: document.querySelector("#pickerQueryInput"),
+  pickerLevel: document.querySelector("#pickerLevel"),
+  pickerLimit: document.querySelector("#pickerLimit"),
+  pickerRunBtn: document.querySelector("#pickerRunBtn"),
+  pickerStructureFilter: document.querySelector("#pickerStructureFilter"),
+  pickerEmotionFilter: document.querySelector("#pickerEmotionFilter"),
+  pickerOverallFilter: document.querySelector("#pickerOverallFilter"),
+  pickerSortBy: document.querySelector("#pickerSortBy"),
+  pickerSortDirection: document.querySelector("#pickerSortDirection"),
+  pickerFocusReadyBtn: document.querySelector("#pickerFocusReadyBtn"),
+  pickerClearFiltersBtn: document.querySelector("#pickerClearFiltersBtn"),
+  pickerErrorBox: document.querySelector("#pickerErrorBox"),
+  pickerSideTabs: document.querySelector("#pickerSideTabs"),
+  pickerMarketBox: document.querySelector("#pickerMarketBox"),
+  pickerNewsBox: document.querySelector("#pickerNewsBox"),
+  pickerWatchlistBox: document.querySelector("#pickerWatchlistBox"),
+  pickerTableBox: document.querySelector("#pickerTableBox"),
+  pickerTableStatus: document.querySelector("#pickerTableStatus"),
+  pickerResultMeta: document.querySelector("#pickerResultMeta"),
+  pickerDetailBox: document.querySelector("#pickerDetailBox"),
 };
 
 let searchTimer = null;
@@ -163,6 +209,26 @@ async function loadMxSummary(stock) {
 function setLoading(isLoading) {
   els.refreshBtn.disabled = isLoading;
   els.refreshBtn.textContent = isLoading ? "分析中" : "分析";
+}
+
+function switchMainPage(targetId) {
+  state.currentPage = targetId;
+  els.mainMenu?.querySelectorAll("button[data-page]").forEach((item) => {
+    item.classList.toggle("active", item.dataset.page === targetId);
+  });
+  els.pages.forEach((page) => {
+    page.classList.toggle("active", page.id === targetId);
+  });
+  if (targetId === "analysisPage") {
+    window.setTimeout(() => {
+      scheduleChartRender();
+    }, 0);
+    return;
+  }
+
+  if (targetId === "smartPickerPage") {
+    ensureSmartPickerLoaded();
+  }
 }
 
 function showError(message) {
@@ -443,10 +509,26 @@ function renderProfileCard(profile) {
     .filter(Boolean)
     .map(
       (item) => `
-        <div class="profileBlock">
-          <strong>${escapeHtml(item.title || "")}</strong>
-          <p>${escapeHtml(item.summary || "")}</p>
-          <small>${escapeHtml(item.detail || "")}</small>
+        <div class="profileBlock tone-${escapeHtml(item.tone || "neutral")}">
+          <div class="profileBlockHeader">
+            <strong>${escapeHtml(item.title || "")}</strong>
+            ${item.verdict ? `<span class="profileVerdict tone-${escapeHtml(item.tone || "neutral")}">${escapeHtml(item.verdict)}</span>` : ""}
+          </div>
+          ${item.summary ? `<p class="profileSummary">${escapeHtml(item.summary)}</p>` : ""}
+          ${item.action ? `<p class="profileAction">${escapeHtml(item.action)}</p>` : ""}
+          ${item.detail ? `<small>${escapeHtml(item.detail)}</small>` : ""}
+          ${Array.isArray(item.basis) && item.basis.length ? `
+            <div class="profileList">
+              <span>判断依据</span>
+              <ul>${item.basis.map((basis) => `<li>${escapeHtml(basis)}</li>`).join("")}</ul>
+            </div>
+          ` : ""}
+          ${Array.isArray(item.conditions) && item.conditions.length ? `
+            <div class="profileList">
+              <span>观察条件</span>
+              <ul>${item.conditions.map((condition) => `<li>${escapeHtml(condition)}</li>`).join("")}</ul>
+            </div>
+          ` : ""}
         </div>
       `
     )
@@ -464,6 +546,7 @@ function renderProfileCard(profile) {
         </div>
       </div>
       <p class="profileHeadline">${escapeHtml(profile.headline || "")}</p>
+      ${profile.decision ? `<p class="profileDecisionLine">${escapeHtml(profile.decision)}</p>` : ""}
       <p class="profileConclusion">${escapeHtml(profile.conclusion || "")}</p>
       <div class="profileGrid">${sections}</div>
     </article>
@@ -561,6 +644,698 @@ function renderMxTable(card) {
             .join("")}
         </tbody>
       </table>
+    </div>
+  `;
+}
+
+function ensureSmartPickerLoaded() {
+  if (state.smartPicker.loaded) return;
+  state.smartPicker.loaded = true;
+  syncPickerFiltersFromControls();
+  loadPickerOverview();
+  loadPickerWatchlist();
+}
+
+function syncPickerFiltersFromControls() {
+  state.smartPicker.structureFilter = els.pickerStructureFilter?.value || "all";
+  state.smartPicker.emotionFilter = els.pickerEmotionFilter?.value || "all";
+  state.smartPicker.overallFilter = els.pickerOverallFilter?.value || "all";
+  state.smartPicker.sortBy = els.pickerSortBy?.value || "overall_score";
+  state.smartPicker.sortDirection = els.pickerSortDirection?.value || "desc";
+}
+
+async function loadPickerOverview() {
+  const requestId = ++state.smartPicker.overviewRequestId;
+  state.smartPicker.overview = { status: "loading" };
+  renderPickerOverview();
+  renderPickerNews();
+  setPickerStatus("正在刷新市场环境和催化摘要...");
+  hidePickerError();
+
+  try {
+    const data = await fetchJson("/api/smart-picker/overview");
+    if (requestId !== state.smartPicker.overviewRequestId) return;
+    state.smartPicker.overview = data;
+    setPickerStatus(data.stage?.action || "市场环境已更新，可以继续筛候选股。");
+  } catch (err) {
+    if (requestId !== state.smartPicker.overviewRequestId) return;
+    state.smartPicker.overview = { status: "error", message: err.message };
+    showPickerError(err.message);
+  }
+
+  renderPickerOverview();
+  renderPickerNews();
+}
+
+async function loadPickerWatchlist() {
+  const requestId = ++state.smartPicker.watchlistRequestId;
+  state.smartPicker.watchlist = { status: "loading" };
+  renderPickerWatchlist();
+  hidePickerError();
+
+  try {
+    const data = await fetchJson("/api/smart-picker/watchlist");
+    if (requestId !== state.smartPicker.watchlistRequestId) return;
+    state.smartPicker.watchlist = data;
+  } catch (err) {
+    if (requestId !== state.smartPicker.watchlistRequestId) return;
+    state.smartPicker.watchlist = { status: "error", message: err.message, items: [] };
+    showPickerError(err.message);
+  }
+
+  renderPickerWatchlist();
+  renderPickerDetail();
+}
+
+async function runSmartPicker() {
+  const queryText = els.pickerQueryInput?.value.trim() || "";
+  if (!queryText) {
+    showPickerError("请输入智能选股条件。");
+    return;
+  }
+
+  syncPickerFiltersFromControls();
+  const requestId = ++state.smartPicker.screenRequestId;
+  state.smartPicker.screen = { status: "loading" };
+  state.smartPicker.detail = null;
+  state.smartPicker.ai = null;
+  state.smartPicker.selectedTsCode = "";
+  renderPickerTable();
+  renderPickerDetail();
+  hidePickerError();
+  setPickerStatus("正在根据条件筛选股票，并结合缠论结构生成候选池...");
+
+  try {
+    const data = await fetchJson("/api/smart-picker/screen", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        query_text: queryText,
+        level: els.pickerLevel?.value || "daily",
+        limit: Number(els.pickerLimit?.value || 20),
+      }),
+    });
+    if (requestId !== state.smartPicker.screenRequestId) return;
+    state.smartPicker.screen = data;
+    const count = (data.candidates || []).length;
+    const marketTotal = data.universe?.total ? `全市场 ${data.universe.total} 只股票里` : "全市场里";
+    setPickerStatus(count ? `已从 ${marketTotal} 生成 ${count} 只结构候选，先按排序和筛选缩小观察范围。` : "筛选已完成，但当前条件下没有生成可用候选。");
+  } catch (err) {
+    if (requestId !== state.smartPicker.screenRequestId) return;
+    state.smartPicker.screen = { status: "error", message: err.message };
+    showPickerError(err.message);
+  }
+
+  renderPickerTable();
+}
+
+async function loadPickerCandidateDetail(stock) {
+  if (!stock) return;
+  const requestId = ++state.smartPicker.detailRequestId;
+  state.smartPicker.selectedTsCode = stock.ts_code || stock.symbol || stock.name || "";
+  state.smartPicker.detail = { status: "loading", stock };
+  state.smartPicker.ai = null;
+  renderPickerTable();
+  renderPickerDetail();
+  hidePickerError();
+
+  try {
+    const data = await fetchJson("/api/smart-picker/candidate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        stock,
+        level: els.pickerLevel?.value || "daily",
+      }),
+    });
+    if (requestId !== state.smartPicker.detailRequestId) return;
+    state.smartPicker.detail = data;
+  } catch (err) {
+    if (requestId !== state.smartPicker.detailRequestId) return;
+    state.smartPicker.detail = { status: "error", message: err.message, stock };
+    showPickerError(err.message);
+  }
+
+  renderPickerTable();
+  renderPickerDetail();
+}
+
+async function loadPickerAiBrief() {
+  const detail = state.smartPicker.detail;
+  if (!detail || detail.status !== "ok") return;
+  const requestId = ++state.smartPicker.aiRequestId;
+  state.smartPicker.ai = { status: "loading" };
+  renderPickerDetail();
+  hidePickerError();
+
+  try {
+    const data = await fetchJson("/api/smart-picker/ai-brief", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        stock: detail.stock,
+        analysis: detail.analysis,
+        profile: detail.profile,
+      }),
+    });
+    if (requestId !== state.smartPicker.aiRequestId) return;
+    state.smartPicker.ai = data;
+  } catch (err) {
+    if (requestId !== state.smartPicker.aiRequestId) return;
+    state.smartPicker.ai = { status: "error", message: err.message };
+  }
+
+  renderPickerDetail();
+}
+
+async function managePickerWatchlist(action, target) {
+  if (!target) return;
+  hidePickerError();
+  try {
+    await fetchJson("/api/smart-picker/watchlist", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action, target }),
+    });
+    await loadPickerWatchlist();
+    if (state.smartPicker.detail?.stock) {
+      await loadPickerCandidateDetail(state.smartPicker.detail.stock);
+    }
+  } catch (err) {
+    showPickerError(err.message);
+  }
+}
+
+function openCandidateInAnalysis(stock) {
+  if (!stock) return;
+  state.selectedStock = { ts_code: stock.ts_code };
+  els.stockInput.value = `${stock.name} ${stock.symbol}`;
+  setAnalysisLevel(els.pickerLevel?.value || "daily");
+  switchMainPage("analysisPage");
+  loadAnalysis();
+}
+
+function setAnalysisLevel(level) {
+  state.level = level;
+  els.levelTabs?.querySelectorAll("button[data-level]").forEach((item) => {
+    item.classList.toggle("active", item.dataset.level === level);
+  });
+}
+
+function setPickerStatus(message) {
+  if (els.pickerStatusText) {
+    els.pickerStatusText.textContent = message;
+  }
+}
+
+function showPickerError(message) {
+  if (!els.pickerErrorBox) return;
+  els.pickerErrorBox.textContent = message;
+  els.pickerErrorBox.hidden = false;
+}
+
+function hidePickerError() {
+  if (!els.pickerErrorBox) return;
+  els.pickerErrorBox.hidden = true;
+  els.pickerErrorBox.textContent = "";
+}
+
+function renderPickerOverview() {
+  const overview = state.smartPicker.overview;
+  if (!els.pickerMarketBox) return;
+
+  if (!overview || overview.status === "loading") {
+    els.pickerMarketBox.className = "pickerSummaryGrid";
+    els.pickerMarketBox.innerHTML = `
+      <article class="pickerSummaryCard loading"><div class="mxSkeleton"></div><div class="mxSkeleton short"></div></article>
+      <article class="pickerSummaryCard loading"><div class="mxSkeleton"></div><div class="mxSkeleton short"></div></article>
+    `;
+    return;
+  }
+
+  if (overview.status === "error") {
+    els.pickerMarketBox.className = "mxError";
+    els.pickerMarketBox.textContent = overview.message || "市场环境加载失败。";
+    return;
+  }
+
+  const stage = overview.stage || {};
+  const cards = overview.market_cards || [];
+  const universe = overview.universe || {};
+  els.pickerMarketBox.className = "pickerSummaryGrid";
+  els.pickerMarketBox.innerHTML = `
+    <article class="pickerStageCard tone-${escapeHtml(stage.tone || "neutral")}">
+      <div class="profileBlockHeader">
+        <strong>养家市场温度</strong>
+        <span class="profileVerdict tone-${escapeHtml(stage.tone || "neutral")}">${escapeHtml(stage.label || "未判断")}</span>
+      </div>
+      <p class="profileSummary">${escapeHtml(stage.summary || "")}</p>
+      <p class="profileAction">${escapeHtml(stage.action || "")}</p>
+      ${
+        Array.isArray(stage.basis) && stage.basis.length
+          ? `<div class="profileList"><span>判断依据</span><ul>${stage.basis.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></div>`
+          : ""
+      }
+    </article>
+    <article class="pickerSummaryCard">
+      <div class="profileBlockHeader">
+        <strong>${escapeHtml(universe.label || "全市场范围")}</strong>
+        <span class="profileVerdict tone-neutral">${escapeHtml(universe.total ? `${universe.total} 只` : "待同步")}</span>
+      </div>
+      <p class="profileSummary">${escapeHtml(universe.summary || "智能选股条件默认以全 A 股为范围执行。")}</p>
+    </article>
+    <div class="pickerMiniCards">
+      ${cards
+        .map(
+          (card) => `
+            <article class="scanCard ${escapeHtml(card.status || "empty")}">
+              <strong>${escapeHtml(card.label || "")}</strong>
+              <span>${card.status === "ok" ? `${escapeHtml(String(card.total || 0))} 只` : escapeHtml(card.status === "empty" ? "无结果" : "失败")}</span>
+              <p>${escapeHtml(card.description || card.query_text || card.error || "")}</p>
+            </article>
+          `
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function renderPickerNews() {
+  const overview = state.smartPicker.overview;
+  if (!els.pickerNewsBox) return;
+
+  if (!overview || overview.status === "loading") {
+    els.pickerNewsBox.className = "mxStack";
+    els.pickerNewsBox.innerHTML = `
+      <article class="mxCard loading"><div class="mxSkeleton"></div><div class="mxSkeleton short"></div></article>
+    `;
+    return;
+  }
+
+  if (overview.status === "error") {
+    els.pickerNewsBox.className = "mxError";
+    els.pickerNewsBox.textContent = overview.message || "资讯催化加载失败。";
+    return;
+  }
+
+  els.pickerNewsBox.className = "mxStack";
+  els.pickerNewsBox.innerHTML = renderNewsDigest(overview.news);
+}
+
+function renderPickerWatchlist() {
+  const watchlist = state.smartPicker.watchlist;
+  if (!els.pickerWatchlistBox) return;
+
+  if (!watchlist || watchlist.status === "loading") {
+    els.pickerWatchlistBox.className = "mxStack";
+    els.pickerWatchlistBox.innerHTML = `
+      <article class="mxCard loading"><div class="mxSkeleton"></div><div class="mxSkeleton short"></div></article>
+    `;
+    return;
+  }
+
+  if (watchlist.status === "error") {
+    els.pickerWatchlistBox.className = "mxError";
+    els.pickerWatchlistBox.textContent = watchlist.message || "自选同步失败。";
+    return;
+  }
+
+  const items = watchlist.items || [];
+  els.pickerWatchlistBox.className = "mxStack";
+  els.pickerWatchlistBox.innerHTML = `
+    <article class="mxCard status-${items.length ? "ok" : "empty"}">
+      <div class="mxCardHeader">
+        <strong>东方财富自选</strong>
+        <small>${items.length ? `共 ${items.length} 只` : "空列表"}</small>
+      </div>
+      ${
+        items.length
+          ? `<div class="newsList">
+              ${items
+                .slice(0, 6)
+                .map(
+                  (item) => `
+                    <article class="newsItem">
+                      <strong>${escapeHtml(item.name || "")} ${escapeHtml(item.code || "")}</strong>
+                      <span>${escapeHtml(
+                        [item.latest_price ? `最新价 ${item.latest_price}` : "", item.change_pct ? `涨跌幅 ${item.change_pct}` : ""]
+                          .filter(Boolean)
+                          .join(" · ")
+                      )}</span>
+                      <p>${escapeHtml(
+                        [item.turnover ? `换手率 ${item.turnover}` : "", item.volume_ratio ? `量比 ${item.volume_ratio}` : ""]
+                          .filter(Boolean)
+                          .join(" · ") || "已同步到本地观察页"
+                      )}</p>
+                    </article>
+                  `
+                )
+                .join("")}
+            </div>`
+          : `<p class="mxCardMessage">当前没有自选股，可以从候选详情里一键加入。</p>`
+      }
+    </article>
+  `;
+}
+
+function renderPickerTable() {
+  const screen = state.smartPicker.screen;
+  if (!els.pickerTableBox) return;
+
+  if (!screen || screen.status === "loading") {
+    els.pickerTableStatus.textContent = "正在生成候选池...";
+    if (els.pickerResultMeta) {
+      els.pickerResultMeta.textContent = "默认从全 A 股范围执行条件筛选。";
+    }
+    els.pickerTableBox.innerHTML = `
+      <div class="pickerLoadingTable">
+        <div class="mxSkeleton"></div>
+        <div class="mxSkeleton"></div>
+        <div class="mxSkeleton short"></div>
+      </div>
+    `;
+    return;
+  }
+
+  if (screen.status === "error") {
+    els.pickerTableStatus.textContent = "候选池加载失败。";
+    if (els.pickerResultMeta) {
+      els.pickerResultMeta.textContent = "候选池请求失败，请调整条件后重试。";
+    }
+    els.pickerTableBox.innerHTML = `<div class="mxError">${escapeHtml(screen.message || "智能选股失败。")}</div>`;
+    return;
+  }
+
+  const rawCandidates = screen.candidates || [];
+  const candidates = filterAndSortPickerCandidates(rawCandidates);
+  const universe = screen.universe || {};
+  const filterSummary = buildPickerFilterSummary(rawCandidates.length, candidates.length);
+  els.pickerTableStatus.textContent = screen.description || screen.parser_text || `候选总数 ${screen.total || 0}`;
+  if (els.pickerResultMeta) {
+    els.pickerResultMeta.textContent = universe.total
+      ? `全 A 股 ${universe.total} 只股票中，条件命中 ${screen.total || rawCandidates.length} 只；当前展示 ${candidates.length} 只。${filterSummary}`
+      : `条件命中 ${screen.total || rawCandidates.length} 只；当前展示 ${candidates.length} 只。${filterSummary}`;
+  }
+  if (!candidates.length) {
+    els.pickerTableBox.innerHTML = `<div class="empty">当前条件下没有筛出可用候选，可以放宽条件再试一次。</div>`;
+    return;
+  }
+
+  els.pickerTableBox.innerHTML = `
+    <table class="pickerTable">
+      <thead>
+        <tr>
+          <th>股票</th>
+          <th>缠论结构</th>
+          <th>养家环境</th>
+          <th>章盟主容量</th>
+          <th>综合结论</th>
+          <th>操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${candidates
+          .map((item) => {
+            const selected = state.smartPicker.selectedTsCode === item.stock.ts_code;
+            return `
+              <tr class="${selected ? "is-selected" : ""}">
+                <td>
+                  <div class="pickerStockCell">
+                    <strong>${escapeHtml(item.stock.name)}</strong>
+                    <small>${escapeHtml(item.stock.symbol)} · ${escapeHtml(item.stock.industry || "行业待定")}</small>
+                    <small>${escapeHtml(
+                      [item.quote.latest_price ? `最新价 ${item.quote.latest_price}` : "", item.quote.change_pct ? `涨跌幅 ${item.quote.change_pct}` : ""]
+                        .filter(Boolean)
+                        .join(" · ")
+                    )}</small>
+                  </div>
+                </td>
+                <td>
+                  <span class="profileVerdict tone-${escapeHtml(item.structure.tone || "neutral")}">${escapeHtml(item.structure.label || "")}</span>
+                  <p class="pickerCellText">${escapeHtml(item.structure.signal || item.structure.summary || "")}</p>
+                </td>
+                <td>
+                  <span class="profileVerdict tone-${escapeHtml(item.emotion.tone || "neutral")}">${escapeHtml(item.emotion.label || "")}</span>
+                  <p class="pickerCellText">${escapeHtml(item.emotion.summary || "")}</p>
+                </td>
+                <td>
+                  <span class="profileVerdict tone-${escapeHtml(item.capacity.tone || "neutral")}">${escapeHtml(item.capacity.label || "")}</span>
+                  <p class="pickerCellText">${escapeHtml(item.capacity.summary || "")}</p>
+                </td>
+                <td>
+                  <strong class="pickerOverall tone-${escapeHtml(item.overall.tone || "neutral")}">${escapeHtml(item.overall.label || "")}</strong>
+                  <p class="pickerCellText">${escapeHtml(item.overall.decision || "")}</p>
+                </td>
+                <td>
+                  <div class="pickerRowActions">
+                    <button type="button" class="miniButton" data-picker-action="detail" data-ts-code="${escapeHtml(item.stock.ts_code)}">详情</button>
+                    <button type="button" class="miniButton ghostButton" data-picker-action="analysis" data-ts-code="${escapeHtml(item.stock.ts_code)}">去分析</button>
+                  </div>
+                </td>
+              </tr>
+            `;
+          })
+          .join("")}
+      </tbody>
+    </table>
+    ${
+      screen.errors?.length
+        ? `<div class="pickerHint">有 ${screen.errors.length} 条结果因股票匹配或数据缺失被跳过，当前优先展示可用候选。</div>`
+        : ""
+    }
+  `;
+}
+
+function buildPickerFilterSummary(rawCount, visibleCount) {
+  const parts = [];
+  if (state.smartPicker.focusReadyOnly) {
+    parts.push("已启用“结构可看 + 主流活跃”快捷筛选");
+  }
+  if (state.smartPicker.structureFilter !== "all") {
+    parts.push(`结构=${state.smartPicker.structureFilter}`);
+  }
+  if (state.smartPicker.emotionFilter !== "all") {
+    parts.push(`情绪=${state.smartPicker.emotionFilter}`);
+  }
+  if (state.smartPicker.overallFilter !== "all") {
+    parts.push(`综合=${state.smartPicker.overallFilter}`);
+  }
+  parts.push(`排序=${pickerSortLabel(state.smartPicker.sortBy)}${state.smartPicker.sortDirection === "asc" ? "升序" : "降序"}`);
+  if (visibleCount !== rawCount) {
+    parts.unshift(`筛掉 ${rawCount - visibleCount} 只`);
+  }
+  return parts.length ? `（${parts.join("，")}）` : "";
+}
+
+function pickerSortLabel(sortBy) {
+  const mapping = {
+    overall_score: "综合分",
+    structure_score: "结构分",
+    change_pct: "涨跌幅",
+    amount: "成交额",
+    turnover: "换手率",
+    name: "股票名称",
+  };
+  return mapping[sortBy] || "综合分";
+}
+
+function filterAndSortPickerCandidates(candidates) {
+  let items = [...(candidates || [])];
+  if (state.smartPicker.focusReadyOnly) {
+    items = items.filter((item) => item.structure?.label === "结构可看" && item.emotion?.label === "主流活跃");
+  }
+  if (state.smartPicker.structureFilter !== "all") {
+    items = items.filter((item) => item.structure?.label === state.smartPicker.structureFilter);
+  }
+  if (state.smartPicker.emotionFilter !== "all") {
+    items = items.filter((item) => item.emotion?.label === state.smartPicker.emotionFilter);
+  }
+  if (state.smartPicker.overallFilter !== "all") {
+    items = items.filter((item) => item.overall?.label === state.smartPicker.overallFilter);
+  }
+
+  const direction = state.smartPicker.sortDirection === "asc" ? 1 : -1;
+  const sortBy = state.smartPicker.sortBy;
+  items.sort((left, right) => comparePickerCandidate(left, right, sortBy) * direction);
+  return items;
+}
+
+function comparePickerCandidate(left, right, sortBy) {
+  if (sortBy === "name") {
+    return String(left.stock?.name || "").localeCompare(String(right.stock?.name || ""), "zh-Hans-CN");
+  }
+
+  const valueOf = (item) => {
+    switch (sortBy) {
+      case "structure_score":
+        return Number(item.structure?.score || 0);
+      case "change_pct":
+        return Number(item.quote?.change_pct_value || 0);
+      case "amount":
+        return Number(item.quote?.amount_value || 0);
+      case "turnover":
+        return Number(item.quote?.turnover_value || 0);
+      case "overall_score":
+      default:
+        return Number(item.overall?.score || 0);
+    }
+  };
+
+  return valueOf(left) - valueOf(right);
+}
+
+function renderPickerDetail() {
+  const detail = state.smartPicker.detail;
+  if (!els.pickerDetailBox) return;
+
+  if (!detail) {
+    els.pickerDetailBox.className = "empty";
+    els.pickerDetailBox.textContent = "点击候选池中的股票，这里会展开三视角交易画像和自选操作。";
+    return;
+  }
+
+  if (detail.status === "loading") {
+    els.pickerDetailBox.className = "mxStack";
+    els.pickerDetailBox.innerHTML = `
+      <article class="mxCard loading"><div class="mxSkeleton"></div><div class="mxSkeleton short"></div></article>
+      <article class="mxCard loading"><div class="mxSkeleton"></div><div class="mxSkeleton short"></div></article>
+    `;
+    return;
+  }
+
+  if (detail.status === "error") {
+    els.pickerDetailBox.className = "mxError";
+    els.pickerDetailBox.textContent = detail.message || "候选详情加载失败。";
+    return;
+  }
+
+  const stock = detail.stock || {};
+  const profilePayload = detail.profile || {};
+  const watchlist = detail.watchlist || {};
+  const activeAction = watchlist.in_watchlist ? "delete" : "add";
+  const activeLabel = watchlist.in_watchlist ? "移出自选" : "加入自选";
+  const mxCards = (profilePayload.mx_summary?.data?.cards || []).slice(0, 3).map(renderMxCard).join("");
+  const analysis = detail.analysis || {};
+  const latestSignal = (analysis.signals || []).slice(-1)[0];
+  const latestDivergence = (analysis.divergences || []).slice(-1)[0];
+  const aiCard = renderPickerAiCard(state.smartPicker.ai);
+
+  els.pickerDetailBox.className = "pickerDetailStack";
+  els.pickerDetailBox.innerHTML = `
+    <div class="pickerDetailHero">
+      <div>
+        <strong>${escapeHtml(stock.name || "")} ${escapeHtml(stock.symbol || "")}</strong>
+        <p>${escapeHtml(stock.ts_code || "")} · ${escapeHtml(stock.industry || "行业待定")}</p>
+      </div>
+      <div class="pickerDetailActions">
+        <button type="button" class="miniButton" data-picker-detail-action="ai">AI 研究解读</button>
+        <button type="button" class="miniButton" data-picker-detail-action="${escapeHtml(activeAction)}" data-picker-target="${escapeHtml(stock.symbol || stock.name || "")}">${escapeHtml(activeLabel)}</button>
+        <button type="button" class="miniButton ghostButton" data-picker-detail-action="analysis" data-ts-code="${escapeHtml(stock.ts_code || "")}">打开图表</button>
+      </div>
+    </div>
+    ${renderProfileCard(profilePayload.profile)}
+    ${aiCard}
+    <article class="mxCard status-ok">
+      <div class="mxCardHeader">
+        <strong>结构摘要</strong>
+        <small>${escapeHtml(analysis.trend?.label || "结构不足")}</small>
+      </div>
+      <p class="mxCardTitle">${escapeHtml(
+        [analysis.trend?.position_label || "", latestSignal ? `${signalLabel(latestSignal)} ${latestSignal.status_label || ""}` : "", latestDivergence?.label || ""]
+          .filter(Boolean)
+          .join(" · ")
+      )}</p>
+      <p class="mxCardMessage">${escapeHtml(analysis.trend?.reason || "暂无补充结构说明。")}</p>
+    </article>
+    ${renderMarketScan(profilePayload.market_scan)}
+    ${renderNewsDigest(profilePayload.news)}
+    ${mxCards}
+  `;
+}
+
+function renderPickerAiCard(ai) {
+  if (!ai) {
+    return `
+      <article class="mxCard status-empty">
+        <div class="mxCardHeader">
+          <strong>AI 研究解读</strong>
+          <small>未生成</small>
+        </div>
+        <p class="mxCardMessage">这里会把缠论、养家、章盟主三视角，改写成更像研究员写给交易员看的结论。点击上方“AI 研究解读”后生成。</p>
+      </article>
+    `;
+  }
+
+  if (ai.status === "loading") {
+    return `
+      <article class="mxCard loading">
+        <div class="mxCardHeader">
+          <strong>AI 研究解读</strong>
+          <small>生成中</small>
+        </div>
+        <div class="mxSkeleton"></div>
+        <div class="mxSkeleton"></div>
+        <div class="mxSkeleton short"></div>
+      </article>
+    `;
+  }
+
+  if (ai.status === "error") {
+    return `
+      <article class="mxCard status-error">
+        <div class="mxCardHeader">
+          <strong>AI 研究解读</strong>
+          <small>失败</small>
+        </div>
+        <p class="mxCardMessage">${escapeHtml(ai.message || "AI 解读生成失败。")}</p>
+      </article>
+    `;
+  }
+
+  const note = ai.analysis || {};
+  return `
+    <article class="mxCard status-ok aiResearchCard">
+      <div class="mxCardHeader">
+        <strong>AI 研究解读</strong>
+        <small>${escapeHtml(ai.model || "")}</small>
+      </div>
+      <p class="mxCardTitle">${escapeHtml(note.summary || "")}</p>
+      <p class="profileAction">${escapeHtml(note.buy_judgement || "")}</p>
+      <div class="aiMetaRow">
+        <span class="profileVerdict tone-neutral">${escapeHtml(note.overall_verdict || "候选观察")}</span>
+        <span class="aiMetaText">置信度 ${escapeHtml(note.confidence || "中")}</span>
+      </div>
+      ${renderAiViewBlock("缠中说禅视角", note.chan_view)}
+      ${renderAiViewBlock("炒股养家视角", note.yangjia_view)}
+      ${renderAiViewBlock("章盟主视角", note.zhang_view)}
+      ${renderAiListBlock("主要风险", note.risks)}
+      ${renderAiListBlock("观察重点", note.watch_points)}
+    </article>
+  `;
+}
+
+function renderAiViewBlock(title, item) {
+  if (!item) return "";
+  return `
+    <section class="aiViewBlock">
+      <div class="profileBlockHeader">
+        <strong>${escapeHtml(title)}</strong>
+        <span class="profileVerdict tone-neutral">${escapeHtml(item.verdict || "先观察")}</span>
+      </div>
+      <p>${escapeHtml(item.reason || "")}</p>
+      <p class="profileAction">${escapeHtml(item.buyable || "")}</p>
+      ${renderAiListBlock("判断依据", item.basis)}
+      ${renderAiListBlock("后续条件", item.conditions)}
+    </section>
+  `;
+}
+
+function renderAiListBlock(title, items) {
+  if (!Array.isArray(items) || !items.length) return "";
+  return `
+    <div class="profileList">
+      <span>${escapeHtml(title)}</span>
+      <ul>${items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
     </div>
   `;
 }
@@ -1462,6 +2237,77 @@ function bindEvents() {
     if (!event.target.closest(".searchBox")) hideSuggestions();
   });
 
+  els.mainMenu?.addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-page]");
+    if (!button) return;
+    switchMainPage(button.dataset.page);
+  });
+
+  els.pickerOverviewBtn?.addEventListener("click", loadPickerOverview);
+  els.pickerWatchlistBtn?.addEventListener("click", loadPickerWatchlist);
+  els.pickerRunBtn?.addEventListener("click", runSmartPicker);
+  [els.pickerStructureFilter, els.pickerEmotionFilter, els.pickerOverallFilter, els.pickerSortBy, els.pickerSortDirection].forEach((input) => {
+    input?.addEventListener("change", () => {
+      syncPickerFiltersFromControls();
+      renderPickerTable();
+    });
+  });
+  els.pickerFocusReadyBtn?.addEventListener("click", () => {
+    state.smartPicker.focusReadyOnly = !state.smartPicker.focusReadyOnly;
+    els.pickerFocusReadyBtn.classList.toggle("active", state.smartPicker.focusReadyOnly);
+    renderPickerTable();
+  });
+  els.pickerClearFiltersBtn?.addEventListener("click", () => {
+    state.smartPicker.focusReadyOnly = false;
+    if (els.pickerFocusReadyBtn) {
+      els.pickerFocusReadyBtn.classList.remove("active");
+    }
+    if (els.pickerStructureFilter) els.pickerStructureFilter.value = "all";
+    if (els.pickerEmotionFilter) els.pickerEmotionFilter.value = "all";
+    if (els.pickerOverallFilter) els.pickerOverallFilter.value = "all";
+    if (els.pickerSortBy) els.pickerSortBy.value = "overall_score";
+    if (els.pickerSortDirection) els.pickerSortDirection.value = "desc";
+    syncPickerFiltersFromControls();
+    renderPickerTable();
+  });
+  els.pickerQueryInput?.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      runSmartPicker();
+    }
+  });
+
+  els.pickerTableBox?.addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-picker-action]");
+    if (!button) return;
+    const tsCode = button.dataset.tsCode;
+    const candidate = (state.smartPicker.screen?.candidates || []).find((item) => item.stock.ts_code === tsCode);
+    if (!candidate) return;
+    if (button.dataset.pickerAction === "detail") {
+      loadPickerCandidateDetail(candidate.stock);
+      return;
+    }
+    if (button.dataset.pickerAction === "analysis") {
+      openCandidateInAnalysis(candidate.stock);
+    }
+  });
+
+  els.pickerDetailBox?.addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-picker-detail-action]");
+    if (!button) return;
+    const action = button.dataset.pickerDetailAction;
+    if (action === "ai") {
+      loadPickerAiBrief();
+      return;
+    }
+    if (action === "analysis") {
+      const stock = state.smartPicker.detail?.stock;
+      if (stock) openCandidateInAnalysis(stock);
+      return;
+    }
+    const target = button.dataset.pickerTarget;
+    managePickerWatchlist(action, target);
+  });
+
   els.levelTabs.addEventListener("click", (event) => {
     const button = event.target.closest("button[data-level]");
     if (!button) return;
@@ -1503,6 +2349,18 @@ function bindEvents() {
       item.classList.toggle("active", item === button);
     });
     document.querySelectorAll(".sidePane").forEach((panel) => {
+      panel.classList.toggle("active", panel.id === targetId);
+    });
+  });
+
+  els.pickerSideTabs?.addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-picker-side-panel]");
+    if (!button) return;
+    const targetId = button.dataset.pickerSidePanel;
+    els.pickerSideTabs.querySelectorAll("button[data-picker-side-panel]").forEach((item) => {
+      item.classList.toggle("active", item === button);
+    });
+    document.querySelectorAll(".pickerSidePane").forEach((panel) => {
       panel.classList.toggle("active", panel.id === targetId);
     });
   });

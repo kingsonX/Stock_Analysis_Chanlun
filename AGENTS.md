@@ -16,6 +16,10 @@
 - API 返回多级别联动摘要、线段、走势类型、中枢生命周期、买卖点状态和背驰证据。
 - API 返回信号复盘统计和失效价风险卡，用于训练和复盘，不用于自动交易。
 - 可选接入东方财富妙想 `mx-data`，在后端汇总行情、资金、估值、财务和公司资料，作为缠论之外的辅助信息。
+- 已接入基于 `mx-data`、`mx-search`、`mx-xuangu` 的综合交易画像，把缠论结构、养家情绪、章盟主容量和风险边界合成一张结论卡。
+- 已接入智能选股模块：按全 A 股范围执行条件筛选，生成候选池，支持候选详情、自选联动和右侧情报侧栏。
+- 已接入 Claude 兼容 AI 解释层，用于把三视角规则摘要改写成更像研究员写给交易员的结论。
+- 当前综合交易画像仍是“规则引擎 + 外部数据 + 模板化解释”，不是完整自主 AI 投顾，不可视为直接交易指令。
 
 ## 运行与验证
 
@@ -27,10 +31,17 @@ python3 -m venv --system-site-packages .venv
 .venv/bin/python run.py
 ```
 
+若 `5000` 端口已占用，可临时改用：
+
+```bash
+PORT=5001 .venv/bin/python run.py
+```
+
 环境变量：
 
 - `TUSHARE_TOKEN` 必须通过环境变量或本地 `.env` 提供。
 - `MX_APIKEY` 可选；配置后右侧“数据”页会加载妙想金融数据增强卡片。
+- `CLAUDE_BASE_URL`、`CLAUDE_API_KEY`、`CLAUDE_MODEL` 用于智能选股候选详情中的 AI 研究解读。
 - `.env` 已在 `.gitignore` 中，绝不要提交真实 token。
 - `.env.example` 只保留占位符。
 - `PORT` 默认 `5000`，`FLASK_DEBUG=1` 才开启 debug。
@@ -59,10 +70,13 @@ http://127.0.0.1:5000
 - `chanlun_app/data_provider.py`：Tushare 数据层，负责 token 读取、股票列表缓存、股票搜索、K 线获取和错误封装。
 - `chanlun_app/mx_provider.py`：东方财富妙想数据层，负责读取 `MX_APIKEY`、请求 `mx-data` 接口、宽容解析表格并隐藏密钥。
 - `chanlun_app/trading_profile.py`：综合交易画像服务，负责调用 `mx-data`、`mx-search`、`mx-xuangu`，并把缠论结构、情绪、容量和风险合成为统一结论卡。
+- `chanlun_app/smart_picker.py`：智能选股服务，负责市场环境、条件筛选、候选池、自选联动和候选详情。
+- `chanlun_app/ai_profile.py`：Claude 兼容 AI 解释层，负责消费事实层摘要并生成三视角研究解读。
 - `chanlun_app/chanlun.py`：缠论核心算法和指标计算。
 - `chanlun_app/templates/index.html`：单页工作台结构。
 - `chanlun_app/static/app.js`：前端状态管理、API 调用、Canvas 绘图、拖动缩放、tooltip。
 - `chanlun_app/static/styles.css`：布局和视觉样式。
+- `render.yaml`：Render 蓝图配置，当前生产入口使用 `gunicorn run:app --bind 0.0.0.0:$PORT`。
 - `tests/`：标准库 `unittest` 测试；API 测试使用 fake client，不依赖真实 Tushare。
 
 忽略目录：
@@ -104,7 +118,45 @@ http://127.0.0.1:5000
 
 - 请求体包含 `stock` 与当前 `/api/analysis` 返回的 `analysis`，服务端不重复请求 Tushare。
 - 返回 `profile`：综合交易画像结论卡，含 `结构/情绪与主流/容量与资金/风险边界` 四个维度。
+- `profile` 顶层包含 `stance/stance_label/headline/decision/conclusion/tags`。
+- `profile.structure`、`profile.emotion`、`profile.capacity`、`profile.risk` 每块都返回：
+  - `summary`：该维度摘要。
+  - `verdict`：一句话结论，例如 `候选观察`、`可以看，但别追高`、`容量够看，别冲动重仓`。
+  - `action`：明确写出“是否值得买”的当前判断。
+  - `detail`：理由说明。
+  - `basis`：判断依据列表。
+  - `conditions`：后续升级/降级观察条件。
+  - `tone`：`positive/neutral/caution`，供前端样式使用。
 - 同时返回 `mx_summary`、`news`、`market_scan` 作为证据层数据；任一外部源失败时允许部分降级。
+- 当前 `POST /api/trading-profile` 是规则化画像接口，不是大模型推理接口；它依赖前端先调用 `/api/analysis` 再把结构结果传入。
+
+`GET /api/smart-picker/overview`
+
+- 返回智能选股首页所需的市场环境、主流扫描、资讯催化与全 A 股范围摘要。
+- `universe.total` 代表当前本地股票库可扫描的 A 股总数。
+
+`POST /api/smart-picker/screen`
+
+- 请求体包含 `query_text`、`level`、`limit`。
+- 条件筛选默认在全 A 股范围执行，但深度结构扫描只对命中的前 `limit` 只股票执行，这是为速度和稳定性做的工程折中。
+- 返回 `candidates`，每项包含 `stock/quote/structure/emotion/capacity/overall` 六类信息，可供前端排序和筛选。
+
+`POST /api/smart-picker/candidate`
+
+- 请求体包含 `stock` 与 `level`。
+- 返回单只候选股的 `/api/analysis` 结构结果、综合交易画像和自选状态。
+
+`GET/POST /api/smart-picker/watchlist`
+
+- `GET` 用于读取东方财富自选概览。
+- `POST` 用于执行加入/移出自选操作。
+
+`POST /api/smart-picker/ai-brief`
+
+- 请求体包含 `stock`、`analysis`、`profile`。
+- 该接口只消费事实层和规则层结果，不自行请求 Tushare 主图结构。
+- 返回 `analysis.summary/overall_verdict/buy_judgement/confidence/chan_view/yangjia_view/zhang_view/risks/watch_points`。
+- 当前协议已切到 Claude 兼容接口，不再使用 OpenAI Responses API。
 
 错误统一返回：
 
@@ -147,6 +199,42 @@ http://127.0.0.1:5000
 - MACD 使用 EMA12、EMA26、DEA9，`hist = (DIF - DEA) * 2`。
 - BBI 使用 `(MA3 + MA6 + MA12 + MA24) / 4`。
 
+## 综合交易画像口径
+
+综合交易画像不是单纯拼文案，而是四层规则判断：
+
+1. `structure`：读取 `trend`、`signals`、`divergences`、`risk_cards`，回答缠论维度“是否值得买”。
+2. `emotion`：读取市场热度、活跃成交、行业活跃扫描和资讯催化，回答养家维度“是否值得买”。
+3. `capacity`：读取成交额、换手率、总市值、主力净额，回答章盟主维度“是否值得买”。
+4. `risk`：扫描减持/问询/处罚/监管/解禁等风险词，并叠加失效价与信号状态，给出风险边界。
+
+重要约束：
+
+- 顶部总卡必须服从“风险优先”原则，不能出现分块写“先控风险”，总卡却写“结构与环境共振”的自相矛盾。
+- 当最后买点仅为 `candidate` 时，总卡应优先落在 `候选观察/先观察`，不能直接升级成强确认。
+- 资讯催化要区分 `板块级/政策级催化`、`公司经营催化`、`一般资讯催化`，不能把所有公告都当成主线级利好。
+- 当前三视角结论是规则解释，不是席位级、盘口级、真人交易员级复现。
+
+可靠性边界：
+
+- 当前系统适合做“结构定位、环境观察、风险边界提醒”，不适合直接替代下单判断。
+- 缠论、养家、章盟主三视角目前都建立在可解释规则和外部数据之上，尚未引入真正的大模型语义推理。
+- 结论更接近“研究助理给出的观察结论”，不是“AI 投顾最终意见”。
+
+后续如果引入 AI，推荐采用两层结构：
+
+1. **事实层 / 规则层**：继续保留当前 `chanlun.py`、`mx_provider.py`、`trading_profile.py` 负责抽取可验证事实。
+2. **LLM 解释层**：新增独立接口，例如 `/api/ai-profile`，只消费结构化摘要，再输出三视角解释、置信度、关键依据和否定条件。
+
+不要让 LLM 直接替代规则层；正确方向是“规则给事实，LLM 做解释、比较和归纳”。
+
+当前 AI 接入约束：
+
+- 智能选股详情页的“AI 研究解读”已默认走 `Claude` 兼容消息接口，变量名为 `CLAUDE_BASE_URL`、`CLAUDE_API_KEY`、`CLAUDE_MODEL`、可选 `CLAUDE_API_VERSION`。
+- 兼容层当前按 `POST /v1/messages`、`x-api-key`、`anthropic-version` 口径发起请求，并要求模型直接返回合法 JSON。
+- 如果上游返回“第三方客户端禁止调用”“官方 Max 渠道禁止第三方接入”之类错误，应视为通道限制，而不是本地代码问题。
+- 出现此类限制时，不要继续硬编码绕过；应改用允许第三方调用的 Claude 网关，或切回官方 Anthropic API。
+
 ## 前端绘图约定
 
 前端无 Node 构建链，所有交互在 `chanlun_app/static/app.js` 中。
@@ -164,8 +252,12 @@ http://127.0.0.1:5000
 - 侧栏显示风险纪律卡和信号复盘统计；这些是后验训练辅助，不是交易指令。
 - 侧栏“数据”页异步显示 `mx-data` 增强信息；加载失败时只显示卡片错误，不阻塞主图。
 - 侧栏“数据”页顶部优先显示综合交易画像卡，再显示市场扫描、资讯催化和原始妙想表格卡片。
+- 侧栏“数据”页中的综合交易画像卡要优先强调 `decision`、各分块 `verdict`、`basis`、`conditions`，避免只展示一句空泛立场。
+- 三视角标题统一使用 `缠论结构`、`养家视角`、`章盟主视角`、`风控边界`，不要再混用旧的“情绪与主流 / 容量与资金 / 风险边界”口号式标题。
 - MACD 附图显示红绿柱、DIF、DEA，并标注 `趋势背驰/盘整背驰/线段背驰`。
 - tooltip 在普通 K 线悬停时显示 OHLC、成交量、BBI、MACD/DIF/DEA；悬停买卖点标记时显示该信号摘要；悬停 MACD 背驰标记时显示背驰理由和证据。
+- 智能选股页采用后台工作台布局：左侧为主菜单；内容区顶部先显示选股条件，候选池紧跟查询区下方；右侧先显示候选详情，再通过 `市场/催化/自选` tab 切换情报面板。
+- 智能选股页不要再把 `市场环境`、`资讯催化`、`我的自选` 平铺在主内容区中间；它们已经迁移到右侧侧栏，避免候选池被挤到页面下方。
 
 修改前端后至少运行：
 
@@ -179,8 +271,14 @@ node --check chanlun_app/static/app.js
 
 - 不要把 Tushare token 写进代码、README、AGENTS 或测试。
 - 不要把 `MX_APIKEY` 写进代码、README、AGENTS 或测试；只写 `.env` 或部署平台环境变量。
+- 不要把 `CLAUDE_API_KEY` 写进代码、README、AGENTS 或测试；只写 `.env` 或部署平台环境变量。
+- 当前 Render 生产配置依赖 `render.yaml`，并要求部署环境至少配置 `TUSHARE_TOKEN`、可选配置 `MX_APIKEY`。
+- 当前 Render 生产配置还支持 `CLAUDE_BASE_URL`、`CLAUDE_API_KEY`、`CLAUDE_MODEL`、`CLAUDE_API_VERSION`；若切换 AI 通道后未生效，需重新部署。
+- `render.yaml` 当前固定使用 `PYTHON_VERSION=3.11.11`；不要随手切回过新的 Python 版本，否则 `tushare/pandas/matplotlib` 兼容性风险会升高。
+- Render 修改环境变量后，如未自动触发新进程加载，应手动重新部署一次。
 - 不要依赖真实 Tushare 做单元测试；API 测试使用 fake client。
 - 不要依赖真实 `mx-data` 做单元测试；用 fake provider 或解析样例测试。
+- 不要依赖真实 `mx-search`、`mx-xuangu` 做单元测试；综合交易画像测试应优先用 fake provider 覆盖结论口径。
 - 真实接口测试可以用 `curl http://127.0.0.1:5000/...`，但不要把敏感配置输出到文档。
 - 改后端 Python 代码后需要重启正在运行的 Flask 进程；当前默认 `FLASK_DEBUG=0`，没有自动 reload。
 - 页面如果看不到最新 JS/CSS，确认访问的是 `http://127.0.0.1:5000`，并检查首页资源是否带 `?v=` 参数。

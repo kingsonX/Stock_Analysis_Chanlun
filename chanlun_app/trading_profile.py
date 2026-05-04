@@ -234,7 +234,7 @@ def _compose_profile(
     capacity = _capacity_summary(mx_summary)
     risk = _risk_summary(analysis, news)
     total_score = structure["score"] + emotion["score"] + capacity["score"] - risk["penalty"]
-    stance, stance_label = _stance_label(total_score, structure["score"])
+    stance, stance_label = _stance_label(total_score, structure, risk)
 
     conclusion = _conclusion_text(structure, emotion, capacity, risk, analysis)
     return {
@@ -242,6 +242,7 @@ def _compose_profile(
         "stance_label": stance_label,
         "headline": _headline_text(structure, emotion, capacity, risk),
         "conclusion": conclusion,
+        "decision": _overall_decision(structure, emotion, capacity, risk),
         "tags": [item for item in [structure["label"], emotion["label"], capacity["label"], risk["label"]] if item],
         "structure": structure,
         "emotion": emotion,
@@ -257,8 +258,10 @@ def _structure_summary(analysis: dict[str, Any]) -> dict[str, Any]:
     query = analysis.get("query") or {}
     signals = analysis.get("signals") or []
     divergences = analysis.get("divergences") or []
+    risk_cards = analysis.get("risk_cards") or []
     signal = _latest_signal(signals)
     divergence = divergences[-1] if divergences else None
+    risk_card = _latest_risk_card(risk_cards, signal)
 
     score = 0
     if trend.get("direction") == "up":
@@ -282,20 +285,78 @@ def _structure_summary(analysis: dict[str, Any]) -> dict[str, Any]:
 
     if score >= 2:
         label = "结构偏多"
+        tone = "positive"
     elif score <= -2:
         label = "结构偏空"
+        tone = "caution"
     else:
         label = "结构观察"
+        tone = "neutral"
 
     reason = trend.get("reason") or "当前结构仍在演化。"
     if divergence:
         reason = f"{reason} 最近背驰：{divergence.get('label') or '无'}。"
+
+    if signal and signal.get("side") == "sell":
+        verdict = "不宜买"
+        action = "是否值得买：当前最后信号偏卖方，先把结构风险放在前面，不把反弹想成新买点。"
+        conditions = [
+            "先等卖点被后续结构修复，再重新评估。",
+            "如果新的中枢继续上移、卖点失效，才说明空方压力减弱。",
+        ]
+        tone = "caution"
+    elif signal and signal.get("side") == "buy" and signal.get("status") == "confirmed" and score >= 2:
+        verdict = "可按纪律跟踪"
+        action = f"是否值得买：结构上可以看多，但只能按确认买点处理，必须守住失效价 {_price_text(signal.get('invalidation_price'))}。"
+        conditions = [
+            "后续回踩不破失效价，买点结构才继续成立。",
+            "若重新跌回中枢内部或出现更高级别卖点，优先降级为观察。",
+        ]
+        tone = "positive"
+    elif signal and signal.get("side") == "buy":
+        verdict = "候选观察"
+        action = f"是否值得买：现在更像候选买点，不是确认买点，可以观察，暂不宜把它当成确定性上车位。"
+        conditions = [
+            "买点要从候选走到确认，至少要看到后续离开段继续成立。",
+            f"若跌破失效价 {_price_text(signal.get('invalidation_price'))}，这笔买点假设就应取消。",
+        ]
+    elif score >= 2:
+        verdict = "可继续跟踪"
+        action = "是否值得买：结构偏强，但缺少清晰买点确认，更适合等回踩或下一次结构确认。"
+        conditions = [
+            "优先等新的买点出现，而不是在没有信号时追价。",
+            "若中枢重心继续上移，结构才会从可看变成更强确认。",
+        ]
+    else:
+        verdict = "先观察"
+        action = "是否值得买：当前结构还不足以下明确买入结论，先把级别、位置和背驰大小看清。"
+        conditions = [
+            "至少等中枢方向和买卖点类别明确，再讨论是否参与。",
+            "没有确认信号时，结构分析更适合做观察清单，不适合直接下结论。",
+        ]
+
+    basis = [
+        f"级别：{query.get('level_label') or analysis.get('level') or '当前级别'}",
+        f"走势：{trend.get('label') or '结构不足'}",
+        f"位置：{trend.get('position_label') or '未知'}",
+        f"信号：{signal_text}",
+    ]
+    if divergence:
+        basis.append(f"最近背驰：{divergence.get('label') or '无'}")
+    if risk_card and risk_card.get("invalidation_price") is not None:
+        basis.append(f"失效价：{_price_text(risk_card.get('invalidation_price'))}")
+
     return {
         "label": label,
         "score": score,
         "title": "缠论结构",
         "summary": f"{query.get('level_label') or analysis.get('level') or '当前级别'} · {trend.get('label') or '结构不足'} · {signal_text}",
-        "detail": reason,
+        "verdict": verdict,
+        "action": action,
+        "detail": f"理由：{reason}",
+        "basis": basis,
+        "conditions": conditions,
+        "tone": tone,
         "invalidation_price": signal.get("invalidation_price") if signal else None,
     }
 
@@ -327,26 +388,68 @@ def _emotion_summary(stock: dict[str, Any], news: dict[str, Any], market_scan: d
 
     if score >= 3:
         label = "主流活跃"
+        tone = "positive"
     elif score >= 1:
         label = "轮动可看"
+        tone = "neutral"
     else:
         label = "情绪一般"
+        tone = "caution"
 
     industry_name = _flatten(stock.get("industry") or "所属行业")
     summary = f"高涨幅个股 {market_total} 只，活跃成交股 {liquidity_total} 只，{industry_name} 活跃股 {industry_total} 只。"
     if hit_current_stock:
         summary = f"{summary} 当前标的出现在行业活跃扫描中。"
 
-    detail = "养家视角先看赚钱效应与主流度。"
-    if recent_news:
-        detail = f"{detail} 近期有资讯催化：{recent_news[0].get('title', '')}"
+    first_news = recent_news[0] if recent_news else {}
+    catalyst = _catalyst_judgement(first_news)
+    detail = "理由：养家视角先看赚钱效应、主流强度和个股是否站在合力里。"
+    if first_news:
+        detail = f"{detail} 最近催化是{catalyst['level']}：{first_news.get('title', '')}。"
+
+    if score >= 3 and hit_current_stock:
+        verdict = "可以看，但别追高"
+        action = "是否值得买：情绪面是加分项，这票可以进入观察池；只有主流继续扩散、板块反馈还强，才值得跟随。"
+        conditions = [
+            "次日或后续若高标、活跃股继续给正反馈，说明赚钱效应还在。",
+            "若行业活跃扫描里这票掉队，或者市场高标开始补跌，就不该只凭情绪硬做。",
+        ]
+        tone = "positive"
+    elif score >= 1:
+        verdict = "可看不抢"
+        action = "是否值得买：有轮动热度，但还没强到可以无条件跟，适合先看板块延续，不适合因为一条公告就追。"
+        conditions = [
+            "最好等行业活跃度继续抬升，再把它从观察名单升级为交易名单。",
+            "如果只是公司级公告催化，而不是板块级催化，持续性要打折看。",
+        ]
+    else:
+        verdict = "不靠情绪买"
+        action = "是否值得买：单看情绪和主流维度还不够，赚钱效应一般时，不值得只凭热度上车。"
+        conditions = [
+            "先等高涨幅个股和活跃成交股数量明显回升。",
+            "先等板块合力形成，再谈个股是否跟随。",
+        ]
+
+    basis = [
+        f"高涨幅个股：{market_total} 只",
+        f"活跃成交股：{liquidity_total} 只",
+        f"{industry_name}活跃股：{industry_total} 只",
+        f"当前标的{'命中' if hit_current_stock else '未命中'}行业活跃扫描",
+    ]
+    if first_news:
+        basis.append(f"催化级别：{catalyst['level']}")
 
     return {
         "label": label,
         "score": score,
-        "title": "情绪与主流",
+        "title": "养家视角",
         "summary": summary,
+        "verdict": verdict,
+        "action": action,
         "detail": detail,
+        "basis": basis,
+        "conditions": conditions,
+        "tone": tone,
     }
 
 
@@ -355,9 +458,14 @@ def _capacity_summary(mx_summary: dict[str, Any]) -> dict[str, Any]:
         return {
             "label": "容量未知",
             "score": 0,
-            "title": "容量与资金",
+            "title": "章盟主视角",
             "summary": mx_summary.get("message") or "妙想行情数据暂不可用。",
-            "detail": "章建平视角会先看成交承接、换手和市值容量。",
+            "verdict": "信息不足",
+            "action": "是否值得买：这一维看不清时，不适合把仓位压在想象上。",
+            "detail": "理由：章盟主视角先看成交承接、换手、市值容量和主力净额，没有这些数据就不下结论。",
+            "basis": [],
+            "conditions": ["等容量和资金数据恢复后，再评估是否适合参与。"],
+            "tone": "neutral",
         }
 
     data = mx_summary.get("data", {})
@@ -374,12 +482,15 @@ def _capacity_summary(mx_summary: dict[str, Any]) -> dict[str, Any]:
     if amount >= 3_000_000_000 or market_cap >= 50_000_000_000:
         score += 2
         label = "容量充足"
+        tone = "positive"
     elif amount >= 1_000_000_000 or market_cap >= 10_000_000_000:
         score += 1
         label = "容量中等"
+        tone = "neutral"
     else:
         label = "容量偏小"
         score -= 1 if amount > 0 or market_cap > 0 else 0
+        tone = "caution"
 
     if turnover >= 12:
         score += 0
@@ -399,8 +510,48 @@ def _capacity_summary(mx_summary: dict[str, Any]) -> dict[str, Any]:
     fund_flow_text = _metric_display(fund_flow, ["主力净流入", "主力资金净流入", "主力净额"])
 
     summary = f"成交额 {amount_text or '-'}，换手 {turnover_text or '-'}，总市值 {market_cap_text or '-'}。"
-    detail = f"资金侧主力净额 {fund_flow_text or '-'}，更适合按容量和承接来理解，而不是只看形态。"
-    return {"label": label, "score": score, "title": "容量与资金", "summary": summary, "detail": detail}
+    detail = f"理由：资金侧主力净额 {fund_flow_text or '-'}，章盟主视角看的是能不能承接、能不能进出，而不是图形漂不漂亮。"
+    if score >= 3:
+        verdict = "容量支持跟踪"
+        action = "是否值得买：容量和承接都过关，若结构继续确认，值得纳入交易名单；但仍要看主力净额能否延续。"
+        conditions = [
+            "主力净流入继续为正，说明承接还在。",
+            "若换手突然失衡、成交缩得太快，大资金视角就会降级。",
+        ]
+        tone = "positive"
+    elif score >= 1:
+        verdict = "容量够看，别冲动重仓"
+        action = "是否值得买：可以看，但更适合结合结构分批观察，不适合只凭容量去赌。"
+        conditions = [
+            "先等结构确认和资金延续同时出现，再考虑提高级别。",
+            "若主力净额转弱，说明容量只是表面，承接未必一致。",
+        ]
+    else:
+        verdict = "容量不支持强做"
+        action = "是否值得买：从章盟主的承接视角看，不值得为了题材想象去硬做。"
+        conditions = [
+            "至少要看到成交额和流动性改善，再谈是否进入大资金视野。",
+            "流动性不足时，退出难度往往比买入理由更重要。",
+        ]
+        tone = "caution"
+    basis = [
+        f"成交额：{amount_text or '-'}",
+        f"换手率：{turnover_text or '-'}",
+        f"总市值：{market_cap_text or '-'}",
+        f"主力净额：{fund_flow_text or '-'}",
+    ]
+    return {
+        "label": label,
+        "score": score,
+        "title": "章盟主视角",
+        "summary": summary,
+        "verdict": verdict,
+        "action": action,
+        "detail": detail,
+        "basis": basis,
+        "conditions": conditions,
+        "tone": tone,
+    }
 
 
 def _risk_summary(analysis: dict[str, Any], news: dict[str, Any]) -> dict[str, Any]:
@@ -426,12 +577,57 @@ def _risk_summary(analysis: dict[str, Any], news: dict[str, Any]) -> dict[str, A
     if invalidation is not None:
         summary = f"{summary} 当前结构失效价 {invalidation:.3f}。"
 
-    detail = "章建平视角会把锁定、监管、减持和流动性一起看。"
-    return {"label": label, "penalty": penalty, "title": "风险边界", "summary": summary, "detail": detail}
+    if penalty == 0:
+        verdict = "可按纪律执行"
+        action = "是否值得买：风控上没有明显硬伤，但前提仍是结构和情绪能继续配合。"
+        conditions = [
+            "继续盯住失效价和公告节奏，别因为眼下没风险词就放松纪律。",
+        ]
+        tone = "positive"
+    elif penalty <= 2:
+        verdict = "带止损观察"
+        action = "是否值得买：可以观察，但必须把失效价和公告风险放在买入理由前面。"
+        conditions = [
+            "一旦跌破失效价，或风险词继续发酵，就先取消结构假设。",
+        ]
+        tone = "neutral"
+    else:
+        verdict = "先回避风险"
+        action = "是否值得买：当前风险边界不舒服，先别让结构好看掩盖公告和监管压力。"
+        conditions = [
+            "等风险词落地、结构重新修复后，再评估是否回到观察名单。",
+        ]
+        tone = "caution"
+
+    basis = []
+    if hits:
+        basis.append(f"风险词：{hits[0]}")
+    if invalidation is not None:
+        basis.append(f"失效价：{_price_text(invalidation)}")
+    if signal:
+        basis.append(f"信号状态：{_signal_short_label(signal)} {signal.get('status_label') or ''}".strip())
+
+    detail = "理由：章盟主视角会把锁定、监管、减持和流动性一起看，风控永远比故事更先兑现。"
+    return {
+        "label": label,
+        "penalty": penalty,
+        "title": "风控边界",
+        "summary": summary,
+        "verdict": verdict,
+        "action": action,
+        "detail": detail,
+        "basis": basis,
+        "conditions": conditions,
+        "tone": tone,
+    }
 
 
-def _stance_label(total_score: int, structure_score: int) -> tuple[str, str]:
-    if structure_score <= 0 and total_score > 0:
+def _stance_label(total_score: int, structure: dict[str, Any], risk: dict[str, Any]) -> tuple[str, str]:
+    if risk.get("penalty", 0) >= 3 or risk.get("tone") == "caution":
+        return "caution", "风险优先"
+    if structure.get("verdict") == "候选观察":
+        return "neutral", "候选观察"
+    if structure.get("score", 0) <= 0 and total_score > 0:
         return "neutral", "先观察"
     if total_score >= 4:
         return "positive", "结构与环境共振"
@@ -455,14 +651,24 @@ def _conclusion_text(
 ) -> str:
     signal = _latest_signal(analysis.get("signals") or [])
     if signal and signal.get("side") == "buy" and structure["score"] >= 2 and emotion["score"] >= 1:
-        return "结构上已经出现偏多线索，但是否值得做，要看主流和承接是否继续共振，先按失效价管理。"
+        return "综合结论：可以列入交易观察，但前提是结构买点继续确认、主流热度不掉、承接资金不转弱；否则仍按候选处理。"
     if signal and signal.get("side") == "buy":
-        return "结构有点，但环境或容量没有完全配合，按候选观察，不宜把技术点当成环境确认。"
+        return "综合结论：结构有点，但还不到“看见买点就能下手”的程度，更像候选观察，不宜把技术点直接等同于环境确认。"
     if signal and signal.get("side") == "sell":
-        return "结构转弱信号已经出现，若后续情绪和资金不能修复，优先按风险纪律而不是主观期待处理。"
+        return "综合结论：最后信号偏卖方，先看风险而不是想象，除非结构、情绪和资金三者一起修复，否则不把反抽当买点。"
     if risk["penalty"] >= 2:
-        return "当前更重要的是把风险边界看清，再谈结构延续，先别让辅助信息盖过风险事实。"
-    return "暂时没有特别突出的结构共振，先看主线、量能和后续公告催化，再决定是否进入观察名单。"
+        return "综合结论：现在先把公告和风险边界看清，再谈参与；风险没落地之前，漂亮结构也只能降级看。"
+    return "综合结论：暂时没有特别强的共振信号，先等结构、主流和容量三条线至少有两条一起增强，再决定是否升级为可买观察。"
+
+
+def _overall_decision(structure: dict[str, Any], emotion: dict[str, Any], capacity: dict[str, Any], risk: dict[str, Any]) -> str:
+    if structure.get("tone") == "caution" or risk.get("tone") == "caution":
+        return "是否值得买：先控制风险，不抢。"
+    if structure.get("verdict") == "可按纪律跟踪" and emotion.get("score", 0) >= 1 and capacity.get("score", 0) >= 1:
+        return "是否值得买：可跟踪，但只按确认条件和失效价执行。"
+    if structure.get("verdict") == "候选观察":
+        return "是否值得买：先观察，等候选变确认。"
+    return "是否值得买：暂列观察名单，等共振更清楚。"
 
 
 def _latest_signal(signals: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -470,6 +676,17 @@ def _latest_signal(signals: list[dict[str, Any]]) -> dict[str, Any] | None:
         return None
     active = [item for item in signals if item.get("status") != "invalid"]
     return (active or signals)[-1]
+
+
+def _latest_risk_card(risk_cards: list[dict[str, Any]], signal: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not risk_cards:
+        return None
+    if signal:
+        signal_id = signal.get("id")
+        for item in reversed(risk_cards):
+            if item.get("signal_id") == signal_id:
+                return item
+    return risk_cards[-1]
 
 
 def _signal_short_label(signal: dict[str, Any]) -> str:
@@ -482,6 +699,28 @@ def _signal_short_label(signal: dict[str, Any]) -> str:
     if "一类" in signal_type:
         return f"{side}1"
     return side
+
+
+def _catalyst_judgement(item: dict[str, Any]) -> dict[str, str]:
+    text = f"{_flatten(item.get('title') or '')} {_flatten(item.get('summary') or '')}"
+    strong_words = ("国务院", "工信部", "发改委", "财政部", "政策", "规划", "产业化", "补贴", "并购重组")
+    medium_words = ("订单", "业绩", "中标", "合同", "投产", "合作", "回购")
+    if any(word in text for word in strong_words):
+        return {"level": "板块级/政策级催化"}
+    if any(word in text for word in medium_words):
+        return {"level": "公司经营催化"}
+    if text:
+        return {"level": "一般资讯催化"}
+    return {"level": "暂无催化"}
+
+
+def _price_text(value: Any) -> str:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return "-"
+    text = f"{number:.3f}".rstrip("0").rstrip(".")
+    return text or "0"
 
 
 def _metric_numeric(card: dict[str, Any], keywords: list[str]) -> float:

@@ -12,6 +12,14 @@ services:
         sync: false
       - key: MX_APIKEY
         sync: false
+      - key: CLAUDE_BASE_URL
+        value: "https://code.newcli.com/claude"
+      - key: CLAUDE_API_KEY
+        sync: false
+      - key: CLAUDE_MODEL
+        value: "Claude Sonnet 4.6"
+      - key: CLAUDE_API_VERSION
+        value: "2023-06-01"
       - key: PYTHON_VERSION
         value: "3.11.11"
       - key: FLASK_DEBUG

@@ -9,7 +9,15 @@ python3 -m venv --system-site-packages .venv
 .venv/bin/python -m pip install -r requirements.txt
 export TUSHARE_TOKEN="你的 Tushare Pro Token"
 export MX_APIKEY="你的东方财富妙想 API Key"
+export CLAUDE_BASE_URL="https://code.newcli.com/claude"
+export CLAUDE_API_KEY="你的 Claude API Key"
 .venv/bin/python run.py
+```
+
+如果你希望在智能选股候选详情里生成 `Claude` 研究解读，还可以额外配置：
+
+```bash
+export CLAUDE_MODEL="Claude Sonnet 4.6"
 ```
 
 打开浏览器访问 `http://127.0.0.1:5000`。
@@ -28,6 +36,8 @@ export MX_APIKEY="你的东方财富妙想 API Key"
 - 复盘与纪律：统计信号后固定窗口内的顺向/逆向空间，并生成失效价风险卡。
 - 妙想数据：通过后端读取 `MX_APIKEY`，在右侧数据页展示行情、资金、估值、财务摘要和公司资料，不向浏览器暴露密钥。
 - 综合交易画像：把缠论结构、妙想行情卡、资讯催化、市场扫描合成一张结论卡，输出“结构/情绪/容量/风险”四个维度的综合判断。
+- 智能选股：按全 A 股范围执行条件筛选，支持候选池排序、三视角筛选、自选联动和候选详情展开。
+- AI 研究解读：在智能选股候选详情里，调用 Claude 兼容接口把缠论、养家、章盟主三视角改写成更接近研究员的解释。
 - 图表：Canvas 交互 K 线图，叠加分型、笔、线段、中枢、买卖点、BBI 和 MACD；支持拖动、缩放、图层开关和历史回放。
 
 ## 说明
@@ -37,4 +47,5 @@ export MX_APIKEY="你的东方财富妙想 API Key"
 - 复权功能已从第一版界面和后端移除，所有 K 线按当前 Tushare 基础行情接口返回。
 - Token 从 `TUSHARE_TOKEN` 环境变量读取，不会写入代码。
 - 妙想数据从 `MX_APIKEY` 环境变量读取；缺少或调用失败时只影响右侧数据页，不影响缠论主功能。
+- `Claude` 研究解读从 `CLAUDE_API_KEY` 环境变量读取；建议同时配置 `CLAUDE_BASE_URL` 和 `CLAUDE_MODEL`；缺少时不影响候选池和缠论结构，只会让 AI 解读按钮无法生成内容。
 - 缠论规则存在社区口径差异，本项目把主要规则集中在 `chanlun_app/chanlun.py`，后续可继续细化。

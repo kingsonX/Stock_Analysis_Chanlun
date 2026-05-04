@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from typing import Any
 
+from .ai_profile import AIProviderError, ClaudeProfileExplainer
 from .chanlun import analyze_klines
 from .config import LEVELS, default_date_range, normalize_yyyymmdd
 from .data_provider import DataProviderError, TushareClient
 from .mx_provider import MXDataProvider, MXProviderError
+from .smart_picker import SmartPickerService
 from .trading_profile import TradingProfileService
 
 
@@ -13,6 +15,8 @@ def create_app(
     data_client: TushareClient | None = None,
     mx_client: MXDataProvider | None = None,
     profile_client: TradingProfileService | None = None,
+    picker_client: SmartPickerService | None = None,
+    ai_client: ClaudeProfileExplainer | None = None,
 ):
     from pathlib import Path
 
@@ -24,6 +28,12 @@ def create_app(
     client = data_client or TushareClient()
     mx_provider = mx_client or MXDataProvider()
     trading_profile = profile_client or TradingProfileService(mx_data_provider=mx_provider)
+    smart_picker = picker_client or SmartPickerService(
+        data_client=client,
+        mx_data_provider=mx_provider,
+        trading_profile=trading_profile,
+    )
+    ai_explainer = ai_client or ClaudeProfileExplainer()
 
     def json_error(message: str, status_code: int):
         return jsonify({"error": {"message": message, "status_code": status_code}}), status_code
@@ -116,6 +126,66 @@ def create_app(
         try:
             return jsonify(trading_profile.build(stock=stock, analysis=analysis))
         except MXProviderError as exc:
+            return json_error(exc.message, exc.status_code)
+
+    @app.get("/api/smart-picker/overview")
+    def smart_picker_overview():
+        try:
+            return jsonify(smart_picker.overview())
+        except (DataProviderError, MXProviderError) as exc:
+            return json_error(exc.message, exc.status_code)
+
+    @app.post("/api/smart-picker/screen")
+    def smart_picker_screen():
+        payload = request.get_json(silent=True) or {}
+        level = payload.get("level", "daily")
+        limit = _safe_int(payload.get("limit"), 20, 1, 80)
+        query_text = payload.get("query_text", "")
+        try:
+            return jsonify(smart_picker.screen(query_text=query_text, level=level, limit=limit))
+        except (DataProviderError, MXProviderError) as exc:
+            return json_error(exc.message, exc.status_code)
+
+    @app.post("/api/smart-picker/candidate")
+    def smart_picker_candidate():
+        payload = request.get_json(silent=True) or {}
+        stock = payload.get("stock") or {}
+        level = payload.get("level", "daily")
+        try:
+            return jsonify(smart_picker.candidate_detail(stock=stock, level=level))
+        except (DataProviderError, MXProviderError) as exc:
+            return json_error(exc.message, exc.status_code)
+
+    @app.get("/api/smart-picker/watchlist")
+    def smart_picker_watchlist():
+        try:
+            return jsonify(smart_picker.watchlist())
+        except (DataProviderError, MXProviderError) as exc:
+            return json_error(exc.message, exc.status_code)
+
+    @app.post("/api/smart-picker/watchlist")
+    def smart_picker_watchlist_manage():
+        payload = request.get_json(silent=True) or {}
+        action = payload.get("action", "")
+        target = payload.get("target", "")
+        try:
+            return jsonify(smart_picker.manage_watchlist(action=action, target=target))
+        except (DataProviderError, MXProviderError) as exc:
+            return json_error(exc.message, exc.status_code)
+
+    @app.post("/api/smart-picker/ai-brief")
+    def smart_picker_ai_brief():
+        payload = request.get_json(silent=True) or {}
+        stock = payload.get("stock") or {}
+        analysis = payload.get("analysis") or {}
+        profile = payload.get("profile") or {}
+        if not stock:
+            return json_error("缺少股票信息，无法生成 AI 解读。", 400)
+        if not profile:
+            return json_error("缺少交易画像事实层，无法生成 AI 解读。", 400)
+        try:
+            return jsonify(ai_explainer.explain(stock=stock, analysis=analysis, profile_payload=profile))
+        except AIProviderError as exc:
             return json_error(exc.message, exc.status_code)
 
     @app.errorhandler(404)

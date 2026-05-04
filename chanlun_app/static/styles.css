@@ -26,8 +26,107 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
 }
 
+.adminShell {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  min-height: 100vh;
+}
+
+.adminSidebar {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: 18px;
+  padding: 18px 14px;
+  background: #16232d;
+  color: #eef5f8;
+  border-right: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.brandBlock {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+}
+
+.brandMark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: rgba(37, 111, 146, 0.32);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.brandBlock strong,
+.brandBlock p {
+  margin: 0;
+}
+
+.brandBlock strong {
+  display: block;
+  font-size: 15px;
+  line-height: 1.2;
+}
+
+.brandBlock p {
+  margin-top: 4px;
+  color: rgba(238, 245, 248, 0.68);
+  font-size: 12px;
+}
+
+.mainMenu {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+}
+
+.mainMenu button {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: rgba(238, 245, 248, 0.78);
+  font-size: 14px;
+  font-weight: 650;
+  padding: 0 14px;
+  cursor: pointer;
+}
+
+.mainMenu button:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+}
+
+.mainMenu button.active {
+  background: rgba(37, 111, 146, 0.22);
+  border-color: rgba(95, 180, 220, 0.3);
+  color: #fff;
+}
+
+.adminContent {
+  min-width: 0;
+  padding: 16px;
+}
+
+.appPage {
+  display: none;
+}
+
+.appPage.active {
+  display: block;
+}
+
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
@@ -35,8 +134,7 @@ input {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 360px;
   gap: 16px;
-  min-height: 100vh;
-  padding: 16px;
+  min-height: calc(100vh - 32px);
 }
 
 .workspace,
@@ -358,6 +456,340 @@ input:focus {
   border-bottom: 1px solid var(--line);
 }
 
+.placeholderPage {
+  display: grid;
+  min-height: calc(100vh - 32px);
+  align-items: center;
+  justify-items: center;
+}
+
+.placeholderCard {
+  width: min(560px, 100%);
+  padding: 36px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.placeholderEyebrow {
+  display: inline-block;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+  margin-bottom: 12px;
+}
+
+.placeholderCard h1 {
+  font-size: 28px;
+  line-height: 1.2;
+}
+
+.placeholderCard p {
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.pickerShell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 400px;
+  gap: 16px;
+  min-height: calc(100vh - 32px);
+}
+
+.pickerWorkspace {
+  display: grid;
+  gap: 16px;
+}
+
+.pickerTopbar {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
+}
+
+.pickerActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.pickerControls {
+  display: grid;
+  grid-template-columns: minmax(320px, 1.8fr) repeat(2, minmax(120px, 0.5fr)) auto;
+  gap: 12px;
+  align-items: end;
+  padding: 16px 20px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.pickerQueryField {
+  min-width: 0;
+}
+
+.pickerControls input,
+.pickerControls select {
+  height: 38px;
+}
+
+.pickerControls button,
+.ghostButton,
+.miniButton {
+  height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+}
+
+.ghostButton {
+  background: #fff;
+  color: var(--ink);
+}
+
+.ghostButton:hover,
+.miniButton.ghostButton:hover {
+  border-color: rgba(37, 111, 146, 0.26);
+  color: var(--accent);
+}
+
+.ghostButton.active {
+  border-color: rgba(37, 111, 146, 0.3);
+  background: rgba(37, 111, 146, 0.08);
+  color: var(--accent-strong);
+}
+
+.pickerControls button:hover,
+.miniButton:hover {
+  background: var(--accent-strong);
+}
+
+.pickerToolbar {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(120px, 1fr)) auto;
+  gap: 12px;
+  align-items: end;
+  padding: 14px 0 0;
+  border-top: 1px solid var(--line);
+}
+
+.pickerToolbarActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.pickerTablePanel,
+.pickerDetailPanel {
+  min-width: 0;
+}
+
+.pickerSummaryGrid,
+.pickerDetailStack {
+  display: grid;
+  gap: 10px;
+}
+
+.pickerStageCard,
+.pickerSummaryCard {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  background: #f8fafb;
+}
+
+.pickerStageCard.tone-positive {
+  border-left: 4px solid var(--buy);
+}
+
+.pickerStageCard.tone-neutral {
+  border-left: 4px solid var(--accent);
+}
+
+.pickerStageCard.tone-caution {
+  border-left: 4px solid var(--sell);
+}
+
+.pickerMiniCards {
+  display: grid;
+  gap: 8px;
+}
+
+.pickerTablePanel {
+  display: grid;
+  gap: 14px;
+}
+
+.pickerTableHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.pickerTableHeader p {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.pickerResultMeta {
+  max-width: 300px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: right;
+}
+
+.pickerLoadingTable {
+  display: grid;
+  gap: 10px;
+}
+
+.pickerTable tbody tr.is-selected {
+  background: rgba(37, 111, 146, 0.06);
+}
+
+.pickerStockCell,
+.pickerRowActions {
+  display: grid;
+  gap: 6px;
+}
+
+.pickerStockCell strong {
+  font-size: 13px;
+}
+
+.pickerStockCell small,
+.pickerCellText,
+.pickerHint {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.pickerCellText {
+  margin: 6px 0 0;
+  white-space: normal;
+}
+
+.pickerRowActions {
+  min-width: 92px;
+}
+
+.miniButton {
+  height: 30px;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.pickerOverall {
+  display: inline-flex;
+  font-size: 13px;
+}
+
+.pickerOverall.tone-positive {
+  color: var(--buy);
+}
+
+.pickerOverall.tone-neutral {
+  color: var(--accent-strong);
+}
+
+.pickerOverall.tone-caution {
+  color: var(--sell);
+}
+
+.pickerHint {
+  margin-top: 10px;
+}
+
+.pickerSidePanel {
+  position: sticky;
+  top: 16px;
+  align-self: start;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 10px;
+  max-height: calc(100vh - 32px);
+  min-width: 0;
+}
+
+.pickerSideTabs {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.pickerDetailPanel {
+  max-height: 42vh;
+  overflow: auto;
+}
+
+.pickerSidePane {
+  display: none;
+  min-height: 0;
+  max-height: calc(58vh - 72px);
+  overflow: auto;
+}
+
+.pickerSidePane.active {
+  display: block;
+}
+
+.pickerDetailHero {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.pickerDetailHero strong {
+  display: block;
+  font-size: 15px;
+}
+
+.pickerDetailHero p {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.pickerDetailActions {
+  display: grid;
+  gap: 8px;
+}
+
+.aiResearchCard,
+.aiViewBlock {
+  display: grid;
+  gap: 8px;
+}
+
+.aiViewBlock {
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+}
+
+.aiMetaRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.aiMetaText {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .empty {
   color: var(--muted);
   font-size: 14px;
@@ -577,10 +1009,16 @@ input:focus {
 }
 
 .profileHeadline,
+.profileDecisionLine,
 .profileConclusion {
   margin: 0;
   font-size: 13px;
   line-height: 1.55;
+}
+
+.profileDecisionLine {
+  font-weight: 700;
+  color: var(--ink);
 }
 
 .profileConclusion {
@@ -594,14 +1032,59 @@ input:focus {
 
 .profileBlock {
   display: grid;
-  gap: 4px;
+  gap: 8px;
   padding: 10px 12px;
   border: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.72);
 }
 
+.profileBlock.tone-positive {
+  border-left: 3px solid var(--buy);
+}
+
+.profileBlock.tone-neutral {
+  border-left: 3px solid var(--accent);
+}
+
+.profileBlock.tone-caution {
+  border-left: 3px solid var(--sell);
+}
+
+.profileBlockHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 .profileBlock strong {
   font-size: 12px;
+}
+
+.profileVerdict {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.profileVerdict.tone-positive {
+  background: rgba(14, 135, 108, 0.14);
+  color: var(--buy);
+}
+
+.profileVerdict.tone-neutral {
+  background: rgba(37, 111, 146, 0.12);
+  color: var(--accent-strong);
+}
+
+.profileVerdict.tone-caution {
+  background: rgba(204, 76, 63, 0.12);
+  color: var(--sell);
 }
 
 .profileBlock p,
@@ -615,8 +1098,40 @@ input:focus {
   color: var(--ink);
 }
 
+.profileSummary {
+  color: var(--accent-strong);
+}
+
+.profileAction {
+  font-weight: 700;
+}
+
 .profileBlock small {
   color: var(--muted);
+}
+
+.profileList {
+  display: grid;
+  gap: 4px;
+}
+
+.profileList span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.profileList ul {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 3px;
+}
+
+.profileList li {
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .mxCard {
@@ -767,27 +1282,69 @@ th {
 }
 
 @media (max-width: 980px) {
+  .adminShell {
+    grid-template-columns: 1fr;
+  }
+
+  .adminSidebar {
+    grid-template-rows: auto auto;
+    gap: 12px;
+    padding: 12px 16px;
+  }
+
+  .mainMenu {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .adminContent {
+    padding-top: 0;
+  }
+
   .shell {
     grid-template-columns: 1fr;
+  }
+
+  .pickerShell {
+    grid-template-columns: 1fr;
+  }
+
+  .pickerControls {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .pickerToolbar {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .pickerToolbarActions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
   }
 
   .topbar {
     grid-template-columns: 1fr;
   }
 
-  .sidePanel {
+  .sidePanel,
+  .pickerSidePanel {
     position: static;
     max-height: none;
   }
 
-  .sidePane {
+  .sidePane,
+  .pickerDetailPanel,
+  .pickerSidePane {
     max-height: none;
   }
 }
 
 @media (max-width: 640px) {
-  .shell {
-    padding: 8px;
+  .adminContent {
+    padding: 12px;
+  }
+
+  .mainMenu {
+    grid-template-columns: 1fr;
   }
 
   .workspace {
@@ -796,6 +1353,15 @@ th {
 
   .topbar,
   .controls {
+    padding: 14px;
+  }
+
+  .pickerTopbar,
+  .pickerControls {
+    padding: 14px;
+  }
+
+  .pickerToolbar {
     padding: 14px;
   }
 
@@ -814,5 +1380,18 @@ th {
 
   .sideTabs {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .pickerControls {
+    grid-template-columns: 1fr;
+  }
+
+  .pickerToolbar {
+    grid-template-columns: 1fr;
+    padding-top: 12px;
+  }
+
+  .pickerActions {
+    justify-content: flex-start;
   }
 }

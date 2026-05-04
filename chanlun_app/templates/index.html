@@ -7,104 +7,251 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='styles.css', v=static_version) }}">
   </head>
   <body>
-    <main class="shell">
-      <section class="workspace">
-        <header class="topbar">
+    <main class="adminShell">
+      <aside class="adminSidebar">
+        <div class="brandBlock">
+          <span class="brandMark">CL</span>
           <div>
-            <h1>缠论分析工作台</h1>
-            <p id="statusText">输入股票名称或代码，生成分型、笔、中枢、背驰和买卖点。</p>
+            <strong>缠论后台</strong>
+            <p>股票研究管理台</p>
           </div>
-          <div class="searchBox">
-            <label for="stockInput">股票</label>
-            <input id="stockInput" type="search" placeholder="平安银行 / 000001 / PAYH" autocomplete="off">
-            <div id="suggestions" class="suggestions" hidden></div>
-          </div>
-        </header>
+        </div>
+        <nav id="mainMenu" class="mainMenu" aria-label="主菜单">
+          <button type="button" class="active" data-page="analysisPage">股票分析</button>
+          <button type="button" data-page="smartPickerPage">智能选股</button>
+        </nav>
+      </aside>
 
-        <section class="controls" aria-label="分析参数">
-          <div class="segmented" id="levelTabs">
-            <button type="button" data-level="min30">30分</button>
-            <button type="button" data-level="min60">60分</button>
-            <button type="button" class="active" data-level="daily">日线</button>
-            <button type="button" data-level="weekly">周线</button>
-            <button type="button" data-level="monthly">月线</button>
-          </div>
-          <label>
-            开始
-            <input id="startDate" type="date">
-          </label>
-          <label>
-            结束
-            <input id="endDate" type="date">
-          </label>
-          <div class="layerToggles" aria-label="图层开关">
-            <label class="toggleControl">
-              <input id="showStrokes" type="checkbox" checked>
-              <span>笔</span>
-            </label>
-            <label class="toggleControl">
-              <input id="showSegments" type="checkbox" checked>
-              <span>线段</span>
-            </label>
-          </div>
-          <div class="replayControls">
-            <label class="toggleControl">
-              <input id="replayToggle" type="checkbox">
-              <span>回放</span>
-            </label>
-            <input id="replaySlider" type="range" min="0" max="0" value="0" disabled>
-            <span id="replayLabel">--</span>
-          </div>
-          <button id="refreshBtn" type="button">分析</button>
+      <section class="adminContent">
+        <section id="analysisPage" class="appPage active">
+          <main class="shell">
+            <section class="workspace">
+              <header class="topbar">
+                <div>
+                  <h1>股票分析</h1>
+                  <p id="statusText">输入股票名称或代码，生成分型、笔、中枢、背驰和买卖点。</p>
+                </div>
+                <div class="searchBox">
+                  <label for="stockInput">股票</label>
+                  <input id="stockInput" type="search" placeholder="平安银行 / 000001 / PAYH" autocomplete="off">
+                  <div id="suggestions" class="suggestions" hidden></div>
+                </div>
+              </header>
+
+              <section class="controls" aria-label="分析参数">
+                <div class="segmented" id="levelTabs">
+                  <button type="button" data-level="min30">30分</button>
+                  <button type="button" data-level="min60">60分</button>
+                  <button type="button" class="active" data-level="daily">日线</button>
+                  <button type="button" data-level="weekly">周线</button>
+                  <button type="button" data-level="monthly">月线</button>
+                </div>
+                <label>
+                  开始
+                  <input id="startDate" type="date">
+                </label>
+                <label>
+                  结束
+                  <input id="endDate" type="date">
+                </label>
+                <div class="layerToggles" aria-label="图层开关">
+                  <label class="toggleControl">
+                    <input id="showStrokes" type="checkbox" checked>
+                    <span>笔</span>
+                  </label>
+                  <label class="toggleControl">
+                    <input id="showSegments" type="checkbox" checked>
+                    <span>线段</span>
+                  </label>
+                </div>
+                <div class="replayControls">
+                  <label class="toggleControl">
+                    <input id="replayToggle" type="checkbox">
+                    <span>回放</span>
+                  </label>
+                  <input id="replaySlider" type="range" min="0" max="0" value="0" disabled>
+                  <span id="replayLabel">--</span>
+                </div>
+                <button id="refreshBtn" type="button">分析</button>
+              </section>
+
+              <section id="errorBox" class="errorBox" hidden></section>
+
+              <section class="chartArea">
+                <canvas id="chartCanvas" aria-label="缠论K线图"></canvas>
+                <div id="tooltip" class="tooltip" hidden></div>
+              </section>
+            </section>
+
+            <aside class="sidePanel">
+              <nav id="sideTabs" class="sideTabs" aria-label="右侧信息切换">
+                <button type="button" class="active" data-side-panel="levelPanel">联动</button>
+                <button type="button" data-side-panel="dataPanel">数据</button>
+                <button type="button" data-side-panel="trendPanel">走势</button>
+                <button type="button" data-side-panel="riskPanel">风控</button>
+                <button type="button" data-side-panel="reviewPanel">复盘</button>
+                <button type="button" data-side-panel="statsPanel">统计</button>
+                <button type="button" data-side-panel="centerPanel">中枢</button>
+              </nav>
+              <section id="levelPanel" class="panel sidePane active">
+                <h2>级别联动</h2>
+                <div id="levelContext" class="empty">暂无级别结构</div>
+              </section>
+              <section id="dataPanel" class="panel sidePane">
+                <h2>妙想数据</h2>
+                <div id="mxDataBox" class="empty">分析完成后加载行情、资金、估值、财务和公司资料。</div>
+              </section>
+              <section id="trendPanel" class="panel sidePane">
+                <h2>走势类型</h2>
+                <div id="structureDetail" class="empty">暂无走势结构</div>
+              </section>
+              <section id="riskPanel" class="panel sidePane">
+                <h2>风险纪律</h2>
+                <div id="riskList" class="empty">暂无风险卡</div>
+              </section>
+              <section id="reviewPanel" class="panel sidePane">
+                <h2>信号复盘</h2>
+                <div id="backtestBox" class="empty">暂无复盘统计</div>
+              </section>
+              <section id="statsPanel" class="panel sidePane">
+                <h2>结构统计</h2>
+                <dl id="metaStats" class="stats"></dl>
+              </section>
+              <section id="centerPanel" class="panel sidePane">
+                <h2>最近中枢</h2>
+                <div id="centerList" class="tableWrap"></div>
+              </section>
+            </aside>
+          </main>
         </section>
 
-        <section id="errorBox" class="errorBox" hidden></section>
+        <section id="smartPickerPage" class="appPage">
+          <main class="pickerShell">
+            <section class="pickerWorkspace">
+              <header class="topbar pickerTopbar">
+                <div>
+                  <h1>智能选股</h1>
+                  <p id="pickerStatusText">先看市场环境，再筛候选股，最后把有结构的标的放进观察池。</p>
+                </div>
+                <div class="pickerActions">
+                  <button id="pickerOverviewBtn" type="button" class="ghostButton">刷新市场</button>
+                  <button id="pickerWatchlistBtn" type="button" class="ghostButton">同步自选</button>
+                </div>
+              </header>
 
-        <section class="chartArea">
-          <canvas id="chartCanvas" aria-label="缠论K线图"></canvas>
-          <div id="tooltip" class="tooltip" hidden></div>
+              <section class="pickerControls" aria-label="智能选股条件">
+                <label class="pickerQueryField">
+                  选股条件
+                  <input id="pickerQueryInput" type="search" value="A股市场中成交额大于5亿且换手率大于2%的股票" placeholder="例如：A股市场中半导体行业成交额大于10亿且涨幅大于2%的股票">
+                </label>
+                <label>
+                  结构级别
+                  <select id="pickerLevel">
+                    <option value="daily" selected>日线</option>
+                    <option value="weekly">周线</option>
+                    <option value="monthly">月线</option>
+                  </select>
+                </label>
+                <label>
+                  结构扫描数量
+                  <input id="pickerLimit" type="number" min="1" max="80" value="20">
+                </label>
+                <button id="pickerRunBtn" type="button">开始筛选</button>
+              </section>
+
+              <section id="pickerErrorBox" class="errorBox" hidden></section>
+
+              <section class="panel pickerTablePanel">
+                <div class="pickerTableHeader">
+                  <div>
+                    <h2>候选池</h2>
+                    <p id="pickerTableStatus">筛选结果会按结构、情绪、容量三条线做分层展示。</p>
+                  </div>
+                  <div id="pickerResultMeta" class="pickerResultMeta">默认从全 A 股范围执行条件筛选。</div>
+                </div>
+                <section class="pickerToolbar" aria-label="候选池排序与筛选">
+                  <label>
+                    结构筛选
+                    <select id="pickerStructureFilter">
+                      <option value="all" selected>全部结构</option>
+                      <option value="结构可看">结构可看</option>
+                      <option value="候选观察">候选观察</option>
+                      <option value="结构回避">结构回避</option>
+                    </select>
+                  </label>
+                  <label>
+                    情绪筛选
+                    <select id="pickerEmotionFilter">
+                      <option value="all" selected>全部情绪</option>
+                      <option value="主流活跃">主流活跃</option>
+                      <option value="轮动平衡">轮动平衡</option>
+                      <option value="情绪偏弱">情绪偏弱</option>
+                    </select>
+                  </label>
+                  <label>
+                    综合筛选
+                    <select id="pickerOverallFilter">
+                      <option value="all" selected>全部结论</option>
+                      <option value="重点观察">重点观察</option>
+                      <option value="候选观察">候选观察</option>
+                      <option value="暂不参与">暂不参与</option>
+                    </select>
+                  </label>
+                  <label>
+                    排序方式
+                    <select id="pickerSortBy">
+                      <option value="overall_score" selected>综合分</option>
+                      <option value="structure_score">结构分</option>
+                      <option value="change_pct">涨跌幅</option>
+                      <option value="amount">成交额</option>
+                      <option value="turnover">换手率</option>
+                      <option value="name">股票名称</option>
+                    </select>
+                  </label>
+                  <label>
+                    排序方向
+                    <select id="pickerSortDirection">
+                      <option value="desc" selected>从高到低</option>
+                      <option value="asc">从低到高</option>
+                    </select>
+                  </label>
+                  <div class="pickerToolbarActions">
+                    <button id="pickerFocusReadyBtn" type="button" class="ghostButton">只看结构可看 + 主流活跃</button>
+                    <button id="pickerClearFiltersBtn" type="button" class="ghostButton">清空筛选</button>
+                  </div>
+                </section>
+                <div id="pickerTableBox" class="tableWrap">
+                  <div class="empty">先输入条件，再开始筛选。</div>
+                </div>
+              </section>
+            </section>
+
+            <aside class="pickerSidePanel">
+              <section class="panel pickerDetailPanel">
+                <h2>候选详情</h2>
+                <div id="pickerDetailBox" class="empty">点击候选池中的股票，这里会展开三视角交易画像和自选操作。</div>
+              </section>
+              <nav id="pickerSideTabs" class="sideTabs pickerSideTabs" aria-label="智能选股侧栏切换">
+                <button type="button" class="active" data-picker-side-panel="pickerMarketPanel">市场</button>
+                <button type="button" data-picker-side-panel="pickerNewsPanel">催化</button>
+                <button type="button" data-picker-side-panel="pickerWatchlistPanel">自选</button>
+              </nav>
+              <section id="pickerMarketPanel" class="panel pickerSidePane active">
+                <h2>市场环境</h2>
+                <div id="pickerMarketBox" class="empty">点击“刷新市场”加载赚钱效应、成交活跃度和承压情况。</div>
+              </section>
+              <section id="pickerNewsPanel" class="panel pickerSidePane">
+                <h2>资讯催化</h2>
+                <div id="pickerNewsBox" class="empty">这里会显示主流板块与市场催化摘要。</div>
+              </section>
+              <section id="pickerWatchlistPanel" class="panel pickerSidePane">
+                <h2>我的自选</h2>
+                <div id="pickerWatchlistBox" class="empty">同步后可查看当前东方财富自选，并把候选股一键加入。</div>
+              </section>
+            </aside>
+          </main>
         </section>
       </section>
-
-      <aside class="sidePanel">
-        <nav id="sideTabs" class="sideTabs" aria-label="右侧信息切换">
-          <button type="button" class="active" data-side-panel="levelPanel">联动</button>
-          <button type="button" data-side-panel="dataPanel">数据</button>
-          <button type="button" data-side-panel="trendPanel">走势</button>
-          <button type="button" data-side-panel="riskPanel">风控</button>
-          <button type="button" data-side-panel="reviewPanel">复盘</button>
-          <button type="button" data-side-panel="statsPanel">统计</button>
-          <button type="button" data-side-panel="centerPanel">中枢</button>
-        </nav>
-        <section id="levelPanel" class="panel sidePane active">
-          <h2>级别联动</h2>
-          <div id="levelContext" class="empty">暂无级别结构</div>
-        </section>
-        <section id="dataPanel" class="panel sidePane">
-          <h2>妙想数据</h2>
-          <div id="mxDataBox" class="empty">分析完成后加载行情、资金、估值、财务和公司资料。</div>
-        </section>
-        <section id="trendPanel" class="panel sidePane">
-          <h2>走势类型</h2>
-          <div id="structureDetail" class="empty">暂无走势结构</div>
-        </section>
-        <section id="riskPanel" class="panel sidePane">
-          <h2>风险纪律</h2>
-          <div id="riskList" class="empty">暂无风险卡</div>
-        </section>
-        <section id="reviewPanel" class="panel sidePane">
-          <h2>信号复盘</h2>
-          <div id="backtestBox" class="empty">暂无复盘统计</div>
-        </section>
-        <section id="statsPanel" class="panel sidePane">
-          <h2>结构统计</h2>
-          <dl id="metaStats" class="stats"></dl>
-        </section>
-        <section id="centerPanel" class="panel sidePane">
-          <h2>最近中枢</h2>
-          <div id="centerList" class="tableWrap"></div>
-        </section>
-      </aside>
     </main>
 
     <script src="{{ url_for('static', filename='app.js', v=static_version) }}"></script>
