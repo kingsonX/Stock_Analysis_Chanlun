@@ -30,7 +30,7 @@ MX_SUMMARY_QUERIES = [
     MXQuerySpec("fund_flow", "资金", "主力资金流向"),
     MXQuerySpec("valuation", "估值", "市盈率 市净率 总市值"),
     MXQuerySpec("financial_summary", "财务", "近三年营业收入 净利润 每股收益 ROE"),
-    MXQuerySpec("company_profile", "公司", "公司简介 主营业务 董事长 总股本"),
+    MXQuerySpec("company_profile", "公司", "公司简介 主营业务 所属概念 所属地区 股东户数 董事长 总股本"),
 ]
 
 

@@ -182,6 +182,38 @@ h2 {
   font-size: 14px;
 }
 
+.stockBasics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(116px, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.stockBasicItem {
+  display: grid;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #f8fafb;
+  min-height: 58px;
+}
+
+.stockBasicItem span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.stockBasicItem strong {
+  display: block;
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.45;
+  word-break: break-word;
+}
+
 .searchBox {
   position: relative;
   display: grid;
@@ -571,7 +603,7 @@ input:focus {
 
 .pickerToolbar {
   display: grid;
-  grid-template-columns: repeat(5, minmax(120px, 1fr)) auto;
+  grid-template-columns: repeat(6, minmax(112px, 1fr));
   gap: 12px;
   align-items: end;
   padding: 14px 0 0;
@@ -583,6 +615,20 @@ input:focus {
   flex-wrap: wrap;
   gap: 8px;
   justify-content: flex-end;
+  grid-column: 1 / -1;
+}
+
+.pickerToolbarActions .ghostButton {
+  min-width: 112px;
+  white-space: nowrap;
+}
+
+.pickerToolbarHint {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
 }
 
 .pickerTablePanel,
@@ -596,6 +642,46 @@ input:focus {
   gap: 10px;
 }
 
+.pickerGaugeRow {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.pickerGaugeLabel,
+.pickerGaugeValue,
+.pickerWarningText {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.pickerGaugeTrack {
+  position: relative;
+  height: 8px;
+  border-radius: 999px;
+  background: #e6ecef;
+  overflow: hidden;
+}
+
+.pickerGaugeFill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 999px;
+}
+
+.pickerGaugeFill.tone-positive {
+  background: linear-gradient(90deg, rgba(20, 132, 95, 0.42) 0%, rgba(20, 132, 95, 0.92) 100%);
+}
+
+.pickerGaugeFill.tone-neutral {
+  background: linear-gradient(90deg, rgba(37, 111, 146, 0.36) 0%, rgba(37, 111, 146, 0.9) 100%);
+}
+
+.pickerGaugeFill.tone-caution {
+  background: linear-gradient(90deg, rgba(194, 65, 54, 0.36) 0%, rgba(194, 65, 54, 0.88) 100%);
+}
+
 .pickerStageCard,
 .pickerSummaryCard {
   display: grid;
@@ -603,6 +689,11 @@ input:focus {
   padding: 12px;
   border: 1px solid var(--line);
   background: #f8fafb;
+}
+
+.pickerStageCard {
+  align-content: start;
+  min-height: 360px;
 }
 
 .pickerStageCard.tone-positive {
@@ -620,6 +711,59 @@ input:focus {
 .pickerMiniCards {
   display: grid;
   gap: 8px;
+}
+
+.pickerThemeBoard,
+.pickerLeaderBoard {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  background: #f8fafb;
+}
+
+.themeLadderList,
+.leaderBoardList {
+  display: grid;
+  gap: 8px;
+}
+
+.themeLadderCard,
+.leaderBoardRow {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.82);
+}
+
+.themeLadderCard.tone-positive,
+.leaderBoardRow.tone-positive {
+  border-left: 4px solid var(--buy);
+}
+
+.themeLadderCard.tone-neutral,
+.leaderBoardRow.tone-neutral {
+  border-left: 4px solid var(--accent);
+}
+
+.themeRoleList {
+  display: grid;
+  gap: 4px;
+}
+
+.themeRoleList span {
+  display: flex;
+  gap: 8px;
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.themeRoleList b {
+  min-width: 32px;
+  color: var(--muted);
+  font-weight: 700;
 }
 
 .pickerTablePanel {
@@ -718,7 +862,7 @@ input:focus {
   top: 16px;
   align-self: start;
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(360px, 1fr);
   gap: 10px;
   max-height: calc(100vh - 32px);
   min-width: 0;
@@ -736,7 +880,7 @@ input:focus {
 .pickerSidePane {
   display: none;
   min-height: 0;
-  max-height: calc(58vh - 72px);
+  max-height: calc(68vh - 72px);
   overflow: auto;
 }
 
@@ -765,6 +909,104 @@ input:focus {
 .pickerDetailActions {
   display: grid;
   gap: 8px;
+}
+
+.pickerTacticalCard {
+  gap: 10px;
+}
+
+.executionCard,
+.disciplineCard,
+.reviewCard {
+  display: grid;
+  gap: 10px;
+}
+
+.executionMetaRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.pickerTacticalGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.pickerTacticalItem {
+  display: grid;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.pickerTacticalItem span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.pickerTacticalItem strong {
+  font-size: 13px;
+}
+
+.pickerTacticalItem strong.tone-positive {
+  color: var(--buy);
+}
+
+.pickerTacticalItem strong.tone-neutral {
+  color: var(--accent-strong);
+}
+
+.pickerTacticalItem strong.tone-caution {
+  color: var(--sell);
+}
+
+.pickerTacticalItem small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.disciplineChecklist,
+.reviewCaseList {
+  display: grid;
+  gap: 8px;
+}
+
+.disciplineCheck,
+.reviewCaseItem {
+  display: grid;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.disciplineCheck.pass {
+  border-left: 4px solid var(--buy);
+}
+
+.disciplineCheck.hold {
+  border-left: 4px solid var(--warn);
+}
+
+.disciplineCheckHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.disciplineCheck p,
+.reviewCaseItem p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .aiResearchCard,
@@ -1321,6 +1563,10 @@ th {
     justify-content: flex-start;
   }
 
+  .pickerStageCard {
+    min-height: 0;
+  }
+
   .topbar {
     grid-template-columns: 1fr;
   }
@@ -1393,5 +1639,9 @@ th {
 
   .pickerActions {
     justify-content: flex-start;
+  }
+
+  .pickerTacticalGrid {
+    grid-template-columns: 1fr;
   }
 }

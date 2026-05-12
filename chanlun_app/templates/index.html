@@ -30,6 +30,7 @@
                 <div>
                   <h1>股票分析</h1>
                   <p id="statusText">输入股票名称或代码，生成分型、笔、中枢、背驰和买卖点。</p>
+                  <div id="stockBasics" class="stockBasics" hidden></div>
                 </div>
                 <div class="searchBox">
                   <label for="stockInput">股票</label>
@@ -180,12 +181,24 @@
                     </select>
                   </label>
                   <label>
-                    情绪筛选
+                    热点筛选
                     <select id="pickerEmotionFilter">
-                      <option value="all" selected>全部情绪</option>
-                      <option value="主流活跃">主流活跃</option>
-                      <option value="轮动平衡">轮动平衡</option>
-                      <option value="情绪偏弱">情绪偏弱</option>
+                      <option value="all" selected>全部热点</option>
+                      <option value="主流热点">主流热点</option>
+                      <option value="次主流">次主流</option>
+                      <option value="轮动观察">轮动观察</option>
+                      <option value="非主流">非主流</option>
+                    </select>
+                  </label>
+                  <label>
+                    龙头筛选
+                    <select id="pickerLeaderFilter">
+                      <option value="all" selected>全部角色</option>
+                      <option value="龙头候选">龙头候选</option>
+                      <option value="容量中军">容量中军</option>
+                      <option value="前排助攻">前排助攻</option>
+                      <option value="跟风观察">跟风观察</option>
+                      <option value="非核心观察">非核心观察</option>
                     </select>
                   </label>
                   <label>
@@ -202,6 +215,8 @@
                     <select id="pickerSortBy">
                       <option value="overall_score" selected>综合分</option>
                       <option value="structure_score">结构分</option>
+                      <option value="theme_score">热点分</option>
+                      <option value="leader_score">龙头分</option>
                       <option value="change_pct">涨跌幅</option>
                       <option value="amount">成交额</option>
                       <option value="turnover">换手率</option>
@@ -216,9 +231,10 @@
                     </select>
                   </label>
                   <div class="pickerToolbarActions">
-                    <button id="pickerFocusReadyBtn" type="button" class="ghostButton">只看结构可看 + 主流活跃</button>
-                    <button id="pickerClearFiltersBtn" type="button" class="ghostButton">清空筛选</button>
+                    <button id="pickerFocusReadyBtn" type="button" class="ghostButton">聚焦主流强票</button>
+                    <button id="pickerClearFiltersBtn" type="button" class="ghostButton">重置筛选</button>
                   </div>
+                  <p class="pickerToolbarHint">龙头角色按同热点样本中的涨幅强度、成交承接与前排位置自动标注：龙头候选看辨识度，容量中军看成交额，前排助攻看前排跟随。</p>
                 </section>
                 <div id="pickerTableBox" class="tableWrap">
                   <div class="empty">先输入条件，再开始筛选。</div>

@@ -30,6 +30,7 @@ const state = {
     focusReadyOnly: false,
     structureFilter: "all",
     emotionFilter: "all",
+    leaderFilter: "all",
     overallFilter: "all",
     sortBy: "overall_score",
     sortDirection: "desc",
@@ -42,6 +43,7 @@ const els = {
   stockInput: document.querySelector("#stockInput"),
   suggestions: document.querySelector("#suggestions"),
   statusText: document.querySelector("#statusText"),
+  stockBasics: document.querySelector("#stockBasics"),
   levelTabs: document.querySelector("#levelTabs"),
   startDate: document.querySelector("#startDate"),
   endDate: document.querySelector("#endDate"),
@@ -72,6 +74,7 @@ const els = {
   pickerRunBtn: document.querySelector("#pickerRunBtn"),
   pickerStructureFilter: document.querySelector("#pickerStructureFilter"),
   pickerEmotionFilter: document.querySelector("#pickerEmotionFilter"),
+  pickerLeaderFilter: document.querySelector("#pickerLeaderFilter"),
   pickerOverallFilter: document.querySelector("#pickerOverallFilter"),
   pickerSortBy: document.querySelector("#pickerSortBy"),
   pickerSortDirection: document.querySelector("#pickerSortDirection"),
@@ -436,6 +439,7 @@ function renderCenters() {
 }
 
 function renderMxData() {
+  renderAnalysisBasics();
   if (!els.mxDataBox) return;
   const summary = state.mxSummary;
   if (!state.analysis) {
@@ -478,6 +482,78 @@ function renderMxData() {
   ]
     .filter(Boolean)
     .join("");
+}
+
+function renderAnalysisBasics() {
+  if (!els.stockBasics) return;
+  const stock = state.analysis?.stock;
+  if (!stock) {
+    els.stockBasics.hidden = true;
+    els.stockBasics.innerHTML = "";
+    return;
+  }
+
+  const quoteRow = mxSummaryRow("quote");
+  const valuationRow = mxSummaryRow("valuation");
+  const companyRow = mxSummaryRow("company_profile");
+  const loading = !!state.analysis && (!state.mxSummary || state.mxSummary.status === "loading");
+
+  const basics = [
+    ["换手率", metricValue(quoteRow, ["换手率"]) || loadingText(loading)],
+    ["总市值", metricValue(valuationRow, ["总市值"]) || loadingText(loading)],
+    ["行业 / 题材", buildIndustryConceptText(stock, currentProfilePayload(), companyRow)],
+    ["所属地区", stock.area || "待补充"],
+    ["股东数", metricValue(companyRow, ["股东户数", "股东数", "股东人数"]) || "待补充"],
+    ["主营业务", metricValue(companyRow, ["主营业务", "主营"]) || "待补充"],
+  ];
+
+  els.stockBasics.hidden = false;
+  els.stockBasics.innerHTML = basics
+    .map(
+      ([label, value]) => `
+        <article class="stockBasicItem">
+          <span>${escapeHtml(label)}</span>
+          <strong>${escapeHtml(value)}</strong>
+        </article>
+      `
+    )
+    .join("");
+}
+
+function loadingText(loading) {
+  return loading ? "加载中" : "待补充";
+}
+
+function currentProfilePayload() {
+  return state.mxSummary?.status === "ok" ? state.mxSummary.data : null;
+}
+
+function mxSummaryRow(cardKey) {
+  const cards = currentProfilePayload()?.mx_summary?.data?.cards || [];
+  const card = cards.find((item) => item.key === cardKey);
+  return card?.rows?.[0] || null;
+}
+
+function metricValue(row, labels) {
+  if (!row) return "";
+  const keys = Object.keys(row);
+  for (const label of labels) {
+    const key = keys.find((item) => String(item).includes(label));
+    const value = key ? row[key] : "";
+    if (value !== null && value !== undefined && String(value).trim()) {
+      return String(value).trim();
+    }
+  }
+  return "";
+}
+
+function buildIndustryConceptText(stock, payload, companyRow) {
+  const industry = stock?.industry || "待补充";
+  const concept = metricValue(companyRow, ["所属概念", "题材", "概念"]);
+  if (concept) return `${industry} · ${concept}`;
+  const emotionLabel = payload?.profile?.emotion?.label || "";
+  if (!emotionLabel) return industry;
+  return `${industry} · ${emotionLabel}`;
 }
 
 function renderMxCard(card) {
@@ -659,6 +735,7 @@ function ensureSmartPickerLoaded() {
 function syncPickerFiltersFromControls() {
   state.smartPicker.structureFilter = els.pickerStructureFilter?.value || "all";
   state.smartPicker.emotionFilter = els.pickerEmotionFilter?.value || "all";
+  state.smartPicker.leaderFilter = els.pickerLeaderFilter?.value || "all";
   state.smartPicker.overallFilter = els.pickerOverallFilter?.value || "all";
   state.smartPicker.sortBy = els.pickerSortBy?.value || "overall_score";
   state.smartPicker.sortDirection = els.pickerSortDirection?.value || "desc";
@@ -882,12 +959,19 @@ function renderPickerOverview() {
   const stage = overview.stage || {};
   const cards = overview.market_cards || [];
   const universe = overview.universe || {};
+  const themes = overview.theme_ladders || [];
+  const leaders = overview.leader_board || [];
   els.pickerMarketBox.className = "pickerSummaryGrid";
   els.pickerMarketBox.innerHTML = `
     <article class="pickerStageCard tone-${escapeHtml(stage.tone || "neutral")}">
       <div class="profileBlockHeader">
         <strong>养家市场温度</strong>
         <span class="profileVerdict tone-${escapeHtml(stage.tone || "neutral")}">${escapeHtml(stage.label || "未判断")}</span>
+      </div>
+      <div class="pickerGaugeRow">
+        <span class="pickerGaugeLabel">${escapeHtml(stage.cycle || "阶段未明")}</span>
+        <div class="pickerGaugeTrack"><span class="pickerGaugeFill tone-${escapeHtml(stage.tone || "neutral")}" style="width:${escapeHtml(String(stage.temperature || 0))}%"></span></div>
+        <span class="pickerGaugeValue">${escapeHtml(String(stage.temperature || 0))}</span>
       </div>
       <p class="profileSummary">${escapeHtml(stage.summary || "")}</p>
       <p class="profileAction">${escapeHtml(stage.action || "")}</p>
@@ -896,6 +980,12 @@ function renderPickerOverview() {
           ? `<div class="profileList"><span>判断依据</span><ul>${stage.basis.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></div>`
           : ""
       }
+      ${
+        Array.isArray(stage.playbook) && stage.playbook.length
+          ? `<div class="profileList"><span>当前玩法</span><ul>${stage.playbook.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></div>`
+          : ""
+      }
+      ${stage.warning ? `<p class="pickerWarningText">${escapeHtml(stage.warning)}</p>` : ""}
     </article>
     <article class="pickerSummaryCard">
       <div class="profileBlockHeader">
@@ -917,6 +1007,80 @@ function renderPickerOverview() {
         )
         .join("")}
     </div>
+    <article class="pickerThemeBoard">
+      <div class="profileBlockHeader">
+        <strong>主流热点与梯队</strong>
+        <span class="profileVerdict tone-neutral">${escapeHtml(themes.length ? `前 ${themes.length} 组` : "待生成")}</span>
+      </div>
+      ${
+        themes.length
+          ? `<div class="themeLadderList">
+              ${themes.map(renderThemeLadderCard).join("")}
+            </div>`
+          : `<p class="mxCardMessage">当前样本里还没有足够清晰的热点梯队。</p>`
+      }
+    </article>
+    <article class="pickerLeaderBoard">
+      <div class="profileBlockHeader">
+        <strong>龙头识别标签</strong>
+        <span class="profileVerdict tone-neutral">${escapeHtml(leaders.length ? `${leaders.length} 个样本` : "待生成")}</span>
+      </div>
+      ${
+        leaders.length
+          ? `<div class="leaderBoardList">
+              ${leaders.map(renderLeaderBoardRow).join("")}
+            </div>`
+          : `<p class="mxCardMessage">等待热点样本生成后，再标记龙头、前排和容量中军。</p>`
+      }
+    </article>
+  `;
+}
+
+function renderThemeLadderCard(item) {
+  const fronts = item.front_runners || [];
+  return `
+    <article class="themeLadderCard tone-${escapeHtml(item.tone || "neutral")}">
+      <div class="profileBlockHeader">
+        <strong>${escapeHtml(item.industry || "行业待定")}</strong>
+        <span class="profileVerdict tone-${escapeHtml(item.tone || "neutral")}">${escapeHtml(item.tier_label || "轮动观察")}</span>
+      </div>
+      <p class="pickerCellText">${escapeHtml(item.summary || "")}</p>
+      <dl class="miniStats">
+        <dt>样本</dt><dd>${escapeHtml(String(item.sample_count || 0))} 只</dd>
+        <dt>均涨幅</dt><dd>${escapeHtml(Number(item.avg_change_pct || 0).toFixed(2))}%</dd>
+        <dt>强势数</dt><dd>${escapeHtml(String(item.strong_count || 0))}</dd>
+        <dt>活跃数</dt><dd>${escapeHtml(String(item.active_count || 0))}</dd>
+      </dl>
+      <div class="themeRoleList">
+        ${item.dragon ? `<span><b>龙头</b>${escapeHtml(`${item.dragon.name || ""} ${item.dragon.symbol || ""}`.trim())}</span>` : ""}
+        ${item.capacity_core && item.capacity_core.symbol !== item.dragon?.symbol ? `<span><b>中军</b>${escapeHtml(`${item.capacity_core.name || ""} ${item.capacity_core.symbol || ""}`.trim())}</span>` : ""}
+        ${
+          fronts.length
+            ? `<span><b>前排</b>${escapeHtml(
+                fronts
+                  .slice(0, 2)
+                  .map((front) => `${front.name || ""} ${front.symbol || ""}`.trim())
+                  .filter(Boolean)
+                  .join("、")
+              )}</span>`
+            : ""
+        }
+      </div>
+    </article>
+  `;
+}
+
+function renderLeaderBoardRow(item) {
+  const stock = item.stock || {};
+  return `
+    <article class="leaderBoardRow tone-${escapeHtml(item.tone || "neutral")}">
+      <div class="profileBlockHeader">
+        <strong>${escapeHtml(`${stock.name || ""} ${stock.symbol || ""}`.trim())}</strong>
+        <span class="profileVerdict tone-${escapeHtml(item.tone || "neutral")}">${escapeHtml(item.role || "观察")}</span>
+      </div>
+      <p class="pickerCellText">${escapeHtml(item.industry || "")} · ${escapeHtml(item.tier_label || "")}</p>
+      <small>${escapeHtml(item.summary || "")}</small>
+    </article>
   `;
 }
 
@@ -1047,7 +1211,8 @@ function renderPickerTable() {
         <tr>
           <th>股票</th>
           <th>缠论结构</th>
-          <th>养家环境</th>
+          <th>主流梯队</th>
+          <th>龙头标签</th>
           <th>章盟主容量</th>
           <th>综合结论</th>
           <th>操作</th>
@@ -1077,6 +1242,10 @@ function renderPickerTable() {
                 <td>
                   <span class="profileVerdict tone-${escapeHtml(item.emotion.tone || "neutral")}">${escapeHtml(item.emotion.label || "")}</span>
                   <p class="pickerCellText">${escapeHtml(item.emotion.summary || "")}</p>
+                </td>
+                <td>
+                  <span class="profileVerdict tone-${escapeHtml(item.leader?.tone || "neutral")}">${escapeHtml(item.leader?.label || "")}</span>
+                  <p class="pickerCellText">${escapeHtml(item.leader?.summary || "")}</p>
                 </td>
                 <td>
                   <span class="profileVerdict tone-${escapeHtml(item.capacity.tone || "neutral")}">${escapeHtml(item.capacity.label || "")}</span>
@@ -1109,13 +1278,16 @@ function renderPickerTable() {
 function buildPickerFilterSummary(rawCount, visibleCount) {
   const parts = [];
   if (state.smartPicker.focusReadyOnly) {
-    parts.push("已启用“结构可看 + 主流活跃”快捷筛选");
+    parts.push("已启用“主流强票”快捷筛选");
   }
   if (state.smartPicker.structureFilter !== "all") {
     parts.push(`结构=${state.smartPicker.structureFilter}`);
   }
   if (state.smartPicker.emotionFilter !== "all") {
-    parts.push(`情绪=${state.smartPicker.emotionFilter}`);
+    parts.push(`热点=${state.smartPicker.emotionFilter}`);
+  }
+  if (state.smartPicker.leaderFilter !== "all") {
+    parts.push(`龙头=${state.smartPicker.leaderFilter}`);
   }
   if (state.smartPicker.overallFilter !== "all") {
     parts.push(`综合=${state.smartPicker.overallFilter}`);
@@ -1131,6 +1303,8 @@ function pickerSortLabel(sortBy) {
   const mapping = {
     overall_score: "综合分",
     structure_score: "结构分",
+    theme_score: "热点分",
+    leader_score: "龙头分",
     change_pct: "涨跌幅",
     amount: "成交额",
     turnover: "换手率",
@@ -1142,13 +1316,16 @@ function pickerSortLabel(sortBy) {
 function filterAndSortPickerCandidates(candidates) {
   let items = [...(candidates || [])];
   if (state.smartPicker.focusReadyOnly) {
-    items = items.filter((item) => item.structure?.label === "结构可看" && item.emotion?.label === "主流活跃");
+    items = items.filter((item) => item.structure?.label === "结构可看" && item.emotion?.label === "主流热点");
   }
   if (state.smartPicker.structureFilter !== "all") {
     items = items.filter((item) => item.structure?.label === state.smartPicker.structureFilter);
   }
   if (state.smartPicker.emotionFilter !== "all") {
     items = items.filter((item) => item.emotion?.label === state.smartPicker.emotionFilter);
+  }
+  if (state.smartPicker.leaderFilter !== "all") {
+    items = items.filter((item) => item.leader?.label === state.smartPicker.leaderFilter);
   }
   if (state.smartPicker.overallFilter !== "all") {
     items = items.filter((item) => item.overall?.label === state.smartPicker.overallFilter);
@@ -1169,6 +1346,10 @@ function comparePickerCandidate(left, right, sortBy) {
     switch (sortBy) {
       case "structure_score":
         return Number(item.structure?.score || 0);
+      case "theme_score":
+        return Number(item.emotion?.score || 0);
+      case "leader_score":
+        return Number(item.leader?.score || 0);
       case "change_pct":
         return Number(item.quote?.change_pct_value || 0);
       case "amount":
@@ -1219,6 +1400,8 @@ function renderPickerDetail() {
   const latestSignal = (analysis.signals || []).slice(-1)[0];
   const latestDivergence = (analysis.divergences || []).slice(-1)[0];
   const aiCard = renderPickerAiCard(state.smartPicker.ai);
+  const candidate = currentPickerCandidate();
+  const execution = detail.execution || {};
 
   els.pickerDetailBox.className = "pickerDetailStack";
   els.pickerDetailBox.innerHTML = `
@@ -1233,6 +1416,10 @@ function renderPickerDetail() {
         <button type="button" class="miniButton ghostButton" data-picker-detail-action="analysis" data-ts-code="${escapeHtml(stock.ts_code || "")}">打开图表</button>
       </div>
     </div>
+    ${renderPickerTacticalCard(candidate, state.smartPicker.screen?.stage)}
+    ${renderExecutionPlanCard(execution.plan)}
+    ${renderDisciplineCard(execution.discipline)}
+    ${renderReviewCard(execution.review)}
     ${renderProfileCard(profilePayload.profile)}
     ${aiCard}
     <article class="mxCard status-ok">
@@ -1250,6 +1437,146 @@ function renderPickerDetail() {
     ${renderMarketScan(profilePayload.market_scan)}
     ${renderNewsDigest(profilePayload.news)}
     ${mxCards}
+  `;
+}
+
+function currentPickerCandidate() {
+  const tsCode = state.smartPicker.selectedTsCode;
+  return (state.smartPicker.screen?.candidates || []).find((item) => item.stock?.ts_code === tsCode) || null;
+}
+
+function renderPickerTacticalCard(candidate, stage) {
+  if (!candidate) return "";
+  return `
+    <article class="mxCard status-ok pickerTacticalCard">
+      <div class="mxCardHeader">
+        <strong>养家战术卡</strong>
+        <small>${escapeHtml(stage?.cycle || "阶段未明")}</small>
+      </div>
+      <div class="pickerTacticalGrid">
+        <div class="pickerTacticalItem">
+          <span>市场阶段</span>
+          <strong class="tone-${escapeHtml(stage?.tone || "neutral")}">${escapeHtml(stage?.label || "未判断")}</strong>
+          <small>${escapeHtml(stage?.action || "")}</small>
+        </div>
+        <div class="pickerTacticalItem">
+          <span>主流梯队</span>
+          <strong class="tone-${escapeHtml(candidate.emotion?.tone || "neutral")}">${escapeHtml(candidate.emotion?.label || "未归类")}</strong>
+          <small>${escapeHtml(candidate.emotion?.summary || "")}</small>
+        </div>
+        <div class="pickerTacticalItem">
+          <span>龙头角色</span>
+          <strong class="tone-${escapeHtml(candidate.leader?.tone || "neutral")}">${escapeHtml(candidate.leader?.label || "待判断")}</strong>
+          <small>${escapeHtml(candidate.leader?.summary || "")}</small>
+        </div>
+        <div class="pickerTacticalItem">
+          <span>当前结论</span>
+          <strong class="tone-${escapeHtml(candidate.overall?.tone || "neutral")}">${escapeHtml(candidate.overall?.label || "先观察")}</strong>
+          <small>${escapeHtml(candidate.overall?.decision || "")}</small>
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+function renderExecutionPlanCard(plan) {
+  if (!plan) return "";
+  return `
+    <article class="mxCard status-ok executionCard">
+      <div class="mxCardHeader">
+        <strong>${escapeHtml(plan.title || "交易计划")}</strong>
+        <small>${escapeHtml(plan.setup || "等待确认型")}</small>
+      </div>
+      <div class="profileBlockHeader">
+        <strong class="tone-${escapeHtml(plan.tone || "neutral")}">${escapeHtml(plan.verdict || "先观察")}</strong>
+        ${
+          plan.invalidation_price !== undefined && plan.invalidation_price !== null
+            ? `<span class="aiMetaText">失效价 ${escapeHtml(formatPrice(plan.invalidation_price))}</span>`
+            : ""
+        }
+      </div>
+      <p class="mxCardTitle">${escapeHtml(plan.summary || "")}</p>
+      <p class="profileAction">${escapeHtml(plan.action || "")}</p>
+      <div class="executionMetaRow">
+        <span class="profileVerdict tone-${escapeHtml(plan.tone || "neutral")}">${escapeHtml(plan.position_hint || "先看计划再谈仓位")}</span>
+      </div>
+      ${renderAiListBlock("计划依据", plan.basis)}
+      ${renderAiListBlock("观察重点", plan.watch_points)}
+      ${renderAiListBlock("取消条件", plan.avoid_if)}
+    </article>
+  `;
+}
+
+function renderDisciplineCard(discipline) {
+  if (!discipline) return "";
+  const checks = Array.isArray(discipline.checks) ? discipline.checks : [];
+  return `
+    <article class="mxCard status-ok disciplineCard">
+      <div class="mxCardHeader">
+        <strong>${escapeHtml(discipline.title || "纪律引擎")}</strong>
+        <small>${escapeHtml(String(discipline.score ?? "--"))} 分</small>
+      </div>
+      <div class="profileBlockHeader">
+        <strong class="tone-${escapeHtml(discipline.tone || "neutral")}">${escapeHtml(discipline.label || "先观察")}</strong>
+        <span class="profileVerdict tone-${escapeHtml(discipline.tone || "neutral")}">${escapeHtml(discipline.position_hint || "")}</span>
+      </div>
+      <p class="mxCardTitle">${escapeHtml(discipline.summary || "")}</p>
+      <p class="mxCardMessage">${escapeHtml(discipline.next_step || "")}</p>
+      ${
+        checks.length
+          ? `<div class="disciplineChecklist">
+              ${checks
+                .map(
+                  (item) => `
+                    <article class="disciplineCheck ${item.passed ? "pass" : "hold"}">
+                      <div class="disciplineCheckHeader">
+                        <strong>${escapeHtml(item.label || "")}</strong>
+                        <span class="profileVerdict tone-${item.passed ? "positive" : "caution"}">${item.passed ? "通过" : "待确认"}</span>
+                      </div>
+                      <p>${escapeHtml(item.detail || "")}</p>
+                    </article>
+                  `
+                )
+                .join("")}
+            </div>`
+          : ""
+      }
+    </article>
+  `;
+}
+
+function renderReviewCard(review) {
+  if (!review) return "";
+  const cases = Array.isArray(review.recent_cases) ? review.recent_cases : [];
+  return `
+    <article class="mxCard status-ok reviewCard">
+      <div class="mxCardHeader">
+        <strong>${escapeHtml(review.title || "复盘系统")}</strong>
+        <small>${escapeHtml(review.label || "样本不足")}</small>
+      </div>
+      <p class="mxCardTitle tone-${escapeHtml(review.tone || "neutral")}">${escapeHtml(review.summary || "")}</p>
+      ${renderAiListBlock("复盘结论", review.lessons)}
+      ${
+        cases.length
+          ? `<div class="reviewCaseList">
+              ${cases
+                .map(
+                  (item) => `
+                    <article class="reviewCaseItem">
+                      <div class="disciplineCheckHeader">
+                        <strong>${escapeHtml(item.label || "")} ${escapeHtml(formatDate(item.date || ""))}</strong>
+                        <span class="profileVerdict tone-neutral">${escapeHtml(item.outcome || "待观察")}</span>
+                      </div>
+                      <p>顺向 ${escapeHtml(`${Number(item.forward_pct || 0).toFixed(2)}%`)} / 逆向 ${escapeHtml(`${Number(item.adverse_pct || 0).toFixed(2)}%`)} / 收盘 ${escapeHtml(`${Number(item.close_return_pct || 0).toFixed(2)}%`)}</p>
+                    </article>
+                  `
+                )
+                .join("")}
+            </div>`
+          : ""
+      }
+      <p class="mxCardMessage">${escapeHtml(review.note || "")}</p>
+    </article>
   `;
 }
 
@@ -1387,6 +1714,7 @@ function renderChart() {
   const visibleCenters = replayItemsByEnd(analysis.centers || [], "end_index").filter((item) => overlapsWindow(item.start_index, item.end_index, view));
   const visibleMacd = (analysis.indicators?.macd || []).slice(view.start, view.end);
   const visibleBbi = (analysis.indicators?.bbi || []).slice(view.start, view.end);
+  const weakToStrongSet = buildWeakToStrongSet(analysis);
   const range = priceRange(visibleKlines, visibleCenters, visibleBbi);
   const x = (idx) => plot.left + ((idx - view.start + 0.5) / view.count) * plot.width;
   const y = (price) => plot.top + ((range.high - price) / (range.high - range.low)) * plot.height;
@@ -1394,7 +1722,7 @@ function renderChart() {
 
   drawGrid(ctx, rect, plot, range, visibleKlines, x, false);
   drawCenters(ctx, visibleCenters, x, y, plot);
-  drawCandles(ctx, visibleKlines, x, y, candleW);
+  drawCandles(ctx, visibleKlines, x, y, candleW, weakToStrongSet);
   drawBbi(ctx, visibleBbi, x, y);
   if (state.showStrokes) {
     drawStrokes(ctx, visibleItems(replayItemsByEnd(analysis.strokes || [], "end_index"), "start_index", "end_index", view), x, y, view);
@@ -1479,17 +1807,23 @@ function drawCenters(ctx, centers, x, y, plot) {
   });
 }
 
-function drawCandles(ctx, klines, x, y, candleW) {
+function drawCandles(ctx, klines, x, y, candleW, weakToStrongSet = new Set()) {
   klines.forEach((bar) => {
     const up = bar.close >= bar.open;
-    const color = up ? "#c24136" : "#14845f";
+    const weakToStrong = weakToStrongSet.has(bar.index);
+    const color = weakToStrong ? "#c7a100" : up ? "#c24136" : "#14845f";
+    const fill = weakToStrong
+      ? "rgba(199, 161, 0, 0.24)"
+      : up
+        ? "rgba(194, 65, 54, 0.22)"
+        : "rgba(20, 132, 95, 0.22)";
     const px = x(bar.index);
     const openY = y(bar.open);
     const closeY = y(bar.close);
     const highY = y(bar.high);
     const lowY = y(bar.low);
     ctx.strokeStyle = color;
-    ctx.fillStyle = up ? "rgba(194, 65, 54, 0.22)" : "rgba(20, 132, 95, 0.22)";
+    ctx.fillStyle = fill;
     ctx.beginPath();
     ctx.moveTo(px, highY);
     ctx.lineTo(px, lowY);
@@ -1976,10 +2310,10 @@ function chartRegionFromPointer(event) {
   return "gap";
 }
 
-function positionTooltip(event, width = 220) {
+function positionTooltip(event, width = 220, height = 140) {
   const rect = els.canvas.getBoundingClientRect();
   els.tooltip.style.left = `${clamp(event.clientX - rect.left + 12, 8, rect.width - width)}px`;
-  els.tooltip.style.top = `${clamp(event.clientY - rect.top - 20, 12, rect.height - 130)}px`;
+  els.tooltip.style.top = `${clamp(event.clientY - rect.top - 20, 12, rect.height - height)}px`;
 }
 
 function signalFromMainPointer(event, analysis) {
@@ -2026,7 +2360,7 @@ function signalFromMainPointer(event, analysis) {
 
 function showSignalTooltip(event, signal) {
   els.tooltip.hidden = false;
-  positionTooltip(event, 280);
+  positionTooltip(event, 280, 180);
   els.tooltip.innerHTML = `
     <strong>${signalLabel(signal)} · ${formatDate(signal.date)}</strong><br>
     状态 ${signal.status_label || "候选"} · 价格 ${formatPrice(signal.price)}<br>
@@ -2041,16 +2375,25 @@ function showMainTooltip(event, analysis, idx) {
   const bar = analysis.klines[idx];
   const macd = analysis.indicators?.macd?.[idx];
   const bbi = analysis.indicators?.bbi?.[idx];
+  const changePct = barChangePct(analysis.klines, idx);
+  const weakToStrong = isWeakToStrongBar(analysis, idx);
+  const weakToStrongReasons = weakToStrong ? weakToStrongReasonList(analysis, idx) : [];
 
   els.tooltip.hidden = false;
-  positionTooltip(event, 220);
+  positionTooltip(event, weakToStrongReasons.length ? 320 : 240, weakToStrongReasons.length ? 210 : 150);
   els.tooltip.innerHTML = `
     <strong>${formatDate(bar.date)}</strong><br>
     开 ${formatPrice(bar.open)} 高 ${formatPrice(bar.high)}<br>
     低 ${formatPrice(bar.low)} 收 ${formatPrice(bar.close)}<br>
+    涨跌幅 ${changePct === null ? "-" : formatSignedPercent(changePct)}${weakToStrong ? " · 弱转强黄K" : ""}<br>
     BBI ${bbi?.value !== null && bbi?.value !== undefined ? formatPrice(bbi.value) : "-"}<br>
     量 ${Math.round(bar.vol).toLocaleString()}<br>
     MACD ${macd ? formatMacd(macd.hist) : "-"} · DIF ${macd ? formatMacd(macd.dif) : "-"} · DEA ${macd ? formatMacd(macd.dea) : "-"}
+    ${
+      weakToStrongReasons.length
+        ? `<dl class="evidenceGrid"><dt>弱转强依据</dt><dd>${escapeHtml(weakToStrongReasons.join("、"))}</dd></dl>`
+        : ""
+    }
   `;
 }
 
@@ -2064,7 +2407,7 @@ function showMacdTooltip(event, analysis) {
   const macd = analysis.indicators?.macd?.[idx];
 
   els.tooltip.hidden = false;
-  positionTooltip(event, 360);
+  positionTooltip(event, 360, 320);
   els.tooltip.innerHTML = `
     <strong>${divergenceLabel(divergence)} · ${formatDate(divergence.date)}</strong><br>
     <span class="tooltipNote">${divergence.position || "背驰候选"} · 力度 ${formatMacd(divergence.current_strength)} / ${formatMacd(divergence.previous_strength)}</span><br>
@@ -2181,6 +2524,97 @@ function formatPct(value) {
   return `${(num * 100).toFixed(2)}%`;
 }
 
+function formatSignedPercent(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "-";
+  return `${num > 0 ? "+" : ""}${num.toFixed(2)}%`;
+}
+
+function barChangePct(klines, idx) {
+  if (!Array.isArray(klines) || idx <= 0 || idx >= klines.length) return null;
+  const prevClose = Number(klines[idx - 1]?.close);
+  const close = Number(klines[idx]?.close);
+  if (!Number.isFinite(prevClose) || !Number.isFinite(close) || prevClose === 0) return null;
+  return ((close - prevClose) / prevClose) * 100;
+}
+
+function buildWeakToStrongSet(analysis) {
+  const bars = analysis?.klines || [];
+  const bbiMap = buildBbiValueMap(analysis?.indicators?.bbi || []);
+  const flagged = new Set();
+  bars.forEach((bar, idx) => {
+    if (evaluateWeakToStrong(bars, bbiMap, idx).matched) {
+      flagged.add(bar.index);
+    }
+  });
+  return flagged;
+}
+
+function isWeakToStrongBar(analysis, idx) {
+  const bars = analysis?.klines || [];
+  const bbiMap = buildBbiValueMap(analysis?.indicators?.bbi || []);
+  return evaluateWeakToStrong(bars, bbiMap, idx).matched;
+}
+
+function buildBbiValueMap(rows) {
+  return new Map(
+    (rows || []).map((item) => [item.index, item.value === null || item.value === undefined ? Number.NaN : Number(item.value)])
+  );
+}
+
+// 游资视角的“弱转强”先用轻量规则近似：先有回踩走弱，再出现放量、近高收盘和强势反包。
+function evaluateWeakToStrong(bars, bbiMap, idx) {
+  if (!Array.isArray(bars) || idx < 3 || idx >= bars.length) return { matched: false, reasons: [] };
+  const bar = bars[idx];
+  const prev = bars[idx - 1];
+  const prev2 = bars[idx - 2];
+  const prev3 = bars[idx - 3];
+  if (!bar || !prev || !prev2 || !prev3) return { matched: false, reasons: [] };
+  if (!(Number(bar.close) > Number(bar.open) && Number(bar.close) > Number(prev.close))) {
+    return { matched: false, reasons: [] };
+  }
+
+  let weakCount = 0;
+  for (let cursor = idx - 3; cursor < idx; cursor += 1) {
+    if (cursor <= 0) continue;
+    if (Number(bars[cursor].close) <= Number(bars[cursor - 1].close)) weakCount += 1;
+  }
+
+  const range = Math.max(Number(bar.high) - Number(bar.low), 0.001);
+  const closeNearHigh = (Number(bar.high) - Number(bar.close)) / range <= 0.28;
+  const changePct = barChangePct(bars, idx) ?? 0;
+  const breakPrevHigh = Number(bar.close) > Number(prev.high) || Number(bar.high) > Math.max(Number(prev.high), Number(prev2.high));
+  const volumeExpand = Number(prev.vol) > 0 ? Number(bar.vol) >= Number(prev.vol) * 1.15 : false;
+  const currentBbi = bbiMap.get(bar.index);
+  const prevBbi = bbiMap.get(prev.index);
+  const recoverBbi =
+    Number.isFinite(currentBbi) &&
+    Number.isFinite(prevBbi) &&
+    Number(bar.close) >= Number(currentBbi) &&
+    Number(prev.close) < Number(prevBbi);
+  const reclaimAverage = Number(bar.close) > average([prev.close, prev2.close, prev3.close].map(Number).filter(Number.isFinite));
+  const recentPullback = weakCount >= 2 || Number(prev.close) < Number(prev.open);
+  const strongBreakout = breakPrevHigh || changePct >= 3.5;
+  const supportCount = [volumeExpand, recoverBbi, reclaimAverage].filter(Boolean).length;
+  const matched = recentPullback && closeNearHigh && strongBreakout && supportCount >= 1;
+  if (!matched) return { matched: false, reasons: [] };
+
+  const reasons = ["前序回踩后转强"];
+  if (changePct >= 3.5) reasons.push(`当日涨幅 ${changePct.toFixed(2)}%`);
+  if (breakPrevHigh) reasons.push("收盘突破前高");
+  if (volumeExpand) reasons.push("量能放大");
+  if (recoverBbi) reasons.push("重新站上 BBI");
+  if (reclaimAverage) reasons.push("收回近三日均价");
+  if (closeNearHigh) reasons.push("收盘接近当日高点");
+  return { matched: true, reasons };
+}
+
+function weakToStrongReasonList(analysis, idx) {
+  const bars = analysis?.klines || [];
+  const bbiMap = buildBbiValueMap(analysis?.indicators?.bbi || []);
+  return evaluateWeakToStrong(bars, bbiMap, idx).reasons;
+}
+
 function summarizeTradesForReplay(summary, trades) {
   if (!state.replayEnabled) return summary;
   const observed = trades.filter((item) => item.bars > 0);
@@ -2246,7 +2680,7 @@ function bindEvents() {
   els.pickerOverviewBtn?.addEventListener("click", loadPickerOverview);
   els.pickerWatchlistBtn?.addEventListener("click", loadPickerWatchlist);
   els.pickerRunBtn?.addEventListener("click", runSmartPicker);
-  [els.pickerStructureFilter, els.pickerEmotionFilter, els.pickerOverallFilter, els.pickerSortBy, els.pickerSortDirection].forEach((input) => {
+  [els.pickerStructureFilter, els.pickerEmotionFilter, els.pickerLeaderFilter, els.pickerOverallFilter, els.pickerSortBy, els.pickerSortDirection].forEach((input) => {
     input?.addEventListener("change", () => {
       syncPickerFiltersFromControls();
       renderPickerTable();
@@ -2264,6 +2698,7 @@ function bindEvents() {
     }
     if (els.pickerStructureFilter) els.pickerStructureFilter.value = "all";
     if (els.pickerEmotionFilter) els.pickerEmotionFilter.value = "all";
+    if (els.pickerLeaderFilter) els.pickerLeaderFilter.value = "all";
     if (els.pickerOverallFilter) els.pickerOverallFilter.value = "all";
     if (els.pickerSortBy) els.pickerSortBy.value = "overall_score";
     if (els.pickerSortDirection) els.pickerSortDirection.value = "desc";

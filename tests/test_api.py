@@ -130,9 +130,11 @@ class FakePickerClient:
     def overview(self):
         return {
             "status": "ok",
-            "stage": {"label": "主流活跃", "tone": "positive", "summary": "高涨幅个股 88 只。"},
+            "stage": {"label": "主流活跃", "tone": "positive", "cycle": "主升试错期", "summary": "高涨幅个股 88 只。"},
             "universe": {"label": "全A股", "status": "ok", "total": 5000},
             "market_cards": [],
+            "theme_ladders": [],
+            "leader_board": [],
             "news": {"status": "ok", "items": []},
         }
 
@@ -147,13 +149,16 @@ class FakePickerClient:
             "total": 1,
             "description": "测试条件",
             "parser_text": "",
-            "stage": {"label": "主流活跃", "tone": "positive"},
+            "stage": {"label": "主流活跃", "tone": "positive", "cycle": "主升试错期"},
+            "theme_ladders": [],
+            "leader_board": [],
             "candidates": [
                 {
                     "stock": {"ts_code": "000001.SZ", "symbol": "000001", "name": "平安银行", "industry": "银行"},
                     "quote": {"latest_price": "10.0", "change_pct": "2.0%", "change_pct_value": 2.0, "turnover_value": 4.2, "amount_value": 1200000000},
                     "structure": {"label": "结构可看", "tone": "positive", "signal": "买3 候选", "score": 78},
-                    "emotion": {"label": "主流活跃", "tone": "positive", "summary": "高涨幅个股 88 只", "score": 74},
+                    "emotion": {"label": "主流热点", "tone": "positive", "summary": "银行是当前主流之一", "score": 74},
+                    "leader": {"label": "龙头候选", "tone": "positive", "summary": "银行样本中辨识度居前", "score": 84},
                     "capacity": {"label": "容量中等", "tone": "neutral", "summary": "成交额 12 亿", "score": 61},
                     "overall": {"label": "重点观察", "tone": "positive", "decision": "可观察", "score": 73},
                     "screen_row": {"股票代码": "000001", "股票简称": "平安银行"},
@@ -173,6 +178,11 @@ class FakePickerClient:
                 "mx_summary": {"status": "ok", "data": {"cards": []}},
                 "news": {"status": "ok", "items": []},
                 "market_scan": {"status": "ok", "cards": []},
+            },
+            "execution": {
+                "plan": {"title": "交易计划", "verdict": "候选观察"},
+                "discipline": {"title": "纪律引擎", "label": "轻仓试错"},
+                "review": {"title": "复盘系统", "label": "样本不足"},
             },
             "watchlist": {"status": "ok", "in_watchlist": False, "total": 2},
         }
@@ -370,6 +380,7 @@ class ApiTest(unittest.TestCase):
         data = response.get_json()
         self.assertEqual(self.fake_picker.last_candidate["level"], "weekly")
         self.assertEqual(data["stock"]["name"], "平安银行")
+        self.assertEqual(data["execution"]["plan"]["title"], "交易计划")
 
     def test_smart_picker_watchlist(self):
         response = self.app.get("/api/smart-picker/watchlist")
