@@ -192,6 +192,14 @@ class FakeWatchlistProvider:
         return {"status": "ok", "action": action, "target": target, "message": "操作成功"}
 
 
+class BrokenWatchlistProvider:
+    def query(self):
+        raise RuntimeError("watchlist boom")
+
+    def manage(self, action="", target=""):
+        return {"status": "ok", "action": action, "target": target, "message": "操作成功"}
+
+
 class FakeProfileService:
     def build(self, stock, analysis):
         return {
@@ -258,6 +266,22 @@ class SmartPickerServiceTest(unittest.TestCase):
 
         self.assertEqual(result["status"], "ok")
         self.assertEqual(self.watchlist.last_manage["action"], "add")
+
+    def test_candidate_detail_degrades_when_watchlist_fails(self):
+        service = SmartPickerService(
+            data_client=FakeDataClient(),
+            mx_data_provider=None,
+            news_provider=FakeNewsProvider(),
+            screen_provider=FakeScreenProvider(),
+            watchlist_provider=BrokenWatchlistProvider(),
+            trading_profile=FakeProfileService(),
+        )
+
+        result = service.candidate_detail(stock={"ts_code": "000001.SZ"}, level="daily")
+
+        self.assertEqual(result["status"], "ok")
+        self.assertFalse(result["watchlist"]["in_watchlist"])
+        self.assertEqual(result["watchlist"]["status"], "error")
 
 
 if __name__ == "__main__":

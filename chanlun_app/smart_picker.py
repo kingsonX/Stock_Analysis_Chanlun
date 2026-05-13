@@ -30,6 +30,8 @@ class MXWatchlistProvider(MXBaseClient):
 
     def query(self) -> dict[str, Any]:
         result = self._post_json(self.QUERY_URL, {})
+        if not isinstance(result, dict):
+            raise MXProviderError("自选股查询返回格式异常。", 502)
         status = result.get("status")
         code = result.get("code")
         if status not in (0, "0", None) and code not in (0, "0", None):
@@ -39,6 +41,8 @@ class MXWatchlistProvider(MXBaseClient):
         inner = data.get("allResults", {}).get("result", {}) if isinstance(data, dict) else {}
         columns = inner.get("columns", []) if isinstance(inner, dict) else []
         data_list = inner.get("dataList", []) if isinstance(inner, dict) else []
+        if not isinstance(columns, list) or not isinstance(data_list, list):
+            raise MXProviderError("自选股查询数据结构异常。", 502)
         rows = _datalist_to_rows(data_list, _build_column_map(columns), _columns_order(columns))
 
         items = []
@@ -78,6 +82,8 @@ class MXWatchlistProvider(MXBaseClient):
             query = f"把{cleaned_target}从我的自选股列表删除"
 
         result = self._post_json(self.MANAGE_URL, {"query": query})
+        if not isinstance(result, dict):
+            raise MXProviderError("自选股操作返回格式异常。", 502)
         status = result.get("status")
         code = result.get("code")
         if status not in (0, "0", None) and code not in (0, "0", None):
@@ -206,8 +212,9 @@ class SmartPickerService:
             watchlist = self.watchlist()
             watch_codes = {item.get("code", "") for item in watchlist.get("items", [])}
             in_watchlist = stock_record.symbol in watch_codes or stock_record.ts_code.split(".")[0] in watch_codes
-        except MXProviderError as exc:
-            watchlist = {"status": "error", "message": exc.message, "items": [], "total": 0}
+        except Exception as exc:
+            message = getattr(exc, "message", "") or str(exc) or "自选同步失败。"
+            watchlist = {"status": "error", "message": message, "items": [], "total": 0}
             in_watchlist = False
         return {
             "status": "ok",
