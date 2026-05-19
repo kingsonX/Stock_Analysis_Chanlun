@@ -136,20 +136,55 @@ class SmartPickerService:
         }
 
     def screen(self, query_text: str, level: str = "daily", limit: int = 20) -> dict[str, Any]:
+        return self.screen_with_scopes(query_text=query_text, level=level, limit=limit, board_filters=None)
+
+    def screen_with_board(
+        self,
+        query_text: str,
+        level: str = "daily",
+        limit: int = 20,
+        board_filter: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return self.screen_with_scopes(
+            query_text=query_text,
+            level=level,
+            limit=limit,
+            board_filters=[board_filter] if board_filter else None,
+        )
+
+    def screen_with_scopes(
+        self,
+        query_text: str,
+        level: str = "daily",
+        limit: int = 20,
+        board_filters: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         cleaned_query = (query_text or "").strip()
-        if not cleaned_query:
-            raise MXProviderError("请输入智能选股条件。", 400)
         if level not in LEVELS:
             raise MXProviderError(f"level 只支持 {'、'.join(LEVELS)}。", 400)
 
-        parsed = self.screen_provider.parse_response(self.screen_provider.search(cleaned_query))
+        board_contexts = self._resolve_board_filters(board_filters or [])
+        if cleaned_query:
+            parsed = self.screen_provider.parse_response(self.screen_provider.search(cleaned_query))
+            scoped_rows = self._apply_board_scope(parsed.get("rows", []), board_contexts)
+            description = parsed.get("description", "")
+            parser_text = parsed.get("parser_text", "")
+            source_total = parsed.get("total", len(parsed.get("rows", [])))
+        elif board_contexts:
+            parsed = {"rows": [], "total": 0}
+            scoped_rows = self._rows_from_board_contexts(board_contexts)
+            description = "按板块成分股直接生成候选池。"
+            parser_text = ""
+            source_total = len(scoped_rows)
+        else:
+            raise MXProviderError("至少输入一种查询方式：条件、东方财富、通达信或同花顺。", 400)
         market_cards = self._market_cards()
         stage = _market_stage(market_cards)
-        theme_context = self._build_theme_context(parsed.get("rows", []))
+        theme_context = self._build_theme_context(scoped_rows)
 
         candidates = []
         errors = []
-        for row in parsed.get("rows", [])[:limit]:
+        for row in scoped_rows[:limit]:
             try:
                 candidates.append(self._candidate_from_row(row, level, stage, theme_context))
             except (DataProviderError, MXProviderError) as exc:
@@ -161,13 +196,16 @@ class SmartPickerService:
             "level": level,
             "level_label": LEVELS[level]["label"],
             "universe": self._universe(),
-            "description": parsed.get("description", ""),
-            "parser_text": parsed.get("parser_text", ""),
-            "total": parsed.get("total", 0),
+            "description": description,
+            "parser_text": parser_text,
+            "source_total": source_total,
+            "total": len(scoped_rows),
             "stage": stage,
             "theme_ladders": theme_context.get("groups", []),
             "leader_board": theme_context.get("leaders", []),
             "theme_sample_size": theme_context.get("sample_size", 0),
+            "board_filter": board_contexts[0].get("public", {}) if board_contexts else None,
+            "board_filters": [item.get("public", {}) for item in board_contexts],
             "candidates": candidates,
             "errors": errors,
         }
@@ -522,6 +560,92 @@ class SmartPickerService:
                 )
 
         return {"groups": prepared[:6], "groups_by_industry": groups_by_industry, "leaders": leaders[:8], "sample_size": len(seen)}
+
+    def _resolve_board_filters(self, board_filters: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        contexts = []
+        for payload in board_filters:
+            if not payload:
+                continue
+            source = _flatten(payload.get("source") or "dc").strip().lower()
+            query = _flatten(payload.get("name") or payload.get("query") or payload.get("ts_code")).strip()
+            if not query:
+                continue
+            board_type = _flatten(payload.get("board_type") or payload.get("idx_type")).strip()
+            matches = self.data_client.search_boards(source=source, query=query, board_type=board_type, limit=12)
+            if not matches:
+                source_label = _board_source_label(source)
+                raise DataProviderError(f"未找到{source_label}板块或概念：{query}", 404)
+
+            normalized_query = query.upper()
+            chosen = next(
+                (
+                    item
+                    for item in matches
+                    if normalized_query in {str(item.get("ts_code", "")).upper(), str(item.get("name", "")).upper()}
+                ),
+                matches[0],
+            )
+            members = self.data_client.get_board_members(source=source, ts_code=chosen.get("ts_code", ""))
+            member_codes = {str(item.get("con_code", "")).upper() for item in members if item.get("con_code")}
+            member_codes.update(str(item.get("symbol", "")).upper() for item in members if item.get("symbol"))
+            member_names = {str(item.get("name", "")).strip() for item in members if item.get("name")}
+            public = {
+                "source": source,
+                "source_label": chosen.get("source_label", _board_source_label(source)),
+                "ts_code": chosen.get("ts_code", ""),
+                "name": chosen.get("name", ""),
+                "idx_type": chosen.get("idx_type", ""),
+                "type_key": chosen.get("type_key", ""),
+                "trade_date": chosen.get("trade_date", ""),
+                "member_total": len(members),
+            }
+            contexts.append({"public": public, "member_codes": member_codes, "member_names": member_names, "members": members})
+        return contexts
+
+    @staticmethod
+    def _apply_board_scope(rows: list[dict[str, Any]], board_contexts: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+        if not board_contexts:
+            return list(rows)
+        member_codes: set[str] = set()
+        member_names: set[str] = set()
+        for context in board_contexts:
+            member_codes.update(context.get("member_codes") or set())
+            member_names.update(context.get("member_names") or set())
+        scoped = []
+        for row in rows:
+            code = _row_value(row, ["股票代码", "代码"]).strip().upper()
+            name = _row_value(row, ["股票简称", "股票名称", "名称"]).strip()
+            if code in member_codes or name in member_names or f"{code}.SZ" in member_codes or f"{code}.SH" in member_codes:
+                scoped.append(row)
+        return scoped
+
+    def _rows_from_board_contexts(self, board_contexts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for context in board_contexts:
+            for member in context.get("members") or []:
+                query = member.get("con_code") or member.get("symbol") or member.get("name") or ""
+                try:
+                    stock = self.data_client.resolve_stock(query)
+                except DataProviderError:
+                    continue
+                if stock.ts_code in seen:
+                    continue
+                seen.add(stock.ts_code)
+                rows.append(
+                    {
+                        "股票代码": stock.symbol,
+                        "股票简称": stock.name,
+                        "股票名称": stock.name,
+                        "最新价": "",
+                        "涨跌幅": "",
+                        "成交额": "",
+                        "换手率": "",
+                        "__source_scope": context.get("public", {}).get("name", ""),
+                        "__source_label": context.get("public", {}).get("source_label", ""),
+                    }
+                )
+        return rows
 
     def _resolve_theme_stock(self, row: dict[str, Any]) -> dict[str, Any] | None:
         code = _row_value(row, ["股票代码", "代码"])
@@ -1138,3 +1262,12 @@ def _parse_numeric(value: Any) -> float:
         return float("".join(cleaned)) * unit if cleaned else 0.0
     except ValueError:
         return 0.0
+
+
+def _board_source_label(source: str) -> str:
+    mapping = {
+        "dc": "东方财富",
+        "tdx": "通达信",
+        "ths": "同花顺",
+    }
+    return mapping.get(_flatten(source).strip().lower(), "板块")

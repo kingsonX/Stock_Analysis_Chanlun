@@ -71,6 +71,63 @@ class FakeDataClient:
             "300059.SZ": FakeStock(symbol="300059", name="东方财富", ts_code="300059.SZ", industry="证券"),
             "东方财富": FakeStock(symbol="300059", name="东方财富", ts_code="300059.SZ", industry="证券"),
         }
+        self.boards = [
+            {
+                "ts_code": "BK0001",
+                "name": "银行概念",
+                "source": "dc",
+                "source_label": "东方财富",
+                "type_key": "concept",
+                "idx_type": "概念板块",
+                "trade_date": "20260513",
+                "leading": "平安银行",
+            },
+            {
+                "ts_code": "BK0002",
+                "name": "证券行业",
+                "source": "dc",
+                "source_label": "东方财富",
+                "type_key": "industry",
+                "idx_type": "行业板块",
+                "trade_date": "20260513",
+                "leading": "东方财富",
+            },
+            {
+                "ts_code": "T0001",
+                "name": "稀土永磁",
+                "source": "tdx",
+                "source_label": "通达信",
+                "type_key": "concept",
+                "idx_type": "概念板块",
+                "trade_date": "20260513",
+                "leading": "西部材料",
+            },
+            {
+                "ts_code": "TH0001",
+                "name": "固态电池",
+                "source": "ths",
+                "source_label": "同花顺",
+                "type_key": "concept",
+                "idx_type": "概念题材",
+                "trade_date": "20260513",
+                "leading": "东方财富",
+            },
+        ]
+        self.board_members = {
+            "BK0001": [
+                {"ts_code": "BK0001", "con_code": "000001.SZ", "symbol": "000001", "name": "平安银行"},
+                {"ts_code": "BK0001", "con_code": "600000.SH", "symbol": "600000", "name": "浦发银行"},
+            ],
+            "BK0002": [
+                {"ts_code": "BK0002", "con_code": "300059.SZ", "symbol": "300059", "name": "东方财富"},
+            ],
+            "T0001": [
+                {"ts_code": "T0001", "con_code": "300059.SZ", "symbol": "300059", "name": "东方财富"},
+            ],
+            "TH0001": [
+                {"ts_code": "TH0001", "con_code": "300059.SZ", "symbol": "300059", "name": "东方财富"},
+            ],
+        }
 
     def resolve_stock(self, query):
         return self.records.get(query, self.records["000001"])
@@ -84,6 +141,17 @@ class FakeDataClient:
         for row in rows:
             unique[row["ts_code"]] = row
         return pd.DataFrame(list(unique.values()))
+
+    def search_boards(self, source, query, board_type="", limit=20):
+        items = [
+            item for item in self.boards if item["source"] == source and (query in item["name"] or query.upper() in item["ts_code"].upper())
+        ]
+        if board_type:
+            items = [item for item in items if item["type_key"] == board_type]
+        return items[:limit]
+
+    def get_board_members(self, source, ts_code, trade_date=None, force_refresh=False):
+        return self.board_members.get(ts_code, [])
 
 
 class FakeScreenProvider:
@@ -248,6 +316,30 @@ class SmartPickerServiceTest(unittest.TestCase):
         self.assertEqual(result["candidates"][0]["quote"]["amount_value"], 1600000000.0)
         self.assertEqual(result["candidates"][0]["emotion"]["label"], "主流热点")
         self.assertEqual(result["candidates"][0]["leader"]["label"], "龙头候选")
+
+    def test_screen_supports_board_scope(self):
+        result = self.service.screen_with_board(
+            query_text="银行股涨幅大于2%",
+            level="daily",
+            limit=4,
+            board_filter={"name": "证券行业", "board_type": "industry"},
+        )
+
+        self.assertEqual(result["board_filters"][0]["name"], "证券行业")
+        self.assertEqual(result["total"], 1)
+        self.assertEqual(result["candidates"][0]["stock"]["symbol"], "300059")
+
+    def test_screen_supports_board_only_query(self):
+        result = self.service.screen_with_scopes(
+            query_text="",
+            level="daily",
+            limit=4,
+            board_filters=[{"source": "tdx", "name": "稀土永磁", "board_type": "concept"}],
+        )
+
+        self.assertEqual(result["board_filters"][0]["source"], "tdx")
+        self.assertEqual(result["total"], 1)
+        self.assertEqual(result["candidates"][0]["stock"]["symbol"], "300059")
 
     def test_candidate_detail_contains_profile_and_watchlist(self):
         result = self.service.candidate_detail(stock={"ts_code": "000001.SZ"}, level="weekly")

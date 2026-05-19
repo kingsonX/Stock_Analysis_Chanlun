@@ -4,3 +4,5 @@ tushare
 pandas
 numpy
 matplotlib
+psycopg[binary]
+psycopg-pool

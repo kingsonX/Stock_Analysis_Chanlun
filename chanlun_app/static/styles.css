@@ -550,22 +550,72 @@ input:focus {
 
 .pickerControls {
   display: grid;
-  grid-template-columns: minmax(320px, 1.8fr) repeat(2, minmax(120px, 0.5fr)) auto;
-  gap: 12px;
-  align-items: end;
+  gap: 14px;
   padding: 16px 20px;
   border: 1px solid var(--line);
   background: var(--surface);
   box-shadow: var(--shadow);
 }
 
+.pickerSourceGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.pickerSourceCard {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfdff;
+}
+
+.pickerSourceHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.pickerSourceHeader strong {
+  color: var(--ink);
+  font-size: 14px;
+}
+
+.pickerInlineFields {
+  display: grid;
+  grid-template-columns: minmax(140px, 0.6fr) minmax(0, 1fr);
+  gap: 10px;
+  align-items: end;
+}
+
+.pickerCommonControls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(120px, 180px)) minmax(170px, 220px);
+  gap: 12px;
+  align-items: end;
+}
+
 .pickerQueryField {
+  min-width: 0;
+}
+
+.pickerBoardField {
   min-width: 0;
 }
 
 .pickerControls input,
 .pickerControls select {
   height: 38px;
+}
+
+.pickerControlHint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
 }
 
 .pickerControls button,
@@ -577,6 +627,19 @@ input:focus {
   background: var(--accent);
   color: #fff;
   cursor: pointer;
+}
+
+.pickerSourceAction {
+  min-width: 96px;
+  height: 34px !important;
+  padding: 0 12px;
+  white-space: nowrap;
+}
+
+.pickerPrimaryButton {
+  width: 100%;
+  min-width: 170px;
+  font-weight: 700;
 }
 
 .ghostButton {
@@ -634,6 +697,363 @@ input:focus {
 .pickerTablePanel,
 .pickerDetailPanel {
   min-width: 0;
+}
+
+.reviewActions {
+  align-items: end;
+}
+
+.reviewDateField {
+  min-width: 180px;
+}
+
+.reviewSummaryGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.reviewStatCard {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.reviewStatCard.actionable {
+  cursor: pointer;
+}
+
+.reviewStatCard.actionable:hover {
+  border-color: rgba(37, 111, 146, 0.35);
+  box-shadow: 0 12px 24px rgba(17, 34, 51, 0.08);
+}
+
+.reviewStatCard span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.reviewStatCard strong {
+  font-size: 24px;
+  line-height: 1.1;
+}
+
+.reviewStatCard p {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.reviewGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.reviewSidePanel {
+  grid-template-rows: auto minmax(560px, 1fr);
+  max-height: calc(100vh - 20px);
+}
+
+.reviewSideTabs {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.reviewSideTabs button {
+  font-size: 12px;
+}
+
+.reviewSidePane {
+  display: none;
+  min-height: 0;
+  max-height: calc(88vh - 64px);
+  overflow: auto;
+}
+
+.reviewSidePane.active {
+  display: block;
+}
+
+.reviewModal {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+}
+
+.reviewModal[hidden] {
+  display: none !important;
+}
+
+body.modalOpen {
+  overflow: hidden;
+}
+
+.reviewModalBackdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(12, 24, 36, 0.45);
+}
+
+.reviewModalDialog {
+  position: relative;
+  z-index: 1;
+  width: min(1180px, calc(100vw - 48px));
+  max-height: calc(100vh - 48px);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 28px 60px rgba(9, 21, 34, 0.22);
+  overflow: hidden;
+}
+
+.reviewModalHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 20px;
+  border-bottom: 1px solid var(--line);
+}
+
+.reviewModalHeader h2 {
+  margin: 0 0 6px;
+  font-size: 22px;
+}
+
+.reviewModalHeader p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.reviewModalBody {
+  padding: 18px 20px 20px;
+  overflow: auto;
+}
+
+.reviewModalSearchBar {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.reviewModalSearchField {
+  display: grid;
+  gap: 6px;
+  min-width: min(100%, 360px);
+}
+
+.reviewModalSearchField span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.reviewModalSearchField input {
+  width: 100%;
+  min-height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  font: inherit;
+  color: var(--ink);
+}
+
+.reviewModalSearchBar small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.reviewPanelStack {
+  display: grid;
+  gap: 12px;
+}
+
+.reviewPanelMeta {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+}
+
+.reviewPanelMeta small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.reviewPager {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+
+.reviewPager small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.reviewPagerActions {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.reviewTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.reviewTable th,
+.reviewTable td {
+  padding: 10px 8px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+  text-align: left;
+}
+
+.reviewTable th {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.reviewClickable {
+  cursor: pointer;
+}
+
+.reviewTable tr.reviewClickable:hover td,
+.newsItem.reviewClickable:hover,
+.reviewFocusItem.reviewClickable:hover {
+  background: rgba(37, 111, 146, 0.06);
+}
+
+.reviewStockLink {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent-strong);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  text-align: left;
+}
+
+.reviewStockLink:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.reviewStockLink.inline {
+  display: inline;
+}
+
+.reviewBadge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: rgba(37, 111, 146, 0.12);
+  color: var(--accent-strong);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.reviewBadge.warn {
+  background: rgba(168, 111, 0, 0.12);
+  color: var(--warn);
+}
+
+.reviewBadge.danger {
+  background: rgba(194, 65, 54, 0.12);
+  color: var(--sell);
+}
+
+.reviewList {
+  display: grid;
+  gap: 12px;
+}
+
+.reviewFocusItem {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfdff;
+}
+
+.reviewFocusItem strong {
+  font-size: 14px;
+}
+
+.reviewFocusHeading {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+  max-width: 100%;
+  padding: 0;
+  color: var(--ink);
+  font: inherit;
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+}
+
+.reviewFocusHeading:hover .reviewFocusHeadingText {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.reviewFocusHeadingText {
+  min-width: 0;
+}
+
+.reviewFocusMeta {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.reviewModalSection {
+  display: grid;
+  gap: 10px;
+}
+
+.reviewModalSection + .reviewModalSection {
+  margin-top: 16px;
+}
+
+.reviewModalSection h3 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.reviewBulletList {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.reviewBulletList li + li {
+  margin-top: 6px;
 }
 
 .pickerSummaryGrid,
@@ -1550,7 +1970,16 @@ th {
     grid-template-columns: 1fr;
   }
 
-  .pickerControls {
+  .pickerSourceGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .pickerCommonControls {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .reviewSummaryGrid,
+  .reviewGrid {
     grid-template-columns: 1fr 1fr;
   }
 
@@ -1629,6 +2058,17 @@ th {
   }
 
   .pickerControls {
+    grid-template-columns: 1fr;
+  }
+
+  .pickerInlineFields,
+  .pickerCommonControls,
+  .pickerSourceGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .reviewSummaryGrid,
+  .reviewGrid {
     grid-template-columns: 1fr;
   }
 

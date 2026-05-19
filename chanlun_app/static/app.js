@@ -34,7 +34,28 @@ const state = {
     overallFilter: "all",
     sortBy: "overall_score",
     sortDirection: "desc",
+    boardType: "all",
+    boardMatches: [],
+    selectedBoard: null,
+    boardSearchRequestId: 0,
+    tdxType: "all",
+    tdxMatches: [],
+    selectedTdxBoard: null,
+    tdxSearchRequestId: 0,
+    thsType: "all",
+    thsMatches: [],
+    selectedThsBoard: null,
+    thsSearchRequestId: 0,
     loaded: false,
+  },
+  review: {
+    overview: null,
+    requestId: 0,
+    loaded: false,
+    modalKey: "",
+    modalSearch: "",
+    hotMoneyPage: 1,
+    modalPage: 1,
   },
 };
 
@@ -69,6 +90,22 @@ const els = {
   pickerOverviewBtn: document.querySelector("#pickerOverviewBtn"),
   pickerWatchlistBtn: document.querySelector("#pickerWatchlistBtn"),
   pickerQueryInput: document.querySelector("#pickerQueryInput"),
+  pickerRunConditionBtn: document.querySelector("#pickerRunConditionBtn"),
+  pickerBoardType: document.querySelector("#pickerBoardType"),
+  pickerBoardInput: document.querySelector("#pickerBoardInput"),
+  pickerBoardOptions: document.querySelector("#pickerBoardOptions"),
+  pickerBoardSelection: document.querySelector("#pickerBoardSelection"),
+  pickerRunDcBtn: document.querySelector("#pickerRunDcBtn"),
+  pickerTdxType: document.querySelector("#pickerTdxType"),
+  pickerTdxInput: document.querySelector("#pickerTdxInput"),
+  pickerTdxOptions: document.querySelector("#pickerTdxOptions"),
+  pickerTdxSelection: document.querySelector("#pickerTdxSelection"),
+  pickerRunTdxBtn: document.querySelector("#pickerRunTdxBtn"),
+  pickerThsType: document.querySelector("#pickerThsType"),
+  pickerThsInput: document.querySelector("#pickerThsInput"),
+  pickerThsOptions: document.querySelector("#pickerThsOptions"),
+  pickerThsSelection: document.querySelector("#pickerThsSelection"),
+  pickerRunThsBtn: document.querySelector("#pickerRunThsBtn"),
   pickerLevel: document.querySelector("#pickerLevel"),
   pickerLimit: document.querySelector("#pickerLimit"),
   pickerRunBtn: document.querySelector("#pickerRunBtn"),
@@ -89,9 +126,28 @@ const els = {
   pickerTableStatus: document.querySelector("#pickerTableStatus"),
   pickerResultMeta: document.querySelector("#pickerResultMeta"),
   pickerDetailBox: document.querySelector("#pickerDetailBox"),
+  reviewStatusText: document.querySelector("#reviewStatusText"),
+  reviewDate: document.querySelector("#reviewDate"),
+  reviewRefreshBtn: document.querySelector("#reviewRefreshBtn"),
+  reviewErrorBox: document.querySelector("#reviewErrorBox"),
+  reviewSummaryBox: document.querySelector("#reviewSummaryBox"),
+  reviewDragonBox: document.querySelector("#reviewDragonBox"),
+  reviewInstBox: document.querySelector("#reviewInstBox"),
+  reviewLimitBox: document.querySelector("#reviewLimitBox"),
+  reviewLadderBox: document.querySelector("#reviewLadderBox"),
+  reviewSideTabs: document.querySelector("#reviewSideTabs"),
+  reviewFocusBox: document.querySelector("#reviewFocusBox"),
+  reviewBoardsBox: document.querySelector("#reviewBoardsBox"),
+  reviewStocksBox: document.querySelector("#reviewStocksBox"),
+  reviewModal: document.querySelector("#reviewModal"),
+  reviewModalTitle: document.querySelector("#reviewModalTitle"),
+  reviewModalMeta: document.querySelector("#reviewModalMeta"),
+  reviewModalBody: document.querySelector("#reviewModalBody"),
+  reviewModalCloseBtn: document.querySelector("#reviewModalCloseBtn"),
 };
 
 let searchTimer = null;
+let pickerBoardTimer = null;
 let chartRenderFrame = null;
 const MIN_VISIBLE_BARS = 12;
 const MAX_VISIBLE_BARS = 420;
@@ -231,6 +287,11 @@ function switchMainPage(targetId) {
 
   if (targetId === "smartPickerPage") {
     ensureSmartPickerLoaded();
+    return;
+  }
+
+  if (targetId === "reviewPage") {
+    ensureReviewLoaded();
   }
 }
 
@@ -728,8 +789,18 @@ function ensureSmartPickerLoaded() {
   if (state.smartPicker.loaded) return;
   state.smartPicker.loaded = true;
   syncPickerFiltersFromControls();
+  renderAllBoardSelections();
   loadPickerOverview();
   loadPickerWatchlist();
+}
+
+function ensureReviewLoaded() {
+  if (!els.reviewDate?.value) {
+    els.reviewDate.value = todayInputValue();
+  }
+  if (state.review.loaded) return;
+  state.review.loaded = true;
+  loadReviewOverview();
 }
 
 function syncPickerFiltersFromControls() {
@@ -784,10 +855,111 @@ async function loadPickerWatchlist() {
   renderPickerDetail();
 }
 
-async function runSmartPicker() {
+function pickerScopeSummary(boardFilters = []) {
+  return boardFilters
+    .filter((item) => item?.name)
+    .map((item) => `${item.source_label || "板块"}${item.idx_type || "板块"}“${item.name}”`)
+    .join(" + ");
+}
+
+function pickerModeSummary(mode, boardFilters = []) {
+  const labels = {
+    condition: "条件筛选",
+    dc: "东方财富板块",
+    tdx: "通达信板块",
+    ths: "同花顺板块",
+    combined: "组合筛选",
+  };
+  const scope = pickerScopeSummary(boardFilters);
+  if (scope && mode === "combined") {
+    return `${labels[mode]}：${scope}`;
+  }
+  if (scope) {
+    return `${labels[mode]}：${scope}`;
+  }
+  return labels[mode] || "智能选股";
+}
+
+async function normalizePickerBoardSource(source, silent = false) {
+  const dom = pickerBoardDom(source);
+  if (!dom) return null;
+  const query = dom.input?.value.trim() || "";
+  const selected = state.smartPicker[dom.stateKey];
+  if (!query && !selected) {
+    state.smartPicker[dom.stateKey] = null;
+    renderPickerBoardSelection(source);
+    return null;
+  }
+  if (query && !(state.smartPicker[dom.matchesKey] || []).length) {
+    await searchPickerBoards(source, query, silent);
+  }
+  const picked = ensurePickerBoardSelection(source, query || selected?.name || selected?.ts_code || "");
+  if (!picked && !silent) {
+    showPickerError(`请输入有效的${dom.label}板块或概念。`);
+  }
+  return picked;
+}
+
+function pickerBoardRequestPayload(source, board) {
+  if (!board) return {};
+  if (source === "dc") {
+    return {
+      board_ts_code: board.ts_code || "",
+      board_name: board.name || "",
+      board_type: board.type_key || boardTypeApiValue("dc", els.pickerBoardType?.value || "all"),
+    };
+  }
+  if (source === "tdx") {
+    return {
+      tdx_board_ts_code: board.ts_code || "",
+      tdx_board_name: board.name || "",
+      tdx_board_type: board.type_key || boardTypeApiValue("tdx", els.pickerTdxType?.value || "all"),
+    };
+  }
+  return {
+    ths_board_ts_code: board.ts_code || "",
+    ths_board_name: board.name || "",
+    ths_board_type: board.type_key || boardTypeApiValue("ths", els.pickerThsType?.value || "all"),
+  };
+}
+
+async function runSmartPicker(mode = "combined") {
   const queryText = els.pickerQueryInput?.value.trim() || "";
-  if (!queryText) {
-    showPickerError("请输入智能选股条件。");
+  const payload = {
+    query_text: "",
+    level: els.pickerLevel?.value || "daily",
+    limit: Number(els.pickerLimit?.value || 20),
+  };
+  const selectedBoards = [];
+
+  if (mode === "condition" || mode === "combined") {
+    if (queryText) {
+      payload.query_text = queryText;
+    } else if (mode === "condition") {
+      hidePickerError();
+      setPickerStatus("条件查询未填写时不会执行。你也可以单独使用东方财富、通达信或同花顺板块查询。");
+      return;
+    }
+  }
+
+  for (const source of ["dc", "tdx", "ths"]) {
+    const shouldHandle = mode === "combined" || mode === source;
+    if (!shouldHandle) continue;
+    const board = await normalizePickerBoardSource(source, false);
+    if (mode === source && !board) {
+      return;
+    }
+    if (board) {
+      selectedBoards.push(board);
+      Object.assign(payload, pickerBoardRequestPayload(source, board));
+    }
+  }
+
+  const hasQuery = Boolean(payload.query_text);
+  const hasBoard = selectedBoards.length > 0;
+  if (!hasQuery && !hasBoard) {
+    hidePickerError();
+    setPickerStatus("当前还没有选择任何查询来源。条件、东方财富、通达信、同花顺都可以单独查询，也可以组合筛选。");
     return;
   }
 
@@ -800,23 +972,25 @@ async function runSmartPicker() {
   renderPickerTable();
   renderPickerDetail();
   hidePickerError();
-  setPickerStatus("正在根据条件筛选股票，并结合缠论结构生成候选池...");
+  setPickerStatus(`正在执行${pickerModeSummary(mode, selectedBoards)}，并结合缠论结构生成候选池...`);
 
   try {
     const data = await fetchJson("/api/smart-picker/screen", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        query_text: queryText,
-        level: els.pickerLevel?.value || "daily",
-        limit: Number(els.pickerLimit?.value || 20),
-      }),
+      body: JSON.stringify(payload),
     });
     if (requestId !== state.smartPicker.screenRequestId) return;
     state.smartPicker.screen = data;
     const count = (data.candidates || []).length;
     const marketTotal = data.universe?.total ? `全市场 ${data.universe.total} 只股票里` : "全市场里";
-    setPickerStatus(count ? `已从 ${marketTotal} 生成 ${count} 只结构候选，先按排序和筛选缩小观察范围。` : "筛选已完成，但当前条件下没有生成可用候选。");
+    const scopeSummary = pickerScopeSummary(data.board_filters || selectedBoards);
+    const prefix = scopeSummary ? `${scopeSummary} 已载入；` : "";
+    setPickerStatus(
+      count
+        ? `${prefix}已从 ${marketTotal} 生成 ${count} 只结构候选，先按排序和筛选缩小观察范围。`
+        : `${prefix}筛选已完成，但当前条件下没有生成可用候选。`
+    );
   } catch (err) {
     if (requestId !== state.smartPicker.screenRequestId) return;
     state.smartPicker.screen = { status: "error", message: err.message };
@@ -912,6 +1086,32 @@ function openCandidateInAnalysis(stock) {
   loadAnalysis();
 }
 
+function openReviewStockInAnalysis(rowOrPayload) {
+  const row = rowOrPayload || {};
+  const tsCode = resolveReviewStockCode(row);
+  const name = String(row.name || row.exalter || row.query_name || "").trim();
+  if (tsCode) {
+    const symbol = String(tsCode).split(".")[0] || "";
+    openCandidateInAnalysis({
+      ts_code: tsCode,
+      name: name || symbol,
+      symbol,
+    });
+    return;
+  }
+  if (!name) return;
+  state.selectedStock = null;
+  els.stockInput.value = name;
+  setAnalysisLevel(els.pickerLevel?.value || "daily");
+  switchMainPage("analysisPage");
+  loadAnalysis();
+}
+
+function resolveReviewStockCode(row) {
+  if (!row) return "";
+  return String(row.ts_code || row.code || row.con_code || row.symbol || "").trim();
+}
+
 function setAnalysisLevel(level) {
   state.level = level;
   els.levelTabs?.querySelectorAll("button[data-level]").forEach((item) => {
@@ -935,6 +1135,634 @@ function hidePickerError() {
   if (!els.pickerErrorBox) return;
   els.pickerErrorBox.hidden = true;
   els.pickerErrorBox.textContent = "";
+}
+
+function setReviewStatus(message) {
+  if (els.reviewStatusText) {
+    els.reviewStatusText.textContent = message;
+  }
+}
+
+function showReviewError(message) {
+  if (!els.reviewErrorBox) return;
+  els.reviewErrorBox.textContent = message;
+  els.reviewErrorBox.hidden = false;
+}
+
+function hideReviewError() {
+  if (!els.reviewErrorBox) return;
+  els.reviewErrorBox.hidden = true;
+  els.reviewErrorBox.textContent = "";
+}
+
+async function loadReviewOverview() {
+  const requestId = ++state.review.requestId;
+  state.review.overview = { status: "loading" };
+  state.review.hotMoneyPage = 1;
+  state.review.modalPage = 1;
+  state.review.modalSearch = "";
+  state.review.modalKey = "";
+  closeReviewModal();
+  renderReview();
+  setReviewStatus("正在汇总龙虎榜、游资、涨跌停与连板天梯...");
+  hideReviewError();
+
+  try {
+    const dateValue = normalizeDateInput(els.reviewDate?.value || "");
+    const suffix = dateValue ? `?trade_date=${encodeURIComponent(dateValue)}` : "";
+    const data = await fetchJson(`/api/review/overview${suffix}`);
+    if (requestId !== state.review.requestId) return;
+    state.review.overview = data;
+    setReviewStatus(`复盘已更新到 ${formatDate(data.trade_date || dateValue)}，先看主线板块，再看龙虎榜与游资共振。`);
+  } catch (err) {
+    if (requestId !== state.review.requestId) return;
+    state.review.overview = { status: "error", message: err.message };
+    showReviewError(err.message);
+  }
+
+  renderReview();
+}
+
+function renderReview() {
+  renderReviewSummary();
+  renderReviewDragonTiger();
+  renderReviewInstitution();
+  renderReviewLimitLists();
+  renderReviewLadder();
+  renderReviewFocus();
+  renderReviewBoards();
+  renderReviewStocks();
+}
+
+function renderReviewSummary() {
+  const review = state.review.overview;
+  if (!els.reviewSummaryBox) return;
+
+  if (!review || review.status === "loading") {
+    els.reviewSummaryBox.innerHTML = `
+      <article class="reviewStatCard loading"><div class="mxSkeleton"></div><div class="mxSkeleton short"></div></article>
+      <article class="reviewStatCard loading"><div class="mxSkeleton"></div><div class="mxSkeleton short"></div></article>
+      <article class="reviewStatCard loading"><div class="mxSkeleton"></div><div class="mxSkeleton short"></div></article>
+      <article class="reviewStatCard loading"><div class="mxSkeleton"></div><div class="mxSkeleton short"></div></article>
+    `;
+    return;
+  }
+
+  if (review.status === "error") {
+    els.reviewSummaryBox.innerHTML = `<div class="mxError">${escapeHtml(review.message || "复盘数据加载失败。")}</div>`;
+    return;
+  }
+
+  const summary = review.summary || {};
+  const hotMoneyStats = review.hot_money_stats || {};
+  const cards = [
+    { label: "龙虎榜", value: summary.dragon_count, note: "上榜个股数", modalKey: "dragon_tiger" },
+    { label: "游资数据", value: summary.hot_money_count, note: `原始 ${intValue(hotMoneyStats.record_count)} 条 · 合并后 ${intValue(hotMoneyStats.merged_count)} 只`, modalKey: "hot_money_trades" },
+    { label: "涨停 / 跌停", value: `${summary.up_limit_count || 0} / ${summary.down_limit_count || 0}`, note: `炸板 ${summary.burst_count || 0} 家`, modalKey: "limit_lists" },
+    { label: "最高连板", value: `${summary.highest_board || 0} 板`, note: `关注板块 ${summary.focus_board_count || 0} 个 · 股票 ${summary.focus_stock_count || 0} 只`, modalKey: "ladder" },
+  ];
+  els.reviewSummaryBox.innerHTML = cards
+    .map(
+      (card) => `
+        <article class="reviewStatCard${card.modalKey ? " actionable" : ""}" ${card.modalKey ? `data-review-summary-open="${escapeHtml(card.modalKey)}"` : ""}>
+          <span>${escapeHtml(card.label)}</span>
+          <strong>${escapeHtml(String(card.value ?? "-"))}</strong>
+          <p>${escapeHtml(card.note)}</p>
+        </article>
+      `
+    )
+    .join("");
+}
+
+function renderReviewDragonTiger() {
+  const review = state.review.overview;
+  if (!els.reviewDragonBox) return;
+  if (!review || review.status === "loading") {
+    els.reviewDragonBox.innerHTML = `<div class="empty">正在加载龙虎榜数据...</div>`;
+    return;
+  }
+  if (review.status === "error") {
+    els.reviewDragonBox.innerHTML = `<div class="mxError">${escapeHtml(review.message || "龙虎榜加载失败。")}</div>`;
+    return;
+  }
+  const items = (review.dragon_tiger || []).slice(0, 12);
+  if (!items.length) {
+    els.reviewDragonBox.innerHTML = `<div class="empty">当天没有可用龙虎榜数据。</div>`;
+    return;
+  }
+  els.reviewDragonBox.innerHTML = renderReviewTable(
+    [
+      { key: "name", label: "股票", stockLink: true },
+      { key: "pct_change", label: "涨跌幅", format: formatSignedPercentValue },
+      { key: "net_amount", label: "净额", format: formatAmountYi },
+      { key: "reason", label: "上榜原因" },
+    ],
+    items
+  );
+}
+
+function renderReviewInstitution() {
+  const review = state.review.overview;
+  if (!els.reviewInstBox) return;
+  if (!review || review.status === "loading") {
+    els.reviewInstBox.innerHTML = `<div class="empty">正在加载游资数据...</div>`;
+    return;
+  }
+  if (review.status === "error") {
+    els.reviewInstBox.innerHTML = `<div class="mxError">${escapeHtml(review.message || "游资数据加载失败。")}</div>`;
+    return;
+  }
+  const items = review.hot_money_trades || [];
+  if (!items.length) {
+    els.reviewInstBox.innerHTML = `<div class="empty">当天没有游资明细。</div>`;
+    return;
+  }
+  const { rows, page, totalPages, total } = paginateRows(items, state.review.hotMoneyPage, 8);
+  state.review.hotMoneyPage = page;
+  const table = renderReviewTable(
+    [
+      { key: "name", label: "股票", stockLink: true },
+      { key: "hot_money_label", label: "游资" },
+      { key: "net_amount", label: "净买入", format: formatAmountYi },
+      { key: "org_count", label: "席位数", format: intValue },
+      { key: "record_count", label: "记录数", format: intValue },
+    ],
+    rows
+  );
+  els.reviewInstBox.innerHTML = `
+    <div class="reviewPanelStack">
+      <div class="reviewPanelMeta">
+        <small>按股票合并相关游资交易记录，共 ${intValue(total)} 只股票。</small>
+      </div>
+      ${table}
+      ${renderReviewPager({
+        page,
+        totalPages,
+        totalItems: total,
+        pageSize: 8,
+        action: "hot-money-panel",
+      })}
+    </div>
+  `;
+}
+
+function renderReviewLimitLists() {
+  const review = state.review.overview;
+  if (!els.reviewLimitBox) return;
+  if (!review || review.status === "loading") {
+    els.reviewLimitBox.innerHTML = `<div class="empty">正在加载涨跌停列表...</div>`;
+    return;
+  }
+  if (review.status === "error") {
+    els.reviewLimitBox.innerHTML = `<div class="mxError">${escapeHtml(review.message || "涨跌停列表加载失败。")}</div>`;
+    return;
+  }
+  const groups = review.limit_lists || {};
+  const sections = [
+    { title: "涨停前排", tone: "positive", items: (groups.up || []).slice(0, 6), summary: (item) => `${item.name || ""} · ${intValue(item.limit_times)} 次封板 · 强度 ${intValue(item.strth)}` },
+    { title: "炸板观察", tone: "warn", items: (groups.burst || []).slice(0, 6), summary: (item) => `${item.name || ""} · 开板 ${intValue(item.open_times)} 次` },
+    { title: "跌停风险", tone: "danger", items: (groups.down || []).slice(0, 6), summary: (item) => `${item.name || ""} · ${formatSignedPercentValue(item.pct_chg)}` },
+  ];
+  els.reviewLimitBox.innerHTML = `
+    <div class="reviewList">
+      ${sections
+        .map(
+          (section) => `
+            <article class="reviewFocusItem">
+              <strong><span class="reviewBadge ${section.tone === "warn" ? "warn" : section.tone === "danger" ? "danger" : ""}">${escapeHtml(section.title)}</span></strong>
+              ${
+                section.items.length
+                  ? `<div class="newsList">
+                      ${section.items
+                        .map(
+                          (item) => `
+                            <article class="newsItem${reviewRowCanOpen(item) ? " reviewClickable" : ""}" ${reviewRowCanOpen(item) ? `data-review-open-analysis="1" data-ts-code="${escapeHtml(resolveReviewStockCode(item))}" data-name="${escapeHtml(item.name || "")}"` : ""}>
+                              <strong>${renderReviewStockButton(item.name || "", item)}</strong>
+                              <p>${escapeHtml(section.summary(item))}</p>
+                            </article>
+                          `
+                        )
+                        .join("")}
+                    </div>`
+                  : `<p class="mxCardMessage">暂无样本。</p>`
+              }
+            </article>
+          `
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function renderReviewLadder() {
+  const review = state.review.overview;
+  if (!els.reviewLadderBox) return;
+  if (!review || review.status === "loading") {
+    els.reviewLadderBox.innerHTML = `<div class="empty">正在加载连板天梯...</div>`;
+    return;
+  }
+  if (review.status === "error") {
+    els.reviewLadderBox.innerHTML = `<div class="mxError">${escapeHtml(review.message || "连板天梯加载失败。")}</div>`;
+    return;
+  }
+  const items = (review.ladder || []).slice(0, 12);
+  if (!items.length) {
+    els.reviewLadderBox.innerHTML = `<div class="empty">当天没有连板天梯数据。</div>`;
+    return;
+  }
+  els.reviewLadderBox.innerHTML = renderReviewTable(
+    [
+      { key: "name", label: "股票", stockLink: true },
+      { key: "continue_num", label: "连板", format: (value) => `${intValue(value)} 板` },
+      { key: "limit_times", label: "涨停次数", format: intValue },
+      { key: "concept", label: "概念" },
+    ],
+    items
+  );
+}
+
+function renderReviewFocus() {
+  const review = state.review.overview;
+  if (!els.reviewFocusBox) return;
+  if (!review || review.status === "loading") {
+    els.reviewFocusBox.innerHTML = `<div class="empty">正在提炼复盘要点...</div>`;
+    return;
+  }
+  if (review.status === "error") {
+    els.reviewFocusBox.innerHTML = `<div class="mxError">${escapeHtml(review.message || "复盘要点加载失败。")}</div>`;
+    return;
+  }
+  const notes = review.notes || {};
+  els.reviewFocusBox.className = "reviewList";
+  els.reviewFocusBox.innerHTML = `
+    <article class="reviewFocusItem">
+      <strong>一句话复盘</strong>
+      <p>${escapeHtml(notes.summary || "暂无复盘结论。")}</p>
+    </article>
+    <article class="reviewFocusItem">
+      <strong>今天先看什么</strong>
+      <ul class="reviewBulletList">
+        ${(notes.watch_points || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("") || "<li>暂无重点观察项。</li>"}
+      </ul>
+    </article>
+    <article class="reviewFocusItem">
+      <strong>风险提醒</strong>
+      <ul class="reviewBulletList">
+        ${(notes.risk_points || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("") || "<li>暂无额外风险提醒。</li>"}
+      </ul>
+    </article>
+  `;
+}
+
+function renderReviewBoards() {
+  const review = state.review.overview;
+  if (!els.reviewBoardsBox) return;
+  if (!review || review.status === "loading") {
+    els.reviewBoardsBox.innerHTML = `<div class="empty">正在生成关注板块...</div>`;
+    return;
+  }
+  if (review.status === "error") {
+    els.reviewBoardsBox.innerHTML = `<div class="mxError">${escapeHtml(review.message || "关注板块加载失败。")}</div>`;
+    return;
+  }
+  const items = review.focus_boards || [];
+  if (!items.length) {
+    els.reviewBoardsBox.innerHTML = `<div class="empty">当前没有可提炼的主线板块。</div>`;
+    return;
+  }
+  els.reviewBoardsBox.className = "reviewList";
+  els.reviewBoardsBox.innerHTML = items
+    .map(
+      (item) => `
+        <article class="reviewFocusItem">
+          <strong>${escapeHtml(item.name || "")} <span class="reviewBadge">第 ${intValue(item.rank)} 名</span></strong>
+          <div class="reviewFocusMeta">涨停 ${intValue(item.limit_count)} 家 · 板块样本 ${intValue(item.count)} 家 · 涨幅 ${formatSignedPercentValue(item.pct_chg)}</div>
+          <p>${escapeHtml(item.watch_reason || "")}</p>
+        </article>
+      `
+    )
+    .join("");
+}
+
+function renderReviewStocks() {
+  const review = state.review.overview;
+  if (!els.reviewStocksBox) return;
+  if (!review || review.status === "loading") {
+    els.reviewStocksBox.innerHTML = `<div class="empty">正在生成关注股票...</div>`;
+    return;
+  }
+  if (review.status === "error") {
+    els.reviewStocksBox.innerHTML = `<div class="mxError">${escapeHtml(review.message || "关注股票加载失败。")}</div>`;
+    return;
+  }
+  const items = review.focus_stocks || [];
+  if (!items.length) {
+    els.reviewStocksBox.innerHTML = `<div class="empty">当前没有可提炼的核心股票。</div>`;
+    return;
+  }
+  els.reviewStocksBox.className = "reviewList";
+  els.reviewStocksBox.innerHTML = items
+    .map(
+      (item) => `
+        <article class="reviewFocusItem${reviewRowCanOpen(item) ? " reviewClickable" : ""}" ${reviewRowCanOpen(item) ? `data-review-open-analysis="1" data-ts-code="${escapeHtml(resolveReviewStockCode(item))}" data-name="${escapeHtml(item.name || "")}"` : ""}>
+          ${renderReviewStockHeadline(item)}
+          <div class="reviewFocusMeta">${escapeHtml(item.ts_code || "")} · 分数 ${escapeHtml(String(item.score ?? "-"))}</div>
+          <p>${escapeHtml((item.tags || []).join(" / "))}</p>
+          <p>${escapeHtml(item.reason || "")}</p>
+        </article>
+      `
+    )
+    .join("");
+}
+
+function renderReviewTable(columns, rows) {
+  return `
+    <table class="reviewTable">
+      <thead>
+        <tr>${columns.map((column) => `<th>${escapeHtml(column.label)}</th>`).join("")}</tr>
+      </thead>
+      <tbody>
+        ${rows
+          .map(
+            (row) => `
+              <tr${reviewRowCanOpen(row) ? ` class="reviewClickable" data-review-open-analysis="1" data-ts-code="${escapeHtml(resolveReviewStockCode(row))}" data-name="${escapeHtml(row.name || row.exalter || "")}"` : ""}>
+                ${columns
+                  .map((column) => {
+                    const raw = row[column.key];
+                    const value = column.format ? column.format(raw, row) : raw;
+                    if (column.stockLink) {
+                      return `<td>${renderReviewStockButton(value ?? "-", row)}</td>`;
+                    }
+                    return `<td>${escapeHtml(value ?? "-")}</td>`;
+                  })
+                  .join("")}
+              </tr>
+            `
+          )
+          .join("")}
+      </tbody>
+    </table>
+  `;
+}
+
+function renderReviewStockButton(label, row, className = "reviewStockLink") {
+  const text = String(label ?? "-");
+  const tsCode = resolveReviewStockCode(row);
+  const name = row?.name || row?.exalter || text;
+  if (!tsCode && !String(name || "").trim()) {
+    return escapeHtml(text);
+  }
+  return `<button type="button" class="${escapeHtml(className)}" data-review-open-analysis="1" data-ts-code="${escapeHtml(tsCode)}" data-name="${escapeHtml(name)}">${escapeHtml(text)}</button>`;
+}
+
+function renderReviewInstitutionModal(items, searchTerm = "", page = 1) {
+  const keyword = String(searchTerm || "").trim().toLowerCase();
+  const filtered = keyword
+    ? items.filter((row) =>
+        `${row.hm_name || ""} ${row.hot_money_label || ""} ${(row.hot_money_names || []).join(" ")} ${row.hm_orgs || ""}`
+          .toLowerCase()
+          .includes(keyword)
+      )
+    : items;
+  const { rows, page: currentPage, totalPages } = paginateRows(filtered, page, 20);
+  state.review.modalPage = currentPage;
+  const table = filtered.length
+    ? renderReviewTable(
+        [
+          { key: "name", label: "股票", stockLink: true },
+          { key: "hot_money_label", label: "游资" },
+          { key: "org_count", label: "席位数", format: intValue },
+          { key: "record_count", label: "记录数", format: intValue },
+          { key: "buy_amount", label: "买入额", format: formatAmountYi },
+          { key: "sell_amount", label: "卖出额", format: formatAmountYi },
+          { key: "net_amount", label: "净买入", format: formatAmountYi },
+          { key: "tag", label: "标签" },
+        ],
+        rows
+      )
+    : `<div class="empty">没有匹配当前游资名称的游资明细。</div>`;
+  return `
+    <div class="reviewModalSearchBar">
+      <label class="reviewModalSearchField">
+        <span>按游资名称搜索</span>
+        <input type="search" data-review-modal-search="hot-money" placeholder="例如：量化基金、北京帮" value="${escapeHtml(searchTerm)}" />
+      </label>
+      <small>匹配 ${intValue(filtered.length)} / 合并后 ${intValue(items.length)} 只</small>
+    </div>
+    <div class="reviewPanelStack">
+      ${table}
+      ${renderReviewPager({
+        page: currentPage,
+        totalPages,
+        totalItems: filtered.length,
+        pageSize: 20,
+        action: "hot-money-modal",
+      })}
+    </div>
+  `;
+}
+
+function renderReviewModalSection(title, content) {
+  return `
+    <section class="reviewModalSection">
+      <h3>${escapeHtml(title)}</h3>
+      ${content}
+    </section>
+  `;
+}
+
+function reviewRowCanOpen(row) {
+  return Boolean(resolveReviewStockCode(row) || String(row?.name || row?.exalter || "").trim());
+}
+
+function paginateRows(items, page, pageSize) {
+  const safePageSize = Math.max(1, intValue(pageSize) || 1);
+  const total = Array.isArray(items) ? items.length : 0;
+  const totalPages = Math.max(1, Math.ceil(total / safePageSize));
+  const currentPage = Math.min(Math.max(intValue(page) || 1, 1), totalPages);
+  const start = (currentPage - 1) * safePageSize;
+  return {
+    rows: (items || []).slice(start, start + safePageSize),
+    page: currentPage,
+    totalPages,
+    total,
+  };
+}
+
+function renderReviewPager({ page, totalPages, totalItems, pageSize, action }) {
+  if (!totalItems || totalPages <= 1) return "";
+  const start = (page - 1) * pageSize + 1;
+  const end = Math.min(totalItems, page * pageSize);
+  return `
+    <div class="reviewPager">
+      <small>第 ${page} / ${totalPages} 页 · 显示 ${start}-${end} / ${intValue(totalItems)}</small>
+      <div class="reviewPagerActions">
+        <button type="button" class="ghostButton miniButton" data-review-page-action="${escapeHtml(action)}" data-review-page="${page - 1}" ${page <= 1 ? "disabled" : ""}>上一页</button>
+        <button type="button" class="ghostButton miniButton" data-review-page-action="${escapeHtml(action)}" data-review-page="${page + 1}" ${page >= totalPages ? "disabled" : ""}>下一页</button>
+      </div>
+    </div>
+  `;
+}
+
+function openReviewSummaryModal(key) {
+  const review = state.review.overview;
+  if (!review || review.status !== "ok" || !els.reviewModal) return;
+  let title = "复盘明细";
+  let meta = `复盘日期 ${formatDate(review.trade_date || "")}`;
+  let body = `<div class="empty">暂无可展示数据。</div>`;
+
+  if (key === "dragon_tiger") {
+    title = "龙虎榜明细";
+    meta = `复盘日期 ${formatDate(review.trade_date || "")} · 共 ${intValue((review.dragon_tiger || []).length)} 只上榜股票`;
+    body = (review.dragon_tiger || []).length
+      ? renderReviewTable(
+          [
+            { key: "name", label: "股票", stockLink: true },
+            { key: "pct_change", label: "涨跌幅", format: formatSignedPercentValue },
+            { key: "turnover_rate", label: "换手率", format: (value) => formatSignedPercentValue(value) },
+            { key: "net_amount", label: "龙虎榜净额", format: formatAmountYi },
+            { key: "reason", label: "上榜原因" },
+          ],
+          review.dragon_tiger || []
+        )
+      : `<div class="empty">当天没有可用龙虎榜数据。</div>`;
+  } else if (key === "hot_money_trades") {
+    title = "游资数据明细";
+    meta = `复盘日期 ${formatDate(review.trade_date || "")} · 原始 ${intValue(review.hot_money_stats?.record_count)} 条 · 合并后 ${intValue((review.hot_money_trades || []).length)} 只股票`;
+    body = (review.hot_money_trades || []).length
+      ? renderReviewInstitutionModal(review.hot_money_trades || [], "", 1)
+      : `<div class="empty">当天没有游资明细。</div>`;
+  } else if (key === "limit_lists") {
+    const groups = review.limit_lists || {};
+    const upRows = groups.up || [];
+    const burstRows = groups.burst || [];
+    const downRows = groups.down || [];
+    title = "涨跌停列表明细";
+    meta = `复盘日期 ${formatDate(review.trade_date || "")} · 涨停 ${upRows.length} 家 · 炸板 ${burstRows.length} 家 · 跌停 ${downRows.length} 家`;
+    body = [
+      renderReviewModalSection(
+        "涨停前排",
+        upRows.length
+          ? renderReviewTable(
+              [
+                { key: "name", label: "股票", stockLink: true },
+                { key: "pct_chg", label: "涨跌幅", format: formatSignedPercentValue },
+                { key: "limit_times", label: "封板次数", format: intValue },
+                { key: "strth", label: "强度", format: intValue },
+                { key: "open_times", label: "开板次数", format: intValue },
+              ],
+              upRows
+            )
+          : `<div class="empty">暂无涨停前排样本。</div>`
+      ),
+      renderReviewModalSection(
+        "炸板观察",
+        burstRows.length
+          ? renderReviewTable(
+              [
+                { key: "name", label: "股票", stockLink: true },
+                { key: "pct_chg", label: "涨跌幅", format: formatSignedPercentValue },
+                { key: "open_times", label: "开板次数", format: intValue },
+                { key: "fd_amount", label: "封单额", format: formatAmountYi },
+                { key: "strth", label: "强度", format: intValue },
+              ],
+              burstRows
+            )
+          : `<div class="empty">暂无炸板观察样本。</div>`
+      ),
+      renderReviewModalSection(
+        "跌停风险",
+        downRows.length
+          ? renderReviewTable(
+              [
+                { key: "name", label: "股票", stockLink: true },
+                { key: "pct_chg", label: "涨跌幅", format: formatSignedPercentValue },
+                { key: "limit_times", label: "封板次数", format: intValue },
+                { key: "open_times", label: "开板次数", format: intValue },
+              ],
+              downRows
+            )
+          : `<div class="empty">暂无跌停风险样本。</div>`
+      ),
+    ].join("");
+  } else if (key === "ladder") {
+    title = "连板天梯明细";
+    meta = `复盘日期 ${formatDate(review.trade_date || "")} · 最高连板 ${intValue(review.summary?.highest_board)} 板`;
+    body = (review.ladder || []).length
+      ? renderReviewTable(
+          [
+            { key: "name", label: "股票", stockLink: true },
+            { key: "continue_num", label: "连板", format: (value) => `${intValue(value)} 板` },
+            { key: "limit_times", label: "涨停次数", format: intValue },
+            { key: "pct_chg", label: "涨跌幅", format: formatSignedPercentValue },
+            { key: "turnover_rate", label: "换手率", format: formatSignedPercentValue },
+            { key: "amount", label: "成交额", format: formatAmountYi },
+            { key: "concept", label: "概念" },
+          ],
+          review.ladder || []
+        )
+      : `<div class="empty">当天没有连板天梯数据。</div>`;
+  }
+
+  state.review.modalKey = key;
+  state.review.modalSearch = "";
+  els.reviewModalTitle.textContent = title;
+  els.reviewModalMeta.textContent = meta;
+  els.reviewModalBody.innerHTML = body;
+  els.reviewModal.hidden = false;
+  document.body.classList.add("modalOpen");
+}
+
+function closeReviewModal() {
+  if (!els.reviewModal) return;
+  state.review.modalKey = "";
+  state.review.modalSearch = "";
+  els.reviewModal.hidden = true;
+  document.body.classList.remove("modalOpen");
+}
+
+function updateReviewInstitutionModalSearch(term) {
+  const review = state.review.overview;
+  if (!review || review.status !== "ok" || state.review.modalKey !== "hot_money_trades" || !els.reviewModalBody) return;
+  state.review.modalSearch = term;
+  state.review.modalPage = 1;
+  els.reviewModalBody.innerHTML = renderReviewInstitutionModal(review.hot_money_trades || [], term, 1);
+}
+
+function updateReviewHotMoneyPage(page) {
+  state.review.hotMoneyPage = Math.max(1, intValue(page) || 1);
+  renderReviewInstitution();
+}
+
+function updateReviewModalPage(page) {
+  const review = state.review.overview;
+  if (!review || review.status !== "ok" || state.review.modalKey !== "hot_money_trades" || !els.reviewModalBody) return;
+  state.review.modalPage = Math.max(1, intValue(page) || 1);
+  els.reviewModalBody.innerHTML = renderReviewInstitutionModal(
+    review.hot_money_trades || [],
+    state.review.modalSearch || "",
+    state.review.modalPage
+  );
+}
+
+function renderReviewStockHeadline(item) {
+  const canOpen = reviewRowCanOpen(item);
+  const name = item?.name || "";
+  const verdict = item?.verdict || "观察";
+  if (!canOpen) {
+    return `<strong>${escapeHtml(name)} <span class="reviewBadge">${escapeHtml(verdict)}</span></strong>`;
+  }
+  return `
+    <strong
+      class="reviewFocusHeading"
+      data-review-open-analysis="1"
+      data-ts-code="${escapeHtml(resolveReviewStockCode(item))}"
+      data-name="${escapeHtml(name)}"
+    >
+      <span class="reviewFocusHeadingText">${escapeHtml(name)}</span>
+      <span class="reviewBadge">${escapeHtml(verdict)}</span>
+    </strong>
+  `;
 }
 
 function renderPickerOverview() {
@@ -1193,12 +2021,23 @@ function renderPickerTable() {
   const rawCandidates = screen.candidates || [];
   const candidates = filterAndSortPickerCandidates(rawCandidates);
   const universe = screen.universe || {};
+  const boardFilters = screen.board_filters || [];
   const filterSummary = buildPickerFilterSummary(rawCandidates.length, candidates.length);
   els.pickerTableStatus.textContent = screen.description || screen.parser_text || `候选总数 ${screen.total || 0}`;
   if (els.pickerResultMeta) {
-    els.pickerResultMeta.textContent = universe.total
-      ? `全 A 股 ${universe.total} 只股票中，条件命中 ${screen.total || rawCandidates.length} 只；当前展示 ${candidates.length} 只。${filterSummary}`
-      : `条件命中 ${screen.total || rawCandidates.length} 只；当前展示 ${candidates.length} 只。${filterSummary}`;
+    const boardScope = boardFilters.length
+      ? `已限定 ${boardFilters
+          .map((item) => `${item.source_label || "板块"}${item.idx_type || "板块"}“${item.name || ""}”`)
+          .join(" + ")}；`
+      : "";
+    const totalText = boardFilters.length && !screen.query_text
+      ? `板块成分股共 ${screen.total || rawCandidates.length} 只`
+      : boardFilters.length
+      ? `条件命中 ${screen.total || rawCandidates.length} 只`
+      : universe.total
+      ? `全 A 股 ${universe.total} 只股票中，条件命中 ${screen.total || rawCandidates.length} 只`
+      : `条件命中 ${screen.total || rawCandidates.length} 只`;
+    els.pickerResultMeta.textContent = `${boardScope}${totalText}；当前展示 ${candidates.length} 只。${filterSummary}`;
   }
   if (!candidates.length) {
     els.pickerTableBox.innerHTML = `<div class="empty">当前条件下没有筛出可用候选，可以放宽条件再试一次。</div>`;
@@ -1277,6 +2116,20 @@ function renderPickerTable() {
 
 function buildPickerFilterSummary(rawCount, visibleCount) {
   const parts = [];
+  const boardParts = [
+    state.smartPicker.selectedBoard
+      ? `东财=${state.smartPicker.selectedBoard.name}`
+      : "",
+    state.smartPicker.selectedTdxBoard
+      ? `通达信=${state.smartPicker.selectedTdxBoard.name}`
+      : "",
+    state.smartPicker.selectedThsBoard
+      ? `同花顺=${state.smartPicker.selectedThsBoard.name}`
+      : "",
+  ].filter(Boolean);
+  if (boardParts.length) {
+    parts.push(boardParts.join(" / "));
+  }
   if (state.smartPicker.focusReadyOnly) {
     parts.push("已启用“主流强票”快捷筛选");
   }
@@ -1297,6 +2150,154 @@ function buildPickerFilterSummary(rawCount, visibleCount) {
     parts.unshift(`筛掉 ${rawCount - visibleCount} 只`);
   }
   return parts.length ? `（${parts.join("，")}）` : "";
+}
+
+function boardTypeApiValue(source, value) {
+  const mapping = {
+    dc: { all: "", industry: "industry", concept: "concept", region: "region" },
+    tdx: { all: "", industry: "industry", concept: "concept", style: "style", region: "region" },
+    ths: { all: "", concept: "concept", industry: "industry", region: "region", feature: "feature", style: "style", theme: "theme", broad: "broad" },
+  };
+  return mapping[source]?.[value] ?? "";
+}
+
+function pickerBoardDom(source) {
+  const mapping = {
+    dc: {
+      source: "dc",
+      typeInput: els.pickerBoardType,
+      input: els.pickerBoardInput,
+      options: els.pickerBoardOptions,
+      selection: els.pickerBoardSelection,
+      label: "东方财富",
+      typeStateKey: "boardType",
+      stateKey: "selectedBoard",
+      matchesKey: "boardMatches",
+      requestKey: "boardSearchRequestId",
+    },
+    tdx: {
+      source: "tdx",
+      typeInput: els.pickerTdxType,
+      input: els.pickerTdxInput,
+      options: els.pickerTdxOptions,
+      selection: els.pickerTdxSelection,
+      label: "通达信",
+      typeStateKey: "tdxType",
+      stateKey: "selectedTdxBoard",
+      matchesKey: "tdxMatches",
+      requestKey: "tdxSearchRequestId",
+    },
+    ths: {
+      source: "ths",
+      typeInput: els.pickerThsType,
+      input: els.pickerThsInput,
+      options: els.pickerThsOptions,
+      selection: els.pickerThsSelection,
+      label: "同花顺",
+      typeStateKey: "thsType",
+      stateKey: "selectedThsBoard",
+      matchesKey: "thsMatches",
+      requestKey: "thsSearchRequestId",
+    },
+  };
+  return mapping[source];
+}
+
+function renderPickerBoardOptions(source, items = []) {
+  const dom = pickerBoardDom(source);
+  if (!dom?.options) return;
+  dom.options.innerHTML = items
+    .map(
+      (item) =>
+        `<option value="${escapeHtml(item.name || "")}" label="${escapeHtml(
+          [item.idx_type || "", item.ts_code || ""].filter(Boolean).join(" · ")
+        )}"></option>`
+    )
+    .join("");
+}
+
+function renderPickerBoardSelection(source) {
+  const dom = pickerBoardDom(source);
+  if (!dom?.selection) return;
+  const board = state.smartPicker[dom.stateKey];
+  if (!board) {
+    dom.selection.textContent = `未限定${dom.label}板块。`;
+    return;
+  }
+  dom.selection.textContent = `已限定${dom.label}${board.idx_type || "板块"}：${board.name || ""}（${board.ts_code || ""}），会只在该板块成分股里执行筛选。`;
+}
+
+function renderAllBoardSelections() {
+  ["dc", "tdx", "ths"].forEach((source) => renderPickerBoardSelection(source));
+}
+
+async function searchPickerBoards(source, queryOverride = "", silent = false) {
+  const dom = pickerBoardDom(source);
+  if (!dom) return;
+  const query = queryOverride || dom.input?.value.trim() || "";
+  const boardType = dom.typeInput?.value || "all";
+  if (!query) {
+    state.smartPicker[dom.matchesKey] = [];
+    renderPickerBoardOptions(source, []);
+    if (!state.smartPicker[dom.stateKey]) {
+      renderPickerBoardSelection(source);
+    }
+    return;
+  }
+
+  const requestId = ++state.smartPicker[dom.requestKey];
+  try {
+    const data = await fetchJson(
+      `/api/boards/search?source=${encodeURIComponent(source)}&q=${encodeURIComponent(query)}&type=${encodeURIComponent(
+        boardTypeApiValue(source, boardType)
+      )}&limit=12`
+    );
+    if (requestId !== state.smartPicker[dom.requestKey]) return;
+    state.smartPicker[dom.matchesKey] = data.items || [];
+    renderPickerBoardOptions(source, state.smartPicker[dom.matchesKey]);
+  } catch (err) {
+    if (requestId !== state.smartPicker[dom.requestKey]) return;
+    state.smartPicker[dom.matchesKey] = [];
+    renderPickerBoardOptions(source, []);
+    if (!silent) {
+      showPickerError(err.message);
+    }
+  }
+}
+
+function debouncePickerBoardSearch(source) {
+  window.clearTimeout(pickerBoardTimer);
+  pickerBoardTimer = window.setTimeout(() => {
+    searchPickerBoards(source);
+  }, 200);
+}
+
+function ensurePickerBoardSelection(source, queryText) {
+  const dom = pickerBoardDom(source);
+  if (!dom) return null;
+  const query = String(queryText || "").trim();
+  if (!query) {
+    state.smartPicker[dom.stateKey] = null;
+    renderPickerBoardSelection(source);
+    return null;
+  }
+  const existing = state.smartPicker[dom.stateKey];
+  if (existing && [existing.name, existing.ts_code].includes(query)) {
+    return existing;
+  }
+  const normalized = query.toUpperCase();
+  const picked =
+    (state.smartPicker[dom.matchesKey] || []).find(
+      (item) => normalized === String(item.ts_code || "").toUpperCase() || query === String(item.name || "")
+    ) ||
+    (state.smartPicker[dom.matchesKey] || [])[0];
+  if (!picked) return null;
+  state.smartPicker[dom.stateKey] = picked;
+  if (dom.input) {
+    dom.input.value = picked.name || "";
+  }
+  renderPickerBoardSelection(source);
+  return picked;
 }
 
 function pickerSortLabel(sortBy) {
@@ -2506,6 +3507,18 @@ function formatDate(value) {
   return `${text.slice(0, 4)}-${text.slice(4, 6)}-${text.slice(6)}`;
 }
 
+function todayInputValue() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function normalizeDateInput(value) {
+  return String(value || "").replaceAll("-", "");
+}
+
 function formatPrice(value) {
   const num = Number(value);
   if (!Number.isFinite(num)) return "-";
@@ -2528,6 +3541,24 @@ function formatSignedPercent(value) {
   const num = Number(value);
   if (!Number.isFinite(num)) return "-";
   return `${num > 0 ? "+" : ""}${num.toFixed(2)}%`;
+}
+
+function formatSignedPercentValue(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return String(value || "-");
+  return `${num > 0 ? "+" : ""}${num.toFixed(2)}%`;
+}
+
+function formatAmountYi(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "-";
+  return `${(num / 100000000).toFixed(2)} 亿`;
+}
+
+function intValue(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "0";
+  return String(Math.round(num));
 }
 
 function barChangePct(klines, idx) {
@@ -2679,7 +3710,47 @@ function bindEvents() {
 
   els.pickerOverviewBtn?.addEventListener("click", loadPickerOverview);
   els.pickerWatchlistBtn?.addEventListener("click", loadPickerWatchlist);
-  els.pickerRunBtn?.addEventListener("click", runSmartPicker);
+  els.reviewRefreshBtn?.addEventListener("click", loadReviewOverview);
+  els.pickerRunBtn?.addEventListener("click", () => runSmartPicker("combined"));
+  els.pickerRunConditionBtn?.addEventListener("click", () => runSmartPicker("condition"));
+  els.pickerRunDcBtn?.addEventListener("click", () => runSmartPicker("dc"));
+  els.pickerRunTdxBtn?.addEventListener("click", () => runSmartPicker("tdx"));
+  els.pickerRunThsBtn?.addEventListener("click", () => runSmartPicker("ths"));
+
+  ["dc", "tdx", "ths"].forEach((source) => {
+    const dom = pickerBoardDom(source);
+    dom?.typeInput?.addEventListener("change", () => {
+      state.smartPicker[dom.typeStateKey] = dom.typeInput?.value || "all";
+      state.smartPicker[dom.stateKey] = null;
+      state.smartPicker[dom.matchesKey] = [];
+      renderPickerBoardOptions(source, []);
+      renderPickerBoardSelection(source);
+      if (dom.input?.value.trim()) {
+        debouncePickerBoardSearch(source);
+      }
+    });
+    dom?.input?.addEventListener("input", () => {
+      const text = dom.input?.value.trim() || "";
+      if (!text) {
+        state.smartPicker[dom.stateKey] = null;
+        state.smartPicker[dom.matchesKey] = [];
+        renderPickerBoardOptions(source, []);
+        renderPickerBoardSelection(source);
+        return;
+      }
+      debouncePickerBoardSearch(source);
+    });
+    dom?.input?.addEventListener("change", () => {
+      ensurePickerBoardSelection(source, dom.input?.value || "");
+    });
+    dom?.input?.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        ensurePickerBoardSelection(source, dom.input?.value || "");
+        runSmartPicker(source);
+      }
+    });
+  });
   [els.pickerStructureFilter, els.pickerEmotionFilter, els.pickerLeaderFilter, els.pickerOverallFilter, els.pickerSortBy, els.pickerSortDirection].forEach((input) => {
     input?.addEventListener("change", () => {
       syncPickerFiltersFromControls();
@@ -2702,12 +3773,27 @@ function bindEvents() {
     if (els.pickerOverallFilter) els.pickerOverallFilter.value = "all";
     if (els.pickerSortBy) els.pickerSortBy.value = "overall_score";
     if (els.pickerSortDirection) els.pickerSortDirection.value = "desc";
+    if (els.pickerQueryInput) els.pickerQueryInput.value = "";
+    [
+      { source: "dc", typeInput: els.pickerBoardType, input: els.pickerBoardInput },
+      { source: "tdx", typeInput: els.pickerTdxType, input: els.pickerTdxInput },
+      { source: "ths", typeInput: els.pickerThsType, input: els.pickerThsInput },
+    ].forEach(({ source, typeInput, input }) => {
+      const dom = pickerBoardDom(source);
+      if (typeInput) typeInput.value = "all";
+      if (input) input.value = "";
+      state.smartPicker[dom.typeStateKey] = "all";
+      state.smartPicker[dom.stateKey] = null;
+      state.smartPicker[dom.matchesKey] = [];
+      renderPickerBoardOptions(source, []);
+    });
+    renderAllBoardSelections();
     syncPickerFiltersFromControls();
     renderPickerTable();
   });
   els.pickerQueryInput?.addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
-      runSmartPicker();
+      runSmartPicker("condition");
     }
   });
 
@@ -2741,6 +3827,54 @@ function bindEvents() {
     }
     const target = button.dataset.pickerTarget;
     managePickerWatchlist(action, target);
+  });
+
+  document.querySelector("#reviewPage")?.addEventListener("click", (event) => {
+    const pagerTrigger = event.target.closest("[data-review-page-action]");
+    if (pagerTrigger) {
+      const action = pagerTrigger.dataset.reviewPageAction || "";
+      const page = pagerTrigger.dataset.reviewPage || "1";
+      if (action === "hot-money-panel") {
+        updateReviewHotMoneyPage(page);
+      }
+      return;
+    }
+    const summaryTrigger = event.target.closest("[data-review-summary-open]");
+    if (summaryTrigger) {
+      openReviewSummaryModal(summaryTrigger.dataset.reviewSummaryOpen || "");
+      return;
+    }
+    const trigger = event.target.closest("[data-review-open-analysis]");
+    if (!trigger) return;
+    openReviewStockInAnalysis({
+      ts_code: trigger.dataset.tsCode || "",
+      query_name: trigger.dataset.name || "",
+    });
+  });
+
+  els.reviewModal?.addEventListener("click", (event) => {
+    if (event.target.closest("[data-review-modal-close]")) {
+      closeReviewModal();
+      return;
+    }
+    const pagerTrigger = event.target.closest("[data-review-page-action]");
+    if (pagerTrigger) {
+      const action = pagerTrigger.dataset.reviewPageAction || "";
+      const page = pagerTrigger.dataset.reviewPage || "1";
+      if (action === "hot-money-modal") {
+        updateReviewModalPage(page);
+      }
+    }
+  });
+  els.reviewModal?.addEventListener("input", (event) => {
+    const field = event.target.closest("[data-review-modal-search='hot-money']");
+    if (!field) return;
+    updateReviewInstitutionModalSearch(field.value || "");
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && els.reviewModal && !els.reviewModal.hidden) {
+      closeReviewModal();
+    }
   });
 
   els.levelTabs.addEventListener("click", (event) => {
@@ -2796,6 +3930,18 @@ function bindEvents() {
       item.classList.toggle("active", item === button);
     });
     document.querySelectorAll(".pickerSidePane").forEach((panel) => {
+      panel.classList.toggle("active", panel.id === targetId);
+    });
+  });
+
+  els.reviewSideTabs?.addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-review-side-panel]");
+    if (!button) return;
+    const targetId = button.dataset.reviewSidePanel;
+    els.reviewSideTabs.querySelectorAll("button[data-review-side-panel]").forEach((item) => {
+      item.classList.toggle("active", item === button);
+    });
+    document.querySelectorAll(".reviewSidePane").forEach((panel) => {
       panel.classList.toggle("active", panel.id === targetId);
     });
   });

@@ -7,6 +7,7 @@ from .chanlun import analyze_klines
 from .config import LEVELS, default_date_range, normalize_yyyymmdd
 from .data_provider import DataProviderError, TushareClient
 from .mx_provider import MXDataProvider, MXProviderError
+from .review_service import ReviewService
 from .smart_picker import SmartPickerService
 from .trading_profile import TradingProfileService
 
@@ -17,6 +18,7 @@ def create_app(
     profile_client: TradingProfileService | None = None,
     picker_client: SmartPickerService | None = None,
     ai_client: ClaudeProfileExplainer | None = None,
+    review_client: ReviewService | None = None,
 ):
     from pathlib import Path
 
@@ -34,6 +36,7 @@ def create_app(
         trading_profile=trading_profile,
     )
     ai_explainer = ai_client or ClaudeProfileExplainer()
+    review_service = review_client or ReviewService(data_client=client)
 
     def json_error(message: str, status_code: int):
         return jsonify({"error": {"message": message, "status_code": status_code}}), status_code
@@ -53,6 +56,17 @@ def create_app(
         limit = _safe_int(request.args.get("limit"), 20, 1, 50)
         try:
             return jsonify({"items": client.search_stocks(query, limit=limit)})
+        except DataProviderError as exc:
+            return json_error(exc.message, exc.status_code)
+
+    @app.get("/api/boards/search")
+    def search_boards():
+        query = request.args.get("q", "")
+        board_type = request.args.get("type", "")
+        source = request.args.get("source", "dc")
+        limit = _safe_int(request.args.get("limit"), 12, 1, 50)
+        try:
+            return jsonify({"items": client.search_boards(source=source, query=query, board_type=board_type, limit=limit)})
         except DataProviderError as exc:
             return json_error(exc.message, exc.status_code)
 
@@ -141,8 +155,35 @@ def create_app(
         level = payload.get("level", "daily")
         limit = _safe_int(payload.get("limit"), 20, 1, 80)
         query_text = payload.get("query_text", "")
+        board_filters = [
+            {
+                "source": "dc",
+                "ts_code": payload.get("board_ts_code", ""),
+                "name": payload.get("board_name", ""),
+                "board_type": payload.get("board_type", ""),
+            },
+            {
+                "source": "tdx",
+                "ts_code": payload.get("tdx_board_ts_code", ""),
+                "name": payload.get("tdx_board_name", ""),
+                "board_type": payload.get("tdx_board_type", ""),
+            },
+            {
+                "source": "ths",
+                "ts_code": payload.get("ths_board_ts_code", ""),
+                "name": payload.get("ths_board_name", ""),
+                "board_type": payload.get("ths_board_type", ""),
+            },
+        ]
         try:
-            return jsonify(smart_picker.screen(query_text=query_text, level=level, limit=limit))
+            return jsonify(
+                smart_picker.screen_with_scopes(
+                    query_text=query_text,
+                    level=level,
+                    limit=limit,
+                    board_filters=board_filters,
+                )
+            )
         except (DataProviderError, MXProviderError) as exc:
             return json_error(exc.message, exc.status_code)
 
@@ -186,6 +227,14 @@ def create_app(
         try:
             return jsonify(ai_explainer.explain(stock=stock, analysis=analysis, profile_payload=profile))
         except AIProviderError as exc:
+            return json_error(exc.message, exc.status_code)
+
+    @app.get("/api/review/overview")
+    def review_overview():
+        trade_date = normalize_yyyymmdd(request.args.get("trade_date"))
+        try:
+            return jsonify(review_service.overview(trade_date=trade_date))
+        except DataProviderError as exc:
             return json_error(exc.message, exc.status_code)
 
     @app.errorhandler(404)

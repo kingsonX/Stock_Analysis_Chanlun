@@ -19,6 +19,7 @@
         <nav id="mainMenu" class="mainMenu" aria-label="主菜单">
           <button type="button" class="active" data-page="analysisPage">股票分析</button>
           <button type="button" data-page="smartPickerPage">智能选股</button>
+          <button type="button" data-page="reviewPage">智能复盘</button>
         </nav>
       </aside>
 
@@ -141,23 +142,113 @@
               </header>
 
               <section class="pickerControls" aria-label="智能选股条件">
-                <label class="pickerQueryField">
-                  选股条件
-                  <input id="pickerQueryInput" type="search" value="A股市场中成交额大于5亿且换手率大于2%的股票" placeholder="例如：A股市场中半导体行业成交额大于10亿且涨幅大于2%的股票">
-                </label>
-                <label>
-                  结构级别
-                  <select id="pickerLevel">
-                    <option value="daily" selected>日线</option>
-                    <option value="weekly">周线</option>
-                    <option value="monthly">月线</option>
-                  </select>
-                </label>
-                <label>
-                  结构扫描数量
-                  <input id="pickerLimit" type="number" min="1" max="80" value="20">
-                </label>
-                <button id="pickerRunBtn" type="button">开始筛选</button>
+                <div class="pickerSourceGrid">
+                  <section class="pickerSourceCard">
+                    <div class="pickerSourceHeader">
+                      <strong>条件查询</strong>
+                      <button id="pickerRunConditionBtn" type="button" class="ghostButton pickerSourceAction">按条件筛选</button>
+                    </div>
+                    <label class="pickerQueryField">
+                      选股条件
+                      <input id="pickerQueryInput" type="search" value="" placeholder="例如：A股市场中半导体行业成交额大于10亿且涨幅大于2%的股票">
+                    </label>
+                    <p class="pickerControlHint">这里改为非必填。你可以只用条件筛，也可以和板块来源叠加。</p>
+                  </section>
+
+                  <section class="pickerSourceCard">
+                    <div class="pickerSourceHeader">
+                      <strong>东方财富</strong>
+                      <button id="pickerRunDcBtn" type="button" class="ghostButton pickerSourceAction">查东财</button>
+                    </div>
+                    <div class="pickerInlineFields">
+                      <label>
+                        东方财富类型
+                        <select id="pickerBoardType">
+                          <option value="all" selected>全部板块</option>
+                          <option value="industry">行业板块</option>
+                          <option value="concept">概念板块</option>
+                          <option value="region">地域板块</option>
+                        </select>
+                      </label>
+                      <label class="pickerBoardField">
+                        东方财富板块/概念
+                        <input id="pickerBoardInput" type="search" list="pickerBoardOptions" placeholder="例如：小金属、算力概念、西藏板块">
+                        <datalist id="pickerBoardOptions"></datalist>
+                      </label>
+                    </div>
+                    <p id="pickerBoardSelection" class="pickerControlHint">未限定东方财富板块。</p>
+                  </section>
+
+                  <section class="pickerSourceCard">
+                    <div class="pickerSourceHeader">
+                      <strong>通达信</strong>
+                      <button id="pickerRunTdxBtn" type="button" class="ghostButton pickerSourceAction">查通达信</button>
+                    </div>
+                    <div class="pickerInlineFields">
+                      <label>
+                        通达信类型
+                        <select id="pickerTdxType">
+                          <option value="all" selected>全部板块</option>
+                          <option value="industry">行业板块</option>
+                          <option value="concept">概念板块</option>
+                          <option value="style">风格板块</option>
+                          <option value="region">地域板块</option>
+                        </select>
+                      </label>
+                      <label class="pickerBoardField">
+                        通达信板块/概念
+                        <input id="pickerTdxInput" type="search" list="pickerTdxOptions" placeholder="例如：稀土永磁、芯片概念">
+                        <datalist id="pickerTdxOptions"></datalist>
+                      </label>
+                    </div>
+                    <p id="pickerTdxSelection" class="pickerControlHint">未限定通达信板块。</p>
+                  </section>
+
+                  <section class="pickerSourceCard">
+                    <div class="pickerSourceHeader">
+                      <strong>同花顺</strong>
+                      <button id="pickerRunThsBtn" type="button" class="ghostButton pickerSourceAction">查同花顺</button>
+                    </div>
+                    <div class="pickerInlineFields">
+                      <label>
+                        同花顺类型
+                        <select id="pickerThsType">
+                          <option value="all" selected>全部板块</option>
+                          <option value="concept">概念题材</option>
+                          <option value="industry">行业分类</option>
+                          <option value="region">地域概念</option>
+                          <option value="feature">特色标签</option>
+                          <option value="style">风格体系</option>
+                          <option value="theme">主题投资</option>
+                          <option value="broad">宽基指数</option>
+                        </select>
+                      </label>
+                      <label class="pickerBoardField">
+                        同花顺板块/概念
+                        <input id="pickerThsInput" type="search" list="pickerThsOptions" placeholder="例如：算力租赁、固态电池、低空经济">
+                        <datalist id="pickerThsOptions"></datalist>
+                      </label>
+                    </div>
+                    <p id="pickerThsSelection" class="pickerControlHint">未限定同花顺板块。</p>
+                  </section>
+                </div>
+
+                <div class="pickerCommonControls">
+                  <label>
+                    结构级别
+                    <select id="pickerLevel">
+                      <option value="daily" selected>日线</option>
+                      <option value="weekly">周线</option>
+                      <option value="monthly">月线</option>
+                    </select>
+                  </label>
+                  <label>
+                    结构扫描数量
+                    <input id="pickerLimit" type="number" min="1" max="80" value="20">
+                  </label>
+                  <button id="pickerRunBtn" type="button" class="pickerPrimaryButton">执行组合筛选</button>
+                </div>
+                <p class="pickerControlHint">四类查询都改成选填，可单独执行，也可以叠加成股票池约束。组合筛选会把所有已填写条件一起合成候选池。</p>
               </section>
 
               <section id="pickerErrorBox" class="errorBox" hidden></section>
@@ -237,7 +328,7 @@
                   <p class="pickerToolbarHint">龙头角色按同热点样本中的涨幅强度、成交承接与前排位置自动标注：龙头候选看辨识度，容量中军看成交额，前排助攻看前排跟随。</p>
                 </section>
                 <div id="pickerTableBox" class="tableWrap">
-                  <div class="empty">先输入条件，再开始筛选。</div>
+                  <div class="empty">先输入任一查询方式，再开始筛选。</div>
                 </div>
               </section>
             </section>
@@ -267,8 +358,89 @@
             </aside>
           </main>
         </section>
+
+        <section id="reviewPage" class="appPage">
+          <main class="pickerShell reviewShell">
+            <section class="pickerWorkspace reviewWorkspace">
+              <header class="topbar pickerTopbar">
+                <div>
+                  <h1>智能复盘</h1>
+                  <p id="reviewStatusText">先看龙虎榜、游资、涨跌停和连板天梯，再抓住今天最值得盯的板块与股票。</p>
+                </div>
+                <div class="pickerActions reviewActions">
+                  <label class="reviewDateField">
+                    复盘日期
+                    <input id="reviewDate" type="date">
+                  </label>
+                  <button id="reviewRefreshBtn" type="button" class="ghostButton">刷新复盘</button>
+                </div>
+              </header>
+
+              <section id="reviewErrorBox" class="errorBox" hidden></section>
+
+              <section id="reviewSummaryBox" class="reviewSummaryGrid">
+                <article class="reviewStatCard loading"><div class="mxSkeleton"></div></article>
+                <article class="reviewStatCard loading"><div class="mxSkeleton"></div></article>
+                <article class="reviewStatCard loading"><div class="mxSkeleton"></div></article>
+                <article class="reviewStatCard loading"><div class="mxSkeleton"></div></article>
+              </section>
+
+              <section class="reviewGrid">
+                <section class="panel">
+                  <h2>龙虎榜数据</h2>
+                  <div id="reviewDragonBox" class="tableWrap"><div class="empty">等待复盘数据</div></div>
+                </section>
+                <section class="panel">
+                  <h2>游资交易详细数据</h2>
+                  <div id="reviewInstBox" class="tableWrap"><div class="empty">等待复盘数据</div></div>
+                </section>
+                <section class="panel">
+                  <h2>涨跌停列表（新）</h2>
+                  <div id="reviewLimitBox" class="tableWrap"><div class="empty">等待复盘数据</div></div>
+                </section>
+                <section class="panel">
+                  <h2>连板天梯</h2>
+                  <div id="reviewLadderBox" class="tableWrap"><div class="empty">等待复盘数据</div></div>
+                </section>
+              </section>
+            </section>
+
+            <aside class="pickerSidePanel reviewSidePanel">
+              <nav id="reviewSideTabs" class="sideTabs reviewSideTabs" aria-label="智能复盘侧栏切换">
+                <button type="button" class="active" data-review-side-panel="reviewFocusPanel">复盘要点</button>
+                <button type="button" data-review-side-panel="reviewBoardsPanel">关注板块</button>
+                <button type="button" data-review-side-panel="reviewStocksPanel">关注股票</button>
+              </nav>
+              <section id="reviewFocusPanel" class="panel reviewSidePane active">
+                <div id="reviewFocusBox" class="empty">点击“刷新复盘”后，这里会给出今天最值得看的主线、风险和观察点。</div>
+              </section>
+              <section id="reviewBoardsPanel" class="panel reviewSidePane">
+                <div id="reviewBoardsBox" class="empty">等待生成板块关注列表。</div>
+              </section>
+              <section id="reviewStocksPanel" class="panel reviewSidePane">
+                <div id="reviewStocksBox" class="empty">等待生成股票关注列表。</div>
+              </section>
+            </aside>
+          </main>
+        </section>
       </section>
     </main>
+
+    <div id="reviewModal" class="reviewModal" hidden>
+      <div class="reviewModalBackdrop" data-review-modal-close="1"></div>
+      <section class="reviewModalDialog" role="dialog" aria-modal="true" aria-labelledby="reviewModalTitle">
+        <header class="reviewModalHeader">
+          <div>
+            <h2 id="reviewModalTitle">复盘明细</h2>
+            <p id="reviewModalMeta">点击卡片查看复盘明细。</p>
+          </div>
+          <button id="reviewModalCloseBtn" type="button" class="ghostButton" data-review-modal-close="1">关闭</button>
+        </header>
+        <div id="reviewModalBody" class="reviewModalBody">
+          <div class="empty">等待复盘明细。</div>
+        </div>
+      </section>
+    </div>
 
     <script src="{{ url_for('static', filename='app.js', v=static_version) }}"></script>
   </body>

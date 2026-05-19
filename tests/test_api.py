@@ -45,6 +45,8 @@ def sample_klines():
 class FakeClient:
     def __init__(self):
         self.calls = []
+        self.board_last_search = None
+        self.board_last_members = None
 
     def search_stocks(self, query, limit=20):
         if query in {"平安", "000001", "平安银行"}:
@@ -78,6 +80,25 @@ class FakeClient:
         }
         self.calls.append(self.last_call)
         return sample_klines()
+
+    def search_boards(self, source, query, board_type="", limit=20):
+        self.board_last_search = {"source": source, "query": query, "board_type": board_type, "limit": limit}
+        return [
+            {
+                "ts_code": "BK0001",
+                "name": "小金属概念",
+                "source": source,
+                "source_label": {"dc": "东方财富", "tdx": "通达信", "ths": "同花顺"}.get(source, "板块"),
+                "type_key": board_type or "concept",
+                "idx_type": "概念板块",
+                "trade_date": "20260513",
+                "leading": "西部材料",
+            }
+        ]
+
+    def get_board_members(self, source, ts_code, trade_date=None, force_refresh=False):
+        self.board_last_members = {"source": source, "ts_code": ts_code, "trade_date": trade_date}
+        return [{"ts_code": ts_code, "con_code": "000001.SZ", "symbol": "000001", "name": "平安银行"}]
 
 
 class FakeMxClient:
@@ -139,7 +160,18 @@ class FakePickerClient:
         }
 
     def screen(self, query_text="", level="daily", limit=6):
-        self.last_screen = {"query_text": query_text, "level": level, "limit": limit}
+        return self.screen_with_scopes(query_text=query_text, level=level, limit=limit, board_filters=None)
+
+    def screen_with_board(self, query_text="", level="daily", limit=6, board_filter=None):
+        return self.screen_with_scopes(
+            query_text=query_text,
+            level=level,
+            limit=limit,
+            board_filters=[board_filter] if board_filter else None,
+        )
+
+    def screen_with_scopes(self, query_text="", level="daily", limit=6, board_filters=None):
+        self.last_screen = {"query_text": query_text, "level": level, "limit": limit, "board_filters": board_filters or []}
         return {
             "status": "ok",
             "query_text": query_text,
@@ -152,6 +184,8 @@ class FakePickerClient:
             "stage": {"label": "主流活跃", "tone": "positive", "cycle": "主升试错期"},
             "theme_ladders": [],
             "leader_board": [],
+            "board_filter": (board_filters or [None])[0],
+            "board_filters": board_filters or [],
             "candidates": [
                 {
                     "stock": {"ts_code": "000001.SZ", "symbol": "000001", "name": "平安银行", "industry": "银行"},
@@ -241,6 +275,62 @@ class FakeAIClient:
         }
 
 
+class FakeReviewClient:
+    def __init__(self):
+        self.last_trade_date = None
+
+    def overview(self, trade_date=None):
+        self.last_trade_date = trade_date
+        return {
+            "status": "ok",
+            "trade_date": trade_date or "20260515",
+            "summary": {
+                "dragon_count": 12,
+                "hot_money_count": 8,
+                "up_limit_count": 66,
+                "down_limit_count": 5,
+                "burst_count": 14,
+                "highest_board": 5,
+                "focus_board_count": 3,
+                "focus_stock_count": 4,
+            },
+            "hot_money_stats": {
+                "record_count": 8,
+                "merged_count": 1,
+            },
+            "dragon_tiger": [{"ts_code": "000001.SZ", "name": "平安银行", "net_amount": 420000000.0, "reason": "日涨幅偏离值达7%"}],
+            "hot_money_trades": [
+                {
+                    "ts_code": "000001.SZ",
+                    "name": "平安银行",
+                    "hm_name": "北京帮",
+                    "hot_money_label": "北京帮",
+                    "exalter": "中国中金财富证券有限公司北京宋庄路证券营业部",
+                    "buy_amount": 260000000.0,
+                    "sell_amount": 80000000.0,
+                    "net_amount": 180000000.0,
+                    "org_count": 1,
+                    "record_count": 8,
+                    "tag": "净买入",
+                }
+            ],
+            "limit_lists": {
+                "up": [{"ts_code": "000001.SZ", "name": "平安银行", "limit_times": 2, "strth": 98.0}],
+                "down": [],
+                "burst": [],
+                "other": [],
+            },
+            "ladder": [{"ts_code": "000001.SZ", "name": "平安银行", "continue_num": 3, "limit_times": 3}],
+            "focus_boards": [{"name": "银行概念", "rank": 1, "limit_count": 6, "watch_reason": "涨停家数 6。"}],
+            "focus_stocks": [{"ts_code": "000001.SZ", "name": "平安银行", "score": 26.0, "verdict": "重点盯"}],
+            "notes": {
+                "summary": "今天最强先看银行概念。",
+                "watch_points": ["先看银行概念能否继续扩散。"],
+                "risk_points": ["若炸板增多，先回防守。"],
+            },
+        }
+
+
 @unittest.skipIf(create_app is None, "Flask 未安装，跳过 API 测试。")
 class ApiTest(unittest.TestCase):
     def setUp(self):
@@ -249,12 +339,14 @@ class ApiTest(unittest.TestCase):
         self.fake_profile = FakeProfileClient()
         self.fake_picker = FakePickerClient()
         self.fake_ai = FakeAIClient()
+        self.fake_review = FakeReviewClient()
         self.app = create_app(
             data_client=self.fake,
             mx_client=self.fake_mx,
             profile_client=self.fake_profile,
             picker_client=self.fake_picker,
             ai_client=self.fake_ai,
+            review_client=self.fake_review,
         ).test_client()
 
     def test_search_supports_fuzzy_name(self):
@@ -281,6 +373,23 @@ class ApiTest(unittest.TestCase):
         self.assertEqual([item["level"] for item in data["level_context"]["items"]], ["monthly", "weekly"])
         self.assertEqual(len(data["indicators"]["macd"]), len(data["klines"]))
         self.assertEqual(len(data["indicators"]["bbi"]), len(data["klines"]))
+
+    def test_board_search_supports_eastmoney_filters(self):
+        response = self.app.get("/api/boards/search?q=小金属&type=concept&limit=8")
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertEqual(self.fake.board_last_search["source"], "dc")
+        self.assertEqual(self.fake.board_last_search["query"], "小金属")
+        self.assertEqual(self.fake.board_last_search["board_type"], "concept")
+        self.assertEqual(data["items"][0]["name"], "小金属概念")
+
+    def test_board_search_supports_tdx_source(self):
+        response = self.app.get("/api/boards/search?source=tdx&q=稀土&type=concept&limit=6")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.fake.board_last_search["source"], "tdx")
+        self.assertEqual(self.fake.board_last_search["query"], "稀土")
 
     def test_analysis_maps_intraday_context(self):
         response = self.app.get(
@@ -361,14 +470,42 @@ class ApiTest(unittest.TestCase):
     def test_smart_picker_screen(self):
         response = self.app.post(
             "/api/smart-picker/screen",
-            json={"query_text": "银行股涨幅大于2%", "level": "daily", "limit": 4},
+            json={
+                "query_text": "银行股涨幅大于2%",
+                "level": "daily",
+                "limit": 4,
+                "board_ts_code": "BK0001",
+                "board_name": "小金属概念",
+                "board_type": "concept",
+            },
         )
 
         self.assertEqual(response.status_code, 200)
         data = response.get_json()
         self.assertEqual(self.fake_picker.last_screen["query_text"], "银行股涨幅大于2%")
         self.assertEqual(self.fake_picker.last_screen["limit"], 4)
+        self.assertEqual(self.fake_picker.last_screen["board_filters"][0]["ts_code"], "BK0001")
         self.assertEqual(data["candidates"][0]["overall"]["label"], "重点观察")
+
+    def test_smart_picker_screen_supports_multi_board_sources(self):
+        response = self.app.post(
+            "/api/smart-picker/screen",
+            json={
+                "query_text": "",
+                "level": "daily",
+                "limit": 4,
+                "tdx_board_ts_code": "T0001",
+                "tdx_board_name": "稀土永磁",
+                "tdx_board_type": "concept",
+                "ths_board_ts_code": "TH0001",
+                "ths_board_name": "固态电池",
+                "ths_board_type": "concept",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        used_sources = [item["source"] for item in self.fake_picker.last_screen["board_filters"] if item.get("name") or item.get("ts_code")]
+        self.assertEqual(used_sources, ["tdx", "ths"])
 
     def test_smart_picker_candidate_detail(self):
         response = self.app.post(
@@ -414,6 +551,16 @@ class ApiTest(unittest.TestCase):
         data = response.get_json()
         self.assertEqual(self.fake_ai.last_call["stock"]["name"], "平安银行")
         self.assertEqual(data["analysis"]["overall_verdict"], "候选观察")
+
+    def test_review_overview(self):
+        response = self.app.get("/api/review/overview?trade_date=2026-05-15")
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertEqual(data["status"], "ok")
+        self.assertEqual(data["summary"]["dragon_count"], 12)
+        self.assertEqual(data["focus_boards"][0]["name"], "银行概念")
+        self.assertEqual(self.fake_review.last_trade_date, "20260515")
 
 
 if __name__ == "__main__":
