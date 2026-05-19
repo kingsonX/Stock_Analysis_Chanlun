@@ -18,7 +18,10 @@
 - 可选接入东方财富妙想 `mx-data`，在后端汇总行情、资金、估值、财务和公司资料，作为缠论之外的辅助信息。
 - 已接入基于 `mx-data`、`mx-search`、`mx-xuangu` 的综合交易画像，把缠论结构、养家情绪、章盟主容量和风险边界合成一张结论卡。
 - 已接入智能选股模块：按全 A 股范围执行条件筛选，生成候选池，支持候选详情、自选联动和右侧情报侧栏。
+- 已接入多源板块筛选：支持东方财富、通达信、同花顺三套板块/概念查询，并可与自然语言条件组合执行选股。
+- 已接入智能复盘模块：基于龙虎榜、游资明细、涨跌停列表、连板天梯和关注板块/股票生成复盘工作台。
 - 已接入 Claude 兼容 AI 解释层，用于把三视角规则摘要改写成更像研究员写给交易员的结论。
+- 已接入游资每日交易缓存：`hm_detail` 先查 Supabase PostgreSQL 日表缓存，没有命中时才调用 Tushare，并由后端 session pool 回写。
 - 当前综合交易画像仍是“规则引擎 + 外部数据 + 模板化解释”，不是完整自主 AI 投顾，不可视为直接交易指令。
 
 ## 运行与验证
@@ -41,7 +44,10 @@ PORT=5001 .venv/bin/python run.py
 
 - `TUSHARE_TOKEN` 必须通过环境变量或本地 `.env` 提供。
 - `MX_APIKEY` 可选；配置后右侧“数据”页会加载妙想金融数据增强卡片。
+- `SUPABASE_DB_URL` 可选；配置后启用游资每日交易数据库缓存，优先于本地文件缓存。
+- `SUPABASE_DB_POOL_MIN_SIZE`、`SUPABASE_DB_POOL_MAX_SIZE` 可选；用于控制 PostgreSQL session pool 大小。
 - `CLAUDE_BASE_URL`、`CLAUDE_API_KEY`、`CLAUDE_MODEL` 用于智能选股候选详情中的 AI 研究解读。
+- `DATABASE_URL` 可作为 `SUPABASE_DB_URL` 的回退变量名，但项目内优先使用 `SUPABASE_DB_URL`。
 - `.env` 已在 `.gitignore` 中，绝不要提交真实 token。
 - `.env.example` 只保留占位符。
 - `PORT` 默认 `5000`，`FLASK_DEBUG=1` 才开启 debug。
@@ -68,10 +74,12 @@ http://127.0.0.1:5000
 - `chanlun_app/__init__.py`：Flask app factory，定义 `/`、`/api/stocks/search`、`/api/analysis`、`/api/mx/summary`。静态资源用文件 mtime 加版本参数，避免浏览器缓存旧 JS/CSS。
 - `chanlun_app/config.py`：项目路径、缓存路径、周期配置和日期规范化。
 - `chanlun_app/data_provider.py`：Tushare 数据层，负责 token 读取、股票列表缓存、股票搜索、K 线获取和错误封装。
+- `chanlun_app/hot_money_store.py`：Supabase PostgreSQL 缓存层，负责游资每日交易缓存的 session pool 读写。
 - `chanlun_app/mx_provider.py`：东方财富妙想数据层，负责读取 `MX_APIKEY`、请求 `mx-data` 接口、宽容解析表格并隐藏密钥。
 - `chanlun_app/trading_profile.py`：综合交易画像服务，负责调用 `mx-data`、`mx-search`、`mx-xuangu`，并把缠论结构、情绪、容量和风险合成为统一结论卡。
 - `chanlun_app/smart_picker.py`：智能选股服务，负责市场环境、条件筛选、候选池、自选联动和候选详情。
 - `chanlun_app/ai_profile.py`：Claude 兼容 AI 解释层，负责消费事实层摘要并生成三视角研究解读。
+- `chanlun_app/review_service.py`：智能复盘服务，负责聚合龙虎榜、游资、涨跌停、连板与关注标的。
 - `chanlun_app/chanlun.py`：缠论核心算法和指标计算。
 - `chanlun_app/templates/index.html`：单页工作台结构。
 - `chanlun_app/static/app.js`：前端状态管理、API 调用、Canvas 绘图、拖动缩放、tooltip。
@@ -90,6 +98,15 @@ http://127.0.0.1:5000
 
 - 按 `symbol`、`ts_code`、`name`、`cnspell` 做精确和模糊匹配。
 - 返回 `items`，每项包含 `ts_code/symbol/name/area/industry/market/exchange/list_date/cnspell`。
+
+`GET /api/boards/search?q=&type=&source=dc|tdx|ths&limit=`
+
+- 用于板块/概念搜索，支持三套来源：
+  - `dc`：东方财富，走 `dc_index / dc_member`
+  - `tdx`：通达信，走 `tdx_index / tdx_member`
+  - `ths`：同花顺，走 `ths_index / ths_member`
+- `type` 用于限定板块类型，不同来源的允许值由前端控件约束。
+- 返回 `items`，至少包含 `ts_code/name/type/source`，用于智能选股页面做单独查询或组合筛选。
 
 `GET /api/analysis?ts_code=&level=min30|min60|daily|weekly|monthly&start_date=&end_date=`
 
@@ -138,6 +155,11 @@ http://127.0.0.1:5000
 `POST /api/smart-picker/screen`
 
 - 请求体包含 `query_text`、`level`、`limit`。
+- `query_text` 已改为选填，不再是必填项；可以只使用板块源单独执行。
+- 额外支持三套板块过滤参数：
+  - `board_ts_code`、`board_name`、`board_type`
+  - `tdx_board_ts_code`、`tdx_board_name`、`tdx_board_type`
+  - `ths_board_ts_code`、`ths_board_name`、`ths_board_type`
 - 条件筛选默认在全 A 股范围执行，但深度结构扫描只对命中的前 `limit` 只股票执行，这是为速度和稳定性做的工程折中。
 - 返回 `candidates`，每项包含 `stock/quote/structure/emotion/capacity/overall` 六类信息，可供前端排序和筛选。
 
@@ -157,6 +179,22 @@ http://127.0.0.1:5000
 - 该接口只消费事实层和规则层结果，不自行请求 Tushare 主图结构。
 - 返回 `analysis.summary/overall_verdict/buy_judgement/confidence/chan_view/yangjia_view/zhang_view/risks/watch_points`。
 - 当前协议已切到 Claude 兼容接口，不再使用 OpenAI Responses API。
+
+`GET /api/review/overview?trade_date=`
+
+- 返回智能复盘页聚合数据，按交易日汇总：
+  - `dragon_tiger`：龙虎榜数据，来源 `top_list`
+  - `hot_money_records`：游资原始明细，来源 `hm_detail`
+  - `hot_money_trades`：按股票合并后的游资交易结果
+  - `hot_money_state`：游资数据状态，可能为 `ok / rate_limited / error`
+  - `hot_money_stats`：游资原始记录数与合并记录数
+  - `limit_lists`：涨停 / 跌停 / 炸板分组，来源 `limit_list_d`
+  - `ladder`：连板天梯，来源 `limit_step`
+  - `focus_boards`：需要关注的板块，来源 `limit_cpt_list`
+  - `focus_stocks`：需要关注的股票，基于龙虎榜、游资、连板、涨停前排综合打分
+  - `notes`：一句话复盘、关注点与风险提示
+- `trade_date` 可为空；为空时由各数据源返回的交易日自动收敛。
+- 游资数据读取顺序固定为：进程内缓存 -> Supabase PostgreSQL 日缓存 -> 本地文件缓存 -> Tushare 远端接口。
 
 错误统一返回：
 
@@ -258,6 +296,20 @@ http://127.0.0.1:5000
 - tooltip 在普通 K 线悬停时显示 OHLC、成交量、BBI、MACD/DIF/DEA；悬停买卖点标记时显示该信号摘要；悬停 MACD 背驰标记时显示背驰理由和证据。
 - 智能选股页采用后台工作台布局：左侧为主菜单；内容区顶部先显示选股条件，候选池紧跟查询区下方；右侧先显示候选详情，再通过 `市场/催化/自选` tab 切换情报面板。
 - 智能选股页不要再把 `市场环境`、`资讯催化`、`我的自选` 平铺在主内容区中间；它们已经迁移到右侧侧栏，避免候选池被挤到页面下方。
+- 智能选股查询区采用“四来源独立卡片 + 公共参数”的布局：
+  - 条件查询
+  - 东方财富板块/概念
+  - 通达信板块/概念
+  - 同花顺板块/概念
+  各来源都支持单独执行，也支持组合筛选；不要恢复成“条件必填”的旧交互。
+- 智能复盘页采用后台工作台布局：左侧主菜单，主内容区显示统计卡与核心复盘表，右侧侧栏使用 `复盘要点 / 关注板块 / 关注股票` tab。
+- 智能复盘页四张统计卡均为可点击卡片：
+  - 龙虎榜：打开龙虎榜明细弹窗
+  - 游资数据：打开游资明细弹窗
+  - 涨停 / 跌停：打开涨停前排、炸板观察、跌停风险明细弹窗
+  - 最高连板：打开连板天梯明细弹窗
+- 复盘页内股票入口统一应可跳转到“股票分析”页面；若缺少标准 `ts_code`，允许回退到按股票名搜索。
+- 复盘弹窗默认必须隐藏；样式层应保留 `.reviewModal[hidden] { display: none !important; }`，避免首次进入页面自动弹出。
 
 修改前端后至少运行：
 
@@ -272,15 +324,20 @@ node --check chanlun_app/static/app.js
 - 不要把 Tushare token 写进代码、README、AGENTS 或测试。
 - 不要把 `MX_APIKEY` 写进代码、README、AGENTS 或测试；只写 `.env` 或部署平台环境变量。
 - 不要把 `CLAUDE_API_KEY` 写进代码、README、AGENTS 或测试；只写 `.env` 或部署平台环境变量。
+- 不要把 `SUPABASE_DB_URL`、`DATABASE_URL` 或任何 PostgreSQL 明文连接串写进代码、README、AGENTS 或测试；只写 `.env` 或部署平台环境变量。
 - 当前 Render 生产配置依赖 `render.yaml`，并要求部署环境至少配置 `TUSHARE_TOKEN`、可选配置 `MX_APIKEY`。
+- 当前 Render 生产配置还支持 `SUPABASE_DB_URL`、`SUPABASE_DB_POOL_MIN_SIZE`、`SUPABASE_DB_POOL_MAX_SIZE`，用于游资数据库缓存。
 - 当前 Render 生产配置还支持 `CLAUDE_BASE_URL`、`CLAUDE_API_KEY`、`CLAUDE_MODEL`、`CLAUDE_API_VERSION`；若切换 AI 通道后未生效，需重新部署。
 - `render.yaml` 当前固定使用 `PYTHON_VERSION=3.11.11`；不要随手切回过新的 Python 版本，否则 `tushare/pandas/matplotlib` 兼容性风险会升高。
 - Render 修改环境变量后，如未自动触发新进程加载，应手动重新部署一次。
 - 不要依赖真实 Tushare 做单元测试；API 测试使用 fake client。
 - 不要依赖真实 `mx-data` 做单元测试；用 fake provider 或解析样例测试。
 - 不要依赖真实 `mx-search`、`mx-xuangu` 做单元测试；综合交易画像测试应优先用 fake provider 覆盖结论口径。
+- 不要依赖真实 Supabase 或真实 `hm_detail` 做单元测试；游资缓存测试优先使用 fake store 或临时目录样例。
 - 真实接口测试可以用 `curl http://127.0.0.1:5000/...`，但不要把敏感配置输出到文档。
 - 改后端 Python 代码后需要重启正在运行的 Flask 进程；当前默认 `FLASK_DEBUG=0`，没有自动 reload。
 - 页面如果看不到最新 JS/CSS，确认访问的是 `http://127.0.0.1:5000`，并检查首页资源是否带 `?v=` 参数。
 - 新增指标时保持 `indicators.<name>` 与 `klines` 长度对齐，缺值用 `null`。
 - 新增缠论结构时尽量保持 dataclass -> `asdict` 的返回方式，便于 API 和前端一致消费。
+- 新增 Tushare 高频或低配额接口时，优先评估是否需要数据库缓存；`hm_detail` 已固定接入 Supabase PostgreSQL session pool 缓存，不要再退回“每次直连接口”的实现。
+- 后端写 Supabase 缓存时统一走 `psycopg_pool.ConnectionPool`，不要在请求链路里手写裸连接反复开关。
