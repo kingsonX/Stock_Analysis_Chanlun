@@ -19,6 +19,7 @@
         <nav id="mainMenu" class="mainMenu" aria-label="主菜单">
           <button type="button" class="active" data-page="analysisPage">股票分析</button>
           <button type="button" data-page="smartPickerPage">智能选股</button>
+          <button type="button" data-page="watchtowerPage">智能盯盘</button>
           <button type="button" data-page="reviewPage">智能复盘</button>
         </nav>
       </aside>
@@ -27,15 +28,24 @@
         <section id="analysisPage" class="appPage active">
           <main class="shell">
             <section class="workspace">
-              <header class="topbar">
-                <div>
-                  <h1>股票分析</h1>
-                  <p id="statusText">输入股票名称或代码，生成分型、笔、中枢、背驰和买卖点。</p>
+              <header class="topbar analysisTopbar">
+                <div class="topbarMain">
+                  <div class="topbarIntro">
+                    <h1>股票分析</h1>
+                    <p id="statusText">输入股票名称或代码，生成分型、笔、中枢、背驰和买卖点。</p>
+                  </div>
                   <div id="stockBasics" class="stockBasics" hidden></div>
                 </div>
-                <div class="searchBox">
-                  <label for="stockInput">股票</label>
-                  <input id="stockInput" type="search" placeholder="平安银行 / 000001 / PAYH" autocomplete="off">
+                <div class="searchBox topbarSearchBox">
+                  <div class="searchBoxHeader">
+                    <label for="stockInput">股票</label>
+                    <small>名称 / 代码 / 拼音首字母</small>
+                  </div>
+                  <div class="topbarSearchControls">
+                    <input id="stockInput" type="search" placeholder="平安银行 / 000001 / PAYH" autocomplete="off">
+                    <button id="analysisWatchlistBtn" type="button" class="ghostButton" disabled>加入自选</button>
+                  </div>
+                  <p id="analysisWatchlistHint" class="searchBoxHint">加入后会同步当前股票基础资料到 PostgreSQL 缓存。</p>
                   <div id="suggestions" class="suggestions" hidden></div>
                 </div>
               </header>
@@ -89,6 +99,7 @@
               <nav id="sideTabs" class="sideTabs" aria-label="右侧信息切换">
                 <button type="button" class="active" data-side-panel="levelPanel">联动</button>
                 <button type="button" data-side-panel="dataPanel">数据</button>
+                <button type="button" data-side-panel="leaderPanel">龙头</button>
                 <button type="button" data-side-panel="trendPanel">走势</button>
                 <button type="button" data-side-panel="riskPanel">风控</button>
                 <button type="button" data-side-panel="reviewPanel">复盘</button>
@@ -102,6 +113,10 @@
               <section id="dataPanel" class="panel sidePane">
                 <h2>妙想数据</h2>
                 <div id="mxDataBox" class="empty">分析完成后加载行情、资金、估值、财务和公司资料。</div>
+              </section>
+              <section id="leaderPanel" class="panel sidePane">
+                <h2>龙头分析</h2>
+                <div id="leaderAnalysisBox" class="empty">分析完成后结合养家视角、结构、容量和 AI 补充判断是否属于龙头候选。</div>
               </section>
               <section id="trendPanel" class="panel sidePane">
                 <h2>走势类型</h2>
@@ -133,11 +148,11 @@
               <header class="topbar pickerTopbar">
                 <div>
                   <h1>智能选股</h1>
-                  <p id="pickerStatusText">先看市场环境，再筛候选股，最后把有结构的标的放进观察池。</p>
+                  <p id="pickerStatusText">默认从我的自选股生成候选池，再用结构、情绪和容量筛出观察优先级。</p>
                 </div>
                 <div class="pickerActions">
                   <button id="pickerOverviewBtn" type="button" class="ghostButton">刷新市场</button>
-                  <button id="pickerWatchlistBtn" type="button" class="ghostButton">同步自选</button>
+                  <button id="pickerWatchlistBtn" type="button" class="ghostButton">刷新自选</button>
                 </div>
               </header>
 
@@ -257,11 +272,22 @@
                 <div class="pickerTableHeader">
                   <div>
                     <h2>候选池</h2>
-                    <p id="pickerTableStatus">筛选结果会按结构、情绪、容量三条线做分层展示。</p>
+                    <p id="pickerTableStatus">我的自选股会默认按结构、情绪、容量三条线做分层展示。</p>
                   </div>
-                  <div id="pickerResultMeta" class="pickerResultMeta">默认从全 A 股范围执行条件筛选。</div>
+                  <div id="pickerResultMeta" class="pickerResultMeta">默认加载东方财富自选股并生成候选池。</div>
                 </div>
                 <section class="pickerToolbar" aria-label="候选池排序与筛选">
+                  <label>
+                    市场筛选
+                    <select id="pickerMarketScopeFilter">
+                      <option value="all" selected>全部市场</option>
+                      <option value="sz">深证</option>
+                      <option value="sh">上证</option>
+                      <option value="chinext">创业板</option>
+                      <option value="star">科创板</option>
+                      <option value="bse">北交所</option>
+                    </select>
+                  </label>
                   <label>
                     结构筛选
                     <select id="pickerStructureFilter">
@@ -328,7 +354,7 @@
                   <p class="pickerToolbarHint">龙头角色按同热点样本中的涨幅强度、成交承接与前排位置自动标注：龙头候选看辨识度，容量中军看成交额，前排助攻看前排跟随。</p>
                 </section>
                 <div id="pickerTableBox" class="tableWrap">
-                  <div class="empty">先输入任一查询方式，再开始筛选。</div>
+                  <div class="empty">正在等待自选股候选池加载。</div>
                 </div>
               </section>
             </section>
@@ -341,7 +367,6 @@
               <nav id="pickerSideTabs" class="sideTabs pickerSideTabs" aria-label="智能选股侧栏切换">
                 <button type="button" class="active" data-picker-side-panel="pickerMarketPanel">市场</button>
                 <button type="button" data-picker-side-panel="pickerNewsPanel">催化</button>
-                <button type="button" data-picker-side-panel="pickerWatchlistPanel">自选</button>
               </nav>
               <section id="pickerMarketPanel" class="panel pickerSidePane active">
                 <h2>市场环境</h2>
@@ -350,10 +375,6 @@
               <section id="pickerNewsPanel" class="panel pickerSidePane">
                 <h2>资讯催化</h2>
                 <div id="pickerNewsBox" class="empty">这里会显示主流板块与市场催化摘要。</div>
-              </section>
-              <section id="pickerWatchlistPanel" class="panel pickerSidePane">
-                <h2>我的自选</h2>
-                <div id="pickerWatchlistBox" class="empty">同步后可查看当前东方财富自选，并把候选股一键加入。</div>
               </section>
             </aside>
           </main>
@@ -423,6 +444,56 @@
             </aside>
           </main>
         </section>
+
+        <section id="watchtowerPage" class="appPage">
+          <main class="pickerShell watchtowerShell">
+            <section class="pickerWorkspace watchtowerWorkspace">
+              <header class="topbar pickerTopbar">
+                <div>
+                  <h1>智能盯盘</h1>
+                  <p id="watchtowerStatusText">先看自选里的强弱分布，再盯主流先手和分歧承接。</p>
+                </div>
+                <div class="pickerActions watchtowerActions">
+                  <label class="watchtowerSearchField">
+                    自选查询
+                    <input id="watchtowerQueryInput" type="search" placeholder="输入股票名称、代码、行业">
+                  </label>
+                  <button id="watchtowerSearchBtn" type="button" class="ghostButton">查询</button>
+                  <button id="watchtowerRefreshBtn" type="button" class="ghostButton">刷新盯盘</button>
+                </div>
+              </header>
+
+              <section id="watchtowerErrorBox" class="errorBox" hidden></section>
+
+              <section id="watchtowerSummaryBox" class="reviewSummaryGrid">
+                <article class="reviewStatCard loading"><div class="mxSkeleton"></div></article>
+                <article class="reviewStatCard loading"><div class="mxSkeleton"></div></article>
+                <article class="reviewStatCard loading"><div class="mxSkeleton"></div></article>
+                <article class="reviewStatCard loading"><div class="mxSkeleton"></div></article>
+              </section>
+
+              <section class="panel watchtowerTablePanel">
+                <div class="pickerTableHeader">
+                  <div>
+                    <h2>自选盯盘列表</h2>
+                    <p id="watchtowerTableStatus">数据库里会保留你加入自选时的基础资料快照，再叠加实时日线做养家视角观察。</p>
+                  </div>
+                  <div id="watchtowerResultMeta" class="pickerResultMeta">等待智能盯盘数据加载。</div>
+                </div>
+                <div id="watchtowerTableBox" class="tableWrap">
+                  <div class="empty">正在等待智能盯盘数据。</div>
+                </div>
+              </section>
+            </section>
+
+            <aside class="pickerSidePanel watchtowerSidePanel">
+              <section class="panel watchtowerGuidePanel">
+                <h2>养家盯盘原则</h2>
+                <div id="watchtowerGuideBox" class="empty">先看强弱，再看承接，最后看是不是主流前排，别把后排弱票盯成执念。</div>
+              </section>
+            </aside>
+          </main>
+        </section>
       </section>
     </main>
 
@@ -438,6 +509,22 @@
         </header>
         <div id="reviewModalBody" class="reviewModalBody">
           <div class="empty">等待复盘明细。</div>
+        </div>
+      </section>
+    </div>
+
+    <div id="watchtowerModal" class="reviewModal" hidden>
+      <div class="reviewModalBackdrop" data-watchtower-modal-close="1"></div>
+      <section class="reviewModalDialog watchtowerModalDialog" role="dialog" aria-modal="true" aria-labelledby="watchtowerModalTitle">
+        <header class="reviewModalHeader">
+          <div>
+            <h2 id="watchtowerModalTitle">实时日线</h2>
+            <p id="watchtowerModalMeta">点击自选股查看实时日线和养家视角提示。</p>
+          </div>
+          <button id="watchtowerModalCloseBtn" type="button" class="ghostButton" data-watchtower-modal-close="1">关闭</button>
+        </header>
+        <div id="watchtowerModalBody" class="reviewModalBody">
+          <div class="empty">等待实时日线数据。</div>
         </div>
       </section>
     </div>

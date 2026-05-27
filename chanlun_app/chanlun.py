@@ -79,6 +79,25 @@ class Stroke:
 
 
 @dataclass
+class ActiveStroke:
+    direction: str
+    start_fractal_id: str
+    start_index: int
+    end_index: int
+    start_date: str
+    end_date: str
+    start_price: float
+    end_price: float
+    high: float
+    low: float
+    raw_span: int
+    price_change: float
+    price_strength: float
+    status: str
+    status_label: str
+
+
+@dataclass
 class Segment:
     id: str
     direction: str
@@ -96,6 +115,8 @@ class Segment:
     strength: float
     status: str
     status_label: str
+    feature_sequence: list[dict[str, Any]]
+    feature_gap: dict[str, Any]
 
 
 @dataclass
@@ -155,23 +176,63 @@ class Signal:
     observation: str
 
 
+@dataclass
+class MACenter:
+    id: str
+    start_index: int
+    end_index: int
+    start_date: str
+    end_date: str
+    low: float
+    high: float
+    status: str
+    status_label: str
+    reason: str
+
+
+@dataclass
+class MASignal:
+    id: str
+    type: str
+    side: str
+    date: str
+    index: int
+    price: float
+    status: str
+    status_label: str
+    reason: str
+
+
 def analyze_klines(klines: list[dict[str, Any]], level: str = "daily") -> dict[str, Any]:
     raw_bars = _to_raw_bars(klines)
+    macd = _macd_indicator(raw_bars)
+    bbi = _bbi_indicator(raw_bars)
+    ma5 = _ma_indicator(raw_bars, 5)
+    ma10 = _ma_indicator(raw_bars, 10)
+    ma20 = _ma_indicator(raw_bars, 20)
+    ma_centers = build_ma_centers(raw_bars, ma5, ma10, ma20)
+    ma_signals = build_ma_signals(raw_bars, ma5, ma10, ma20, ma_centers)
     if len(raw_bars) < 7:
         return {
             "meta": _meta(level, len(raw_bars), 0, note="K线数量不足，无法形成稳定缠论结构。"),
             "klines": [asdict(bar) for bar in raw_bars],
             "indicators": {
-                "macd": _macd_indicator(raw_bars),
-                "bbi": _bbi_indicator(raw_bars),
+                "macd": macd,
+                "bbi": bbi,
+                "ma5": ma5,
+                "ma10": ma10,
+                "ma20": ma20,
             },
             "merged_klines": [],
             "fractals": [],
             "strokes": [],
+            "active_stroke": None,
             "segments": [],
             "centers": [],
             "divergences": [],
             "signals": [],
+            "ma_centers": [asdict(item) for item in ma_centers],
+            "ma_signals": [asdict(item) for item in ma_signals],
             "trend": _trend_profile(level, [], [], [], []),
             "backtest": _signal_backtest([], [], []),
             "risk_cards": _risk_cards([], _trend_profile(level, [], [], [], [])),
@@ -179,9 +240,9 @@ def analyze_klines(klines: list[dict[str, Any]], level: str = "daily") -> dict[s
 
     merged = merge_inclusions(raw_bars)
     fractals = identify_fractals(merged)
-    macd = _macd_indicator(raw_bars)
     hist = np.array([item["hist"] for item in macd], dtype=float)
     strokes = build_strokes(fractals, hist, macd)
+    active_stroke = build_active_stroke(raw_bars, fractals)
     segments = build_segments(strokes)
     centers = build_centers(strokes)
     divergences = detect_divergences(strokes, centers)
@@ -198,24 +259,33 @@ def analyze_klines(klines: list[dict[str, Any]], level: str = "daily") -> dict[s
             counts={
                 "fractals": len(fractals),
                 "strokes": len(strokes),
+                "active_stroke": 1 if active_stroke else 0,
                 "segments": len(segments),
                 "centers": len(centers),
                 "divergences": len(divergences),
                 "signals": len(signals),
+                "ma_centers": len(ma_centers),
+                "ma_signals": len(ma_signals),
             },
         ),
         "klines": [asdict(bar) for bar in raw_bars],
         "indicators": {
             "macd": macd,
-            "bbi": _bbi_indicator(raw_bars),
+            "bbi": bbi,
+            "ma5": ma5,
+            "ma10": ma10,
+            "ma20": ma20,
         },
         "merged_klines": [asdict(bar) for bar in merged],
         "fractals": [asdict(item) for item in fractals],
         "strokes": [asdict(item) for item in strokes],
+        "active_stroke": asdict(active_stroke) if active_stroke else None,
         "segments": [asdict(item) for item in segments],
         "centers": [asdict(item) for item in centers],
         "divergences": [asdict(item) for item in divergences],
         "signals": [asdict(item) for item in signals],
+        "ma_centers": [asdict(item) for item in ma_centers],
+        "ma_signals": [asdict(item) for item in ma_signals],
         "trend": trend,
         "backtest": backtest,
         "risk_cards": risk_cards,
@@ -299,9 +369,7 @@ def build_strokes(
                 pivots[-1] = item
             continue
 
-        raw_span = abs(item.raw_index - last.raw_index) + 1
-        if raw_span >= min_raw_bars:
-            pivots.append(item)
+        pivots.append(item)
 
     strokes: list[Stroke] = []
     for idx in range(1, len(pivots)):
@@ -345,6 +413,54 @@ def build_strokes(
     return strokes
 
 
+def build_active_stroke(raw_bars: list[RawBar], fractals: list[Fractal]) -> ActiveStroke | None:
+    if not raw_bars or not fractals:
+        return None
+
+    last = fractals[-1]
+    if last.raw_index >= raw_bars[-1].index:
+        return None
+
+    tail = raw_bars[last.raw_index + 1 :]
+    if not tail:
+        return None
+
+    if last.type == "bottom":
+        end_bar = max(tail, key=lambda item: item.high)
+        direction = "up"
+        end_price = end_bar.high
+        high = end_price
+        low = last.price
+    else:
+        end_bar = min(tail, key=lambda item: item.low)
+        direction = "down"
+        end_price = end_bar.low
+        high = last.price
+        low = end_price
+
+    if end_bar.index <= last.raw_index:
+        return None
+
+    price_change = end_price - last.price
+    return ActiveStroke(
+        direction=direction,
+        start_fractal_id=last.id,
+        start_index=last.raw_index,
+        end_index=end_bar.index,
+        start_date=last.date,
+        end_date=end_bar.date,
+        start_price=last.price,
+        end_price=end_price,
+        high=high,
+        low=low,
+        raw_span=end_bar.index - last.raw_index + 1,
+        price_change=price_change,
+        price_strength=abs(price_change) / max(abs(last.price), 1.0),
+        status="extending",
+        status_label="延伸中",
+    )
+
+
 def build_segments(strokes: list[Stroke], min_strokes: int = 3) -> list[Segment]:
     segments: list[Segment] = []
     if len(strokes) < min_strokes:
@@ -360,6 +476,8 @@ def build_segments(strokes: list[Stroke], min_strokes: int = 3) -> list[Segment]
         low = min(stroke.low for stroke in group)
         strength = sum(_combined_strength(stroke) for stroke in group)
         is_active = end >= len(strokes) - 1
+        feature_sequence = _segment_feature_sequence(group, direction, start)
+        feature_gap = _segment_feature_gap(segments[-1] if segments else None, feature_sequence)
         segments.append(
             Segment(
                 id=f"xd{len(segments) + 1}",
@@ -378,10 +496,65 @@ def build_segments(strokes: list[Stroke], min_strokes: int = 3) -> list[Segment]
                 strength=round(strength, 6),
                 status="active" if is_active else "completed",
                 status_label="当前线段" if is_active else "已完成",
+                feature_sequence=feature_sequence,
+                feature_gap=feature_gap,
             )
         )
         start += min_strokes - 1
     return segments
+
+
+def _segment_feature_sequence(group: list[Stroke], segment_direction: str, start_stroke_index: int) -> list[dict[str, Any]]:
+    feature_direction = "down" if segment_direction == "up" else "up"
+    items: list[dict[str, Any]] = []
+    for offset, stroke in enumerate(group):
+        if stroke.direction != feature_direction:
+            continue
+        items.append(
+            {
+                "stroke_id": stroke.id,
+                "stroke_index": start_stroke_index + offset,
+                "direction": stroke.direction,
+                "start_index": stroke.start_index,
+                "end_index": stroke.end_index,
+                "start_date": stroke.start_date,
+                "end_date": stroke.end_date,
+                "high": stroke.high,
+                "low": stroke.low,
+                "start_price": stroke.start_price,
+                "end_price": stroke.end_price,
+                "label": "特征序列",
+            }
+        )
+    return items
+
+
+def _segment_feature_gap(previous_segment: Segment | None, feature_sequence: list[dict[str, Any]]) -> dict[str, Any]:
+    if previous_segment is None or not previous_segment.feature_sequence or not feature_sequence:
+        return {}
+
+    previous = previous_segment.feature_sequence[-1]
+    current = feature_sequence[0]
+
+    if current["low"] > previous["high"]:
+        return {
+            "label": "特征序列上缺口",
+            "direction": "up",
+            "start_index": previous["end_index"],
+            "end_index": current["start_index"],
+            "high": current["low"],
+            "low": previous["high"],
+        }
+    if current["high"] < previous["low"]:
+        return {
+            "label": "特征序列下缺口",
+            "direction": "down",
+            "start_index": previous["end_index"],
+            "end_index": current["start_index"],
+            "high": previous["low"],
+            "low": current["high"],
+        }
+    return {}
 
 
 def build_centers(strokes: list[Stroke]) -> list[Center]:
@@ -1110,7 +1283,7 @@ def _meta(level: str, raw_count: int, merged_count: int, counts: dict[str, int] 
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "counts": counts or {},
         "note": note,
-        "rule_profile": "内置严谨口径：包含处理后识别顶底分型，成笔至少 5 根原始 K 线跨度。",
+        "rule_profile": "新笔口径：独立顶底分型直接成笔，同向更极端分型视为笔延伸，遇到反向独立分型判定前一笔结束。",
     }
 
 
@@ -1217,6 +1390,157 @@ def _bbi_indicator(raw_bars: list[RawBar]) -> list[dict[str, Any]]:
         }
         for idx, bar in enumerate(raw_bars)
     ]
+
+
+def _ma_indicator(raw_bars: list[RawBar], period: int) -> list[dict[str, Any]]:
+    closes = np.array([bar.close for bar in raw_bars], dtype=float)
+    if len(closes) == 0:
+        return []
+    values = _sma(closes, period)
+    return [
+        {
+            "index": bar.index,
+            "date": bar.date,
+            "value": round(float(values[idx]), 6) if not np.isnan(values[idx]) else None,
+        }
+        for idx, bar in enumerate(raw_bars)
+    ]
+
+
+def build_ma_centers(
+    raw_bars: list[RawBar],
+    ma5_rows: list[dict[str, Any]],
+    ma10_rows: list[dict[str, Any]],
+    ma20_rows: list[dict[str, Any]],
+) -> list[MACenter]:
+    centers: list[MACenter] = []
+    start = None
+    center_high = float("-inf")
+    center_low = float("inf")
+
+    def flush(end_idx: int | None):
+        nonlocal start, center_high, center_low
+        if start is None or end_idx is None or end_idx - start + 1 < 3:
+            start = None
+            center_high = float("-inf")
+            center_low = float("inf")
+            return
+        centers.append(
+            MACenter(
+                id=f"ma_zs{len(centers) + 1}",
+                start_index=start,
+                end_index=end_idx,
+                start_date=raw_bars[start].date,
+                end_date=raw_bars[end_idx].date,
+                low=round(center_low, 6),
+                high=round(center_high, 6),
+                status="active" if end_idx >= raw_bars[-1].index else "completed",
+                status_label="均线中枢观察" if end_idx >= raw_bars[-1].index else "均线中枢",
+                reason="MA5/10/20 收敛缠绕，作为均线中枢观察区。",
+            )
+        )
+        start = None
+        center_high = float("-inf")
+        center_low = float("inf")
+
+    for idx, bar in enumerate(raw_bars):
+        values = [ma5_rows[idx]["value"], ma10_rows[idx]["value"], ma20_rows[idx]["value"]]
+        if any(value is None for value in values):
+            flush(idx - 1)
+            continue
+
+        high = max(values)
+        low = min(values)
+        avg = sum(values) / 3
+        tight = avg > 0 and (high - low) / avg <= 0.035
+        if tight:
+            if start is None:
+                start = bar.index
+            center_high = max(center_high, high)
+            center_low = min(center_low, low)
+        else:
+            flush(idx - 1)
+    flush(raw_bars[-1].index if raw_bars else None)
+    return centers
+
+
+def build_ma_signals(
+    raw_bars: list[RawBar],
+    ma5_rows: list[dict[str, Any]],
+    ma10_rows: list[dict[str, Any]],
+    ma20_rows: list[dict[str, Any]],
+    centers: list[MACenter],
+) -> list[MASignal]:
+    signals: list[MASignal] = []
+    last_buy1_index = -1
+    last_sell1_index = -1
+    last_buy2_index = -1
+    last_sell2_index = -1
+    last_buy3_center_id = ""
+    last_sell3_center_id = ""
+
+    def push(signal_type: str, side: str, bar: RawBar, price: float, reason: str):
+        signals.append(
+            MASignal(
+                id=f"ma_s{len(signals) + 1}",
+                type=signal_type,
+                side=side,
+                date=bar.date,
+                index=bar.index,
+                price=round(price, 6),
+                status="candidate",
+                status_label="均线辅助",
+                reason=reason,
+            )
+        )
+
+    for idx in range(1, len(raw_bars)):
+        current = raw_bars[idx]
+        previous = raw_bars[idx - 1]
+        current_values = [ma5_rows[idx]["value"], ma10_rows[idx]["value"], ma20_rows[idx]["value"]]
+        previous_values = [ma5_rows[idx - 1]["value"], ma10_rows[idx - 1]["value"], ma20_rows[idx - 1]["value"]]
+        if any(value is None for value in current_values + previous_values):
+            continue
+
+        ma5, ma10, ma20 = current_values
+        prev5, prev10, prev20 = previous_values
+        bullish = ma5 >= ma10 >= ma20
+        bearish = ma5 <= ma10 <= ma20
+        golden_cross = prev5 <= prev10 and ma5 > ma10 and current.close >= ma5
+        dead_cross = prev5 >= prev10 and ma5 < ma10 and current.close <= ma5
+
+        if golden_cross:
+            push("均线一类买点", "buy", current, current.low, "MA5 上穿 MA10，价格重新站回短均线。")
+            last_buy1_index = current.index
+        elif dead_cross:
+            push("均线一类卖点", "sell", current, current.high, "MA5 下穿 MA10，价格跌回短均线下。")
+            last_sell1_index = current.index
+
+        if bullish and last_buy1_index >= 0 and current.index > last_buy1_index and last_buy2_index < last_buy1_index:
+            if current.low <= ma10 * 1.01 and current.close >= ma10 and current.low >= ma20 * 0.99:
+                push("均线二类买点", "buy", current, current.low, "多头均线下的第一次回踩 MA10/MA20。")
+                last_buy2_index = current.index
+
+        if bearish and last_sell1_index >= 0 and current.index > last_sell1_index and last_sell2_index < last_sell1_index:
+            if current.high >= ma10 * 0.99 and current.close <= ma10 and current.high <= ma20 * 1.01:
+                push("均线二类卖点", "sell", current, current.high, "空头均线下的第一次反抽 MA10/MA20。")
+                last_sell2_index = current.index
+
+        emitted_buy3 = False
+        emitted_sell3 = False
+        for center in centers:
+            if current.index <= center.end_index:
+                continue
+            if bullish and not emitted_buy3 and previous.close <= center.high < current.close and last_buy3_center_id != center.id:
+                push("均线三类买点", "buy", current, current.close, "价格向上离开均线中枢，且均线保持多头顺序。")
+                last_buy3_center_id = center.id
+                emitted_buy3 = True
+            if bearish and not emitted_sell3 and previous.close >= center.low > current.close and last_sell3_center_id != center.id:
+                push("均线三类卖点", "sell", current, current.close, "价格向下离开均线中枢，且均线保持空头顺序。")
+                last_sell3_center_id = center.id
+                emitted_sell3 = True
+
+    return signals
 
 
 def _sma(values: np.ndarray, period: int) -> np.ndarray:

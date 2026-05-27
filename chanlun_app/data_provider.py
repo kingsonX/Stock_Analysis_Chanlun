@@ -13,6 +13,7 @@ import pandas as pd
 
 from .config import BASE_DIR, LEVELS, STOCK_CACHE_FILE
 from .hot_money_store import HotMoneyDailyTradeStore, HotMoneyStoreError
+from .stock_basic_store import StockBasicCacheStore, StockBasicStoreError
 
 
 logger = logging.getLogger(__name__)
@@ -92,6 +93,12 @@ class BoardRecord:
 
 
 class TushareClient:
+    REVIEW_INDEXES = (
+        ("000001.SH", "上证综指"),
+        ("399001.SZ", "深证成指"),
+        ("399006.SZ", "创业板指"),
+    )
+
     def __init__(
         self,
         token: str | None = None,
@@ -99,6 +106,7 @@ class TushareClient:
         cache_ttl_seconds: int = 24 * 60 * 60,
         board_cache_ttl_seconds: int = 6 * 60 * 60,
         hot_money_store: HotMoneyDailyTradeStore | None = None,
+        stock_basic_store: StockBasicCacheStore | None = None,
     ):
         self.token = token or _env_value("TUSHARE_TOKEN")
         self.stock_cache_file = stock_cache_file
@@ -111,6 +119,11 @@ class TushareClient:
         self._hot_money_detail_cache: dict[str, tuple[float, dict[str, Any]]] = {}
         self._hot_money_detail_cache_dir = BASE_DIR / "cache" / "hot_money_detail"
         self._hot_money_store = hot_money_store or HotMoneyDailyTradeStore(
+            dsn=_env_value("SUPABASE_DB_URL") or _env_value("DATABASE_URL"),
+            min_size=_safe_env_int("SUPABASE_DB_POOL_MIN_SIZE", 1),
+            max_size=_safe_env_int("SUPABASE_DB_POOL_MAX_SIZE", 4),
+        )
+        self._stock_basic_store = stock_basic_store or StockBasicCacheStore(
             dsn=_env_value("SUPABASE_DB_URL") or _env_value("DATABASE_URL"),
             min_size=_safe_env_int("SUPABASE_DB_POOL_MIN_SIZE", 1),
             max_size=_safe_env_int("SUPABASE_DB_POOL_MAX_SIZE", 4),
@@ -268,6 +281,180 @@ class TushareClient:
         self._board_member_cache[cache_key] = (time.time(), members)
         return members
 
+    def get_stock_dc_concepts(
+        self,
+        ts_code: str,
+        trade_date: str | None = None,
+        limit: int = 3,
+    ) -> list[dict[str, str]]:
+        cleaned_code = (ts_code or "").strip().upper()
+        if not cleaned_code:
+            raise DataProviderError("缺少股票代码。", 400)
+
+        pro = self._client()
+        fields = "ts_code,trade_date,name,theme_code,industry_code,industry,reason,hot_num"
+        df = None
+        for day in _recent_trade_dates(12, preferred=trade_date):
+            try:
+                df = pro.dc_concept_cons(ts_code=cleaned_code, trade_date=day, fields=fields)
+            except Exception as exc:
+                raise DataProviderError(_friendly_tushare_market_error("东方财富题材成分", exc), 502) from exc
+            if df is not None and not df.empty:
+                break
+
+        if df is None or df.empty:
+            try:
+                df = pro.dc_concept_cons(ts_code=cleaned_code, fields=fields)
+            except Exception as exc:
+                raise DataProviderError(_friendly_tushare_market_error("东方财富题材成分", exc), 502) from exc
+
+        if df is None or df.empty:
+            return []
+
+        concept_snapshot = self.load_boards("dc", board_type="concept")
+        concept_name_map = {
+            str(row["ts_code"]).upper(): str(row["name"])
+            for _, row in concept_snapshot.iterrows()
+            if str(row.get("ts_code", "")).strip()
+        }
+
+        normalized: list[dict[str, str]] = []
+        seen: set[str] = set()
+        for row in df.fillna("").sort_values(by=["trade_date", "hot_num"], ascending=[False, True]).to_dict("records"):
+            theme_code = str(row.get("theme_code", "")).strip().upper()
+            if not theme_code or theme_code in seen:
+                continue
+            seen.add(theme_code)
+            normalized.append(
+                {
+                    "theme_code": theme_code,
+                    "theme_name": concept_name_map.get(theme_code, theme_code),
+                    "trade_date": str(row.get("trade_date", "")).strip(),
+                    "industry": str(row.get("industry", "")).strip(),
+                    "reason": str(row.get("reason", "")).strip(),
+                    "hot_num": str(row.get("hot_num", "")).strip(),
+                }
+            )
+            if len(normalized) >= limit:
+                break
+        return normalized
+
+    def get_stock_bak_basic(
+        self,
+        ts_code: str,
+        trade_date: str | None = None,
+    ) -> dict[str, Any]:
+        cleaned_code = (ts_code or "").strip().upper()
+        if not cleaned_code:
+            raise DataProviderError("缺少股票代码。", 400)
+
+        cached = self._read_stock_basic_store_cache(cleaned_code, trade_date)
+        if cached:
+            return cached
+
+        pro = self._client()
+        fields = (
+            "trade_date,ts_code,name,industry,area,pe,pb,float_share,total_share,"
+            "list_date,rev_yoy,profit_yoy,gpr,npr,holder_num"
+        )
+        df = None
+        for day in _recent_trade_dates(20, preferred=trade_date):
+            try:
+                df = pro.bak_basic(ts_code=cleaned_code, trade_date=day, fields=fields)
+            except Exception as exc:
+                raise DataProviderError(_friendly_tushare_market_error("备用基础资料", exc), 502) from exc
+            if df is not None and not df.empty:
+                break
+
+        if df is None or df.empty:
+            try:
+                df = pro.bak_basic(ts_code=cleaned_code, fields=fields)
+            except Exception as exc:
+                raise DataProviderError(_friendly_tushare_market_error("备用基础资料", exc), 502) from exc
+
+        if df is None or df.empty:
+            return {}
+
+        row = df.fillna("").sort_values(by=["trade_date"], ascending=False).iloc[0].to_dict()
+        normalized = {str(key): _json_safe_scalar(value) for key, value in row.items()}
+        self._write_stock_basic_store_cache({"ts_code": cleaned_code}, normalized)
+        return normalized
+
+    def save_stock_basic_cache(
+        self,
+        stock: dict[str, Any],
+        bak_basic: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        stock_payload = dict(stock or {})
+        ts_code = str(stock_payload.get("ts_code") or "").strip().upper()
+        if not ts_code:
+            raise DataProviderError("缺少股票代码，无法写入基础资料缓存。", 400)
+
+        if not self._stock_basic_store.enabled:
+            return {
+                "status": "disabled",
+                "message": "未配置 SUPABASE_DB_URL，已跳过 PostgreSQL 基础资料缓存。",
+                "ts_code": ts_code,
+            }
+
+        basics = dict(bak_basic or {})
+        if not basics:
+            basics = self.get_stock_bak_basic(ts_code)
+        if not basics:
+            return {
+                "status": "empty",
+                "message": "当前没有可写入的基础资料快照。",
+                "ts_code": ts_code,
+            }
+
+        self._write_stock_basic_store_cache(stock_payload, basics)
+        return {
+            "status": "ok",
+            "message": "股票基础资料已写入 PostgreSQL 缓存。",
+            "ts_code": ts_code,
+            "trade_date": str(basics.get("trade_date") or ""),
+        }
+
+    def get_market_indices(self, trade_date: str | None = None) -> dict[str, Any]:
+        pro = self._client()
+        daily_fields = "ts_code,trade_date,close,open,high,low,pre_close,change,pct_chg,vol,amount"
+        basic_fields = "ts_code,trade_date,turnover_rate,pe,pb"
+        items: list[dict[str, Any]] = []
+        actual_trade_date = ""
+
+        for ts_code, name in self.REVIEW_INDEXES:
+            row = None
+            for day in _trade_date_candidates(trade_date, 8):
+                try:
+                    df = pro.index_daily(ts_code=ts_code, trade_date=day, fields=daily_fields)
+                except Exception as exc:
+                    raise DataProviderError(_friendly_tushare_market_error("大盘指数行情", exc), 502) from exc
+                if df is not None and not df.empty:
+                    row = df.fillna("").sort_values(by=["trade_date"], ascending=False).iloc[0].to_dict()
+                    actual_trade_date = str(row.get("trade_date", "") or actual_trade_date)
+                    break
+            if row is None:
+                continue
+
+            basic_row: dict[str, Any] = {}
+            try:
+                basic_df = pro.index_dailybasic(
+                    ts_code=ts_code,
+                    trade_date=str(row.get("trade_date", "")).strip(),
+                    fields=basic_fields,
+                )
+                if basic_df is not None and not basic_df.empty:
+                    basic_row = basic_df.fillna("").sort_values(by=["trade_date"], ascending=False).iloc[0].to_dict()
+            except Exception:
+                basic_row = {}
+
+            merged = {str(key): _json_safe_scalar(value) for key, value in row.items()}
+            merged.update({str(key): _json_safe_scalar(value) for key, value in basic_row.items()})
+            merged["name"] = name
+            items.append(merged)
+
+        return {"trade_date": actual_trade_date or (trade_date or ""), "items": items}
+
     def search_stocks(self, query: str, limit: int = 20) -> list[dict[str, str]]:
         q = (query or "").strip()
         if not q:
@@ -371,6 +558,52 @@ class TushareClient:
             raise DataProviderError("没有获取到分钟 K 线数据，请检查股票代码、日期范围或 Tushare 分钟权限。", 404)
 
         return _standardize_kline_rows(df, ts_code, "trade_time")
+
+    def get_realtime_daily(self, ts_codes: str | list[str]) -> list[dict[str, Any]]:
+        codes: list[str]
+        if isinstance(ts_codes, str):
+            codes = [item.strip() for item in ts_codes.split(",") if item.strip()]
+        else:
+            codes = [str(item or "").strip() for item in ts_codes if str(item or "").strip()]
+        normalized_codes = [self._normalize_rt_code(item) for item in codes]
+        normalized_codes = [item for item in normalized_codes if item]
+        if not normalized_codes:
+            raise DataProviderError("缺少实时日线股票代码。", 400)
+        if len(normalized_codes) > 6000:
+            raise DataProviderError("实时日线单次最多支持 6000 只股票。", 400)
+
+        pro = self._client()
+        try:
+            df = pro.rt_k(ts_code=",".join(normalized_codes))
+        except Exception as exc:
+            raise DataProviderError(f"Tushare 实时日线获取失败：{exc}", 502) from exc
+
+        if df is None or df.empty:
+            raise DataProviderError("没有获取到实时日线数据，请检查 rt_k 权限或股票代码。", 404)
+
+        numeric_fields = {
+            "pre_close",
+            "high",
+            "open",
+            "low",
+            "close",
+            "vol",
+            "amount",
+            "num",
+            "ask_price1",
+            "ask_volume1",
+            "bid_price1",
+            "bid_volume1",
+        }
+        rows = []
+        for row in df.fillna("").to_dict("records"):
+            item: dict[str, Any] = {}
+            for key, value in row.items():
+                text_key = str(key)
+                item[text_key] = _safe_float(value) if text_key in numeric_fields else (str(value).strip() if value is not None else "")
+            item["ts_code"] = str(item.get("ts_code") or "").strip().upper()
+            rows.append(item)
+        return rows
 
     def get_top_list(self, trade_date: str | None = None) -> dict[str, Any]:
         df, actual_trade_date = self._fetch_market_dataframe(
@@ -634,6 +867,35 @@ class TushareClient:
         except HotMoneyStoreError as exc:
             logger.warning("写入 Supabase 游资缓存失败：%s", exc)
 
+    def _read_stock_basic_store_cache(self, ts_code: str, trade_date: str | None = None) -> dict[str, Any]:
+        if not self._stock_basic_store.enabled:
+            return {}
+        try:
+            payload = self._stock_basic_store.get_payload(ts_code=ts_code, trade_date=trade_date)
+        except StockBasicStoreError as exc:
+            logger.warning("读取 Supabase 股票基础资料缓存失败：%s", exc)
+            return {}
+        if not isinstance(payload, dict):
+            return {}
+        bak_basic = payload.get("bak_basic")
+        return dict(bak_basic) if isinstance(bak_basic, dict) else {}
+
+    def _write_stock_basic_store_cache(self, stock: dict[str, Any], bak_basic: dict[str, Any]) -> None:
+        if not self._stock_basic_store.enabled:
+            return
+        try:
+            self._stock_basic_store.save_payload(stock=stock, bak_basic=bak_basic)
+        except StockBasicStoreError as exc:
+            logger.warning("写入 Supabase 股票基础资料缓存失败：%s", exc)
+
+    def _normalize_rt_code(self, value: str) -> str:
+        cleaned = str(value or "").strip().upper()
+        if not cleaned:
+            return ""
+        if "." in cleaned:
+            return cleaned
+        return self.resolve_stock(cleaned).ts_code
+
     def _fetch_board_snapshot(self, source: str, idx_type: str) -> pd.DataFrame:
         config = _board_source_config(source)
         pro = self._client()
@@ -743,6 +1005,20 @@ def _compact_datetime(value: Any) -> str:
     if len(digits) >= 8:
         return digits[:8]
     return text
+
+
+def _json_safe_scalar(value: Any) -> Any:
+    if pd.isna(value):
+        return ""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        if value.is_integer():
+            return int(value)
+        return round(value, 4)
+    return str(value).strip()
 
 
 def _friendly_tushare_board_error(label: str, action: str, exc: Exception) -> str:

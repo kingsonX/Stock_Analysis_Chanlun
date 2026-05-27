@@ -181,13 +181,16 @@ class TradingProfileService:
         mx_data_provider: MXDataProvider | None = None,
         news_provider: MXNewsProvider | None = None,
         screen_provider: MXScreenProvider | None = None,
+        ai_explainer: Any | None = None,
     ):
         self.mx_data_provider = mx_data_provider or MXDataProvider()
         shared_key = getattr(self.mx_data_provider, "api_key", None)
-        self.news_provider = news_provider or MXNewsProvider(api_key=shared_key)
-        self.screen_provider = screen_provider or MXScreenProvider(api_key=shared_key)
+        shared_timeout = getattr(self.mx_data_provider, "timeout_seconds", 20)
+        self.news_provider = news_provider or MXNewsProvider(api_key=shared_key, timeout_seconds=shared_timeout)
+        self.screen_provider = screen_provider or MXScreenProvider(api_key=shared_key, timeout_seconds=shared_timeout)
+        self.ai_explainer = ai_explainer
 
-    def build(self, stock: dict[str, Any], analysis: dict[str, Any]) -> dict[str, Any]:
+    def build(self, stock: dict[str, Any], analysis: dict[str, Any], include_mx_summary: bool = True) -> dict[str, Any]:
         stock = stock or {}
         analysis = analysis or {}
         name = _flatten(stock.get("name") or "")
@@ -198,17 +201,30 @@ class TradingProfileService:
         if not target:
             raise MXProviderError("缺少股票名称或代码，无法生成交易画像。", 400)
 
-        mx_summary = self._safe_external_call(self.mx_data_provider.summary, ts_code=ts_code, name=name)
+        if include_mx_summary:
+            mx_summary = self._safe_external_call(self.mx_data_provider.summary, ts_code=ts_code, name=name)
+        else:
+            mx_summary = {
+                "status": "empty",
+                "message": "妙想原始卡片改为异步加载。",
+                "data": {"cards": []},
+            }
         news = self._safe_external_call(self.news_provider.digest, target=target)
         market_scan = self._safe_external_call(self.screen_provider.scan, stock_name=target, industry=industry, symbol=symbol)
 
         profile = _compose_profile(stock, analysis, mx_summary, news, market_scan)
+        ai_summary = self._safe_ai_summary(stock, analysis, profile, mx_summary, news, market_scan)
+        if ai_summary.get("status") == "ok":
+            profile = _merge_ai_profile(profile, ai_summary)
+        leader_profile = _leader_profile(stock, analysis, mx_summary, news, market_scan, profile, ai_summary)
         return {
             "stock": stock,
             "profile": profile,
+            "leader_profile": leader_profile,
             "mx_summary": mx_summary,
             "news": news,
             "market_scan": market_scan,
+            "ai_summary": ai_summary,
         }
 
     @staticmethod
@@ -220,6 +236,33 @@ class TradingProfileService:
             return {"status": "ok", "data": data}
         except MXProviderError as exc:
             return {"status": "error", "message": exc.message}
+
+    def _safe_ai_summary(
+        self,
+        stock: dict[str, Any],
+        analysis: dict[str, Any],
+        profile: dict[str, Any],
+        mx_summary: dict[str, Any],
+        news: dict[str, Any],
+        market_scan: dict[str, Any],
+    ) -> dict[str, Any]:
+        if self.ai_explainer is None:
+            return {"status": "empty", "message": "未配置 AI 解释层。"}
+        try:
+            return self.ai_explainer.explain(
+                stock=stock,
+                analysis=analysis,
+                profile_payload={
+                    "stock": stock,
+                    "profile": profile,
+                    "mx_summary": mx_summary,
+                    "news": news,
+                    "market_scan": market_scan,
+                },
+            )
+        except Exception as exc:
+            message = getattr(exc, "message", "") or str(exc) or "AI 综合分析暂时不可用。"
+            return {"status": "error", "message": message}
 
 
 def _compose_profile(
@@ -251,6 +294,452 @@ def _compose_profile(
         "news_points": [item["title"] for item in news.get("items", [])[:3]] if news.get("status") == "ok" else [],
         "scan_points": [item["label"] for item in market_scan.get("cards", []) if item.get("status") == "ok"],
     }
+
+
+def _merge_ai_profile(profile: dict[str, Any], ai_summary: dict[str, Any]) -> dict[str, Any]:
+    analysis = ai_summary.get("analysis") or {}
+    if not analysis:
+        return profile
+
+    merged = dict(profile)
+    verdict = _flatten(analysis.get("overall_verdict") or "").strip()
+    stance, stance_label = _llm_stance(verdict, merged.get("stance", "neutral"), merged.get("stance_label", "先观察"))
+    merged["stance"] = stance
+    merged["stance_label"] = stance_label
+    merged["headline"] = _flatten(analysis.get("summary") or merged.get("headline") or "")
+    merged["decision"] = _flatten(analysis.get("buy_judgement") or merged.get("decision") or "")
+    merged["conclusion"] = _llm_conclusion(analysis, merged.get("conclusion") or "")
+    merged["tags"] = _llm_tags(analysis, merged.get("tags") or [])
+    merged["ai_summary"] = {
+        "status": "ok",
+        "provider": ai_summary.get("provider", ""),
+        "model": ai_summary.get("model", ""),
+        "confidence": _flatten(analysis.get("confidence") or ""),
+        "summary": _flatten(analysis.get("summary") or ""),
+        "overall_verdict": verdict,
+        "buy_judgement": _flatten(analysis.get("buy_judgement") or ""),
+        "risks": analysis.get("risks") or [],
+        "watch_points": analysis.get("watch_points") or [],
+    }
+    merged["ai_sections"] = [
+        _llm_section("缠论结构", analysis.get("chan_view"), fallback_tone=merged.get("structure", {}).get("tone", "neutral")),
+        _llm_section("养家视角", analysis.get("yangjia_view"), fallback_tone=merged.get("emotion", {}).get("tone", "neutral")),
+        _llm_section("章盟主视角", analysis.get("zhang_view"), fallback_tone=merged.get("capacity", {}).get("tone", "neutral")),
+        _llm_risk_section(merged.get("risk") or {}, analysis),
+    ]
+    return merged
+
+
+def _leader_profile(
+    stock: dict[str, Any],
+    analysis: dict[str, Any],
+    mx_summary: dict[str, Any],
+    news: dict[str, Any],
+    market_scan: dict[str, Any],
+    profile: dict[str, Any],
+    ai_summary: dict[str, Any],
+) -> dict[str, Any]:
+    trend = analysis.get("trend") or {}
+    query = analysis.get("query") or {}
+    signals = analysis.get("signals") or []
+    signal = _latest_signal(signals)
+    cards = {item.get("key"): item for item in market_scan.get("cards", []) if isinstance(item, dict)}
+    industry = cards.get("industry_strength", {})
+    market_heat = cards.get("market_heat", {})
+    quote = (mx_summary.get("data") or {}).get("quote", {}) if mx_summary.get("status") == "ok" else {}
+    valuation = (mx_summary.get("data") or {}).get("valuation", {}) if mx_summary.get("status") == "ok" else {}
+    fund_flow = (mx_summary.get("data") or {}).get("fund_flow", {}) if mx_summary.get("status") == "ok" else {}
+    recent_news = news.get("items", [])[:3] if news.get("status") == "ok" else []
+    first_news = recent_news[0] if recent_news else {}
+    catalyst = _catalyst_judgement(first_news)
+    emotion = profile.get("emotion") or {}
+    capacity = profile.get("capacity") or {}
+    risk = profile.get("risk") or {}
+    ma_state = _ma_leader_state(analysis)
+    price_state = _leader_price_state(analysis)
+
+    amount = _metric_numeric(quote, ["成交额", "成交金额"])
+    turnover = _metric_numeric(quote, ["换手率"])
+    market_cap = _metric_numeric(valuation, ["总市值"])
+    fund_flow_value = _metric_numeric(fund_flow, ["主力净流入", "主力资金净流入", "主力净额"])
+    industry_hit = bool(industry.get("hit_current_stock"))
+    heat_total = _safe_int(market_heat.get("total"))
+
+    leader_score = 0
+    if trend.get("direction") == "up":
+        leader_score += 2
+    elif trend.get("direction") == "down":
+        leader_score -= 2
+    if trend.get("position") == "above_center":
+        leader_score += 1
+    elif trend.get("position") == "below_center":
+        leader_score -= 1
+
+    if signal and signal.get("side") == "buy":
+        leader_score += 2 if signal.get("status") == "confirmed" else 1
+    elif signal and signal.get("side") == "sell":
+        leader_score -= 3 if signal.get("status") == "confirmed" else 2
+
+    emotion_score = int(emotion.get("score") or 0)
+    capacity_score = int(capacity.get("score") or 0)
+    if emotion_score >= 3:
+        leader_score += 2
+    elif emotion_score >= 1:
+        leader_score += 1
+    if capacity_score >= 3:
+        leader_score += 2
+    elif capacity_score >= 1:
+        leader_score += 1
+
+    if industry_hit:
+        leader_score += 1
+    if catalyst["level"] == "板块级/政策级催化":
+        leader_score += 2
+    elif catalyst["level"] == "公司经营催化":
+        leader_score += 1
+
+    if amount >= 10 * 100_000_000:
+        leader_score += 2
+    elif amount >= 3 * 100_000_000:
+        leader_score += 1
+    if 3 <= turnover <= 20:
+        leader_score += 1
+    if 30 * 100_000_000 <= market_cap <= 2000 * 100_000_000:
+        leader_score += 1
+    if price_state["low_price"]:
+        leader_score += 1
+    if ma_state["supportive"]:
+        leader_score += 1
+    if price_state["near_breakout"]:
+        leader_score += 1
+
+    topping_score = 0
+    if signal and signal.get("side") == "sell":
+        topping_score += 3 if signal.get("status") == "confirmed" else 2
+    if trend.get("direction") == "down":
+        topping_score += 2
+    if trend.get("position") == "below_center":
+        topping_score += 1
+    if fund_flow_value < 0:
+        topping_score += 1
+    if not ma_state["supportive"] and ma_state["available"]:
+        topping_score += 1
+    if price_state["drawdown_ratio"] >= 0.2:
+        topping_score += 3
+    elif price_state["drawdown_ratio"] >= 0.12:
+        topping_score += 2
+    elif price_state["drawdown_ratio"] >= 0.07:
+        topping_score += 1
+    if price_state["recent_pullback"]:
+        topping_score += 1
+    divergences = analysis.get("divergences") or []
+    if divergences and "背驰" in _flatten((divergences[-1] or {}).get("label") or ""):
+        topping_score += 1
+    if risk.get("penalty", 0) >= 2:
+        topping_score += 1
+
+    leader_type = _leader_type_label(leader_score, emotion_score, capacity_score, catalyst["level"], industry_hit)
+    retreat_label = _leader_retreat_label(topping_score)
+    tone = _leader_tone(leader_score, topping_score)
+
+    if leader_type == "非龙头":
+        verdict = "更像普通强势股"
+        action = "是否是龙头：当前更像强势股或跟风股，不宜直接按龙头战法预期溢价。是否退潮见顶：谈不上真正龙头退潮，更像先看强弱切换。"
+        conditions = [
+            "先等题材强度、赚钱效应和结构主动性三者一起抬升，再讨论是否升级为龙头候选。",
+            "没有主流扩散与承接确认时，不要把短线脉冲误判成龙头启动。",
+        ]
+    elif retreat_label == "疑似退潮见顶":
+        verdict = "龙头退潮风险高"
+        action = "是否是龙头：即便曾经是核心，现在也不该按继续加速的龙头预期处理。是否退潮见顶：当前已经进入高风险退潮观察，优先看兑现而不是幻想二波。"
+        conditions = [
+            "至少等卖点被修复、资金回流、并重新站回强势均线后，再谈二次走强。",
+            "若继续跌回中枢内部或高位放量不涨，退潮信号会进一步坐实。",
+        ]
+    elif leader_type in ("总龙头候选", "板块龙候选"):
+        verdict = "可列龙头观察"
+        action = f"是否是龙头：当前更像{leader_type}，可以按养家视角放进核心观察名单。是否退潮见顶：目前{retreat_label}，但只能在分歧承接还在时跟踪，不适合无脑追高。"
+        conditions = [
+            "要持续看到主流热度、板块反馈和成交承接同时在线，龙头地位才会继续强化。",
+            "一旦出现高位卖点、板块掉队或放量不涨，优先从龙头观察降级。",
+        ]
+    else:
+        verdict = "更像跟随核心"
+        action = f"是否是龙头：更接近{leader_type}，可以当成核心跟随票观察，但还没到总龙头级别。是否退潮见顶：目前{retreat_label}，关键看能否在分歧后继续卡位走强。"
+        conditions = [
+            "最好看到板块龙继续走强，同时它自身还能保持换手与承接，才有升级空间。",
+            "若只是被板块情绪带着动、自己没有辨识度，就容易从龙二退回跟风。",
+        ]
+
+    basis = [
+        f"级别：{query.get('level_label') or analysis.get('level') or '当前级别'}",
+        f"走势位置：{trend.get('label') or '结构不足'} · {trend.get('position_label') or '未知'}",
+        f"最新信号：{_leader_signal_text(signal)}",
+        f"市场热度：高涨幅样本 {heat_total} 只",
+        f"行业活跃：{'命中' if industry_hit else '未命中'}主流扫描",
+        f"催化级别：{catalyst['level']}",
+        f"成交额 / 换手：{_metric_display(quote, ['成交额', '成交金额']) or '-'} / {_metric_display(quote, ['换手率']) or '-'}",
+        f"主力净额：{_metric_display(fund_flow, ['主力净流入', '主力资金净流入', '主力净额']) or '-'}",
+    ]
+    if ma_state["available"]:
+        basis.append(f"均线状态：{ma_state['label']}")
+    if price_state["available"]:
+        basis.append(f"近20根回撤：{price_state['drawdown_text']}")
+
+    detail = (
+        "理由：养家视角看龙头，不只看图强不强，而是看主流题材、赚钱效应、换手承接、主动性和辨识度是否同时成立。"
+        "当前版本优先使用结构、主流、容量、均线和催化做代理判断，适合做龙头观察，不替代席位级盘口复盘。"
+    )
+
+    checklist = [
+        _leader_check_item("主流题材催化", catalyst["level"] != "暂无催化", catalyst["level"] == "板块级/政策级催化", catalyst["level"]),
+        _leader_check_item("结构主动性", trend.get("direction") == "up", trend.get("position") == "above_center", trend.get("label") or "结构不足"),
+        _leader_check_item("换手与承接", turnover >= 3, amount >= 10 * 100_000_000, f"换手 { _metric_display(quote, ['换手率']) or '-' } · 成交额 { _metric_display(quote, ['成交额', '成交金额']) or '-' }"),
+        _leader_check_item("主流辨识度", industry_hit, heat_total >= 80, f"高涨幅样本 {heat_total} 只"),
+        _leader_check_item("均线强度", ma_state["supportive"], ma_state["available"], ma_state["label"]),
+        _leader_check_item("退潮/见顶风险", topping_score <= 2, topping_score <= 4, retreat_label),
+    ]
+
+    ai_section = None
+    ai_analysis = ai_summary.get("analysis") or {}
+    if ai_summary.get("status") == "ok" and ai_analysis.get("yangjia_view"):
+        ai_section = _llm_section("AI养家补充", ai_analysis.get("yangjia_view"), fallback_tone=tone)
+        ai_section["detail"] = _flatten(ai_analysis.get("summary") or "")
+        confidence = _flatten(ai_analysis.get("confidence") or "")
+        if confidence:
+            ai_section["basis"] = [f"AI 置信度：{confidence}", *list(ai_section.get("basis") or [])]
+
+    return {
+        "title": "龙头分析",
+        "label": leader_type,
+        "retreat_label": retreat_label,
+        "headline": f"{leader_type} · {retreat_label}",
+        "verdict": verdict,
+        "summary": f"龙头分 {leader_score}，退潮分 {topping_score}。当前更偏向用养家视角判断它是不是主流核心，以及有没有从强转弱。",
+        "action": action,
+        "detail": detail,
+        "basis": basis,
+        "conditions": conditions,
+        "checklist": checklist,
+        "tone": tone,
+        "score": leader_score,
+        "topping_score": topping_score,
+        "tags": [leader_type, retreat_label, emotion.get("label") or "", capacity.get("label") or ""],
+        "ai_section": ai_section,
+    }
+
+
+def _leader_type_label(
+    leader_score: int,
+    emotion_score: int,
+    capacity_score: int,
+    catalyst_level: str,
+    industry_hit: bool,
+) -> str:
+    if emotion_score <= 0 and catalyst_level == "暂无催化" and not industry_hit:
+        return "非龙头"
+    if leader_score >= 10 and emotion_score >= 3 and capacity_score >= 2 and industry_hit:
+        return "总龙头候选"
+    if leader_score >= 8 and emotion_score >= 2:
+        return "板块龙候选"
+    if leader_score >= 6 and capacity_score >= 1:
+        return "龙二/龙三候选"
+    if leader_score >= 4 and catalyst_level != "暂无催化":
+        return "先于龙/补涨观察"
+    return "非龙头"
+
+
+def _leader_retreat_label(topping_score: int) -> str:
+    if topping_score >= 6:
+        return "疑似退潮见顶"
+    if topping_score >= 3:
+        return "退潮观察"
+    return "未见明确退潮"
+
+
+def _leader_tone(leader_score: int, topping_score: int) -> str:
+    if topping_score >= 6 or leader_score <= 2:
+        return "caution"
+    if leader_score >= 8 and topping_score <= 2:
+        return "positive"
+    return "neutral"
+
+
+def _leader_signal_text(signal: dict[str, Any] | None) -> str:
+    if not signal:
+        return "暂无明确信号"
+    return f"{_signal_short_label(signal)} {signal.get('status_label') or ''}".strip()
+
+
+def _leader_check_item(label: str, passed: bool, watch: bool, detail: str) -> dict[str, str]:
+    status = "pass" if passed else "watch" if watch else "miss"
+    status_label = {"pass": "满足", "watch": "观察", "miss": "不足"}[status]
+    return {"label": label, "status": status, "status_label": status_label, "detail": detail}
+
+
+def _ma_leader_state(analysis: dict[str, Any]) -> dict[str, Any]:
+    indicators = analysis.get("indicators") or {}
+    ma5 = _indicator_last_value(indicators.get("ma5") or [])
+    ma10 = _indicator_last_value(indicators.get("ma10") or [])
+    ma20 = _indicator_last_value(indicators.get("ma20") or [])
+    if ma5 is None or ma10 is None or ma20 is None:
+        return {"available": False, "supportive": False, "label": "均线数据不足"}
+    bullish = ma5 >= ma10 >= ma20
+    return {
+        "available": True,
+        "supportive": bullish,
+        "label": "MA5>MA10>MA20" if bullish else "均线未形成强势多头",
+        "ma5": ma5,
+        "ma10": ma10,
+        "ma20": ma20,
+    }
+
+
+def _indicator_last_value(rows: list[dict[str, Any]]) -> float | None:
+    for item in reversed(rows):
+        value = item.get("value") if isinstance(item, dict) else None
+        try:
+            if value is None:
+                continue
+            return float(value)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _leader_price_state(analysis: dict[str, Any]) -> dict[str, Any]:
+    klines = analysis.get("klines") or []
+    if len(klines) < 2:
+        return {
+            "available": False,
+            "low_price": False,
+            "near_breakout": False,
+            "drawdown_ratio": 0.0,
+            "drawdown_text": "-",
+            "recent_pullback": False,
+        }
+
+    recent = klines[-20:]
+    try:
+        closes = [float(item.get("close")) for item in recent if item.get("close") is not None]
+        highs = [float(item.get("high")) for item in recent if item.get("high") is not None]
+    except (TypeError, ValueError):
+        closes = []
+        highs = []
+    if not closes or not highs:
+        return {
+            "available": False,
+            "low_price": False,
+            "near_breakout": False,
+            "drawdown_ratio": 0.0,
+            "drawdown_text": "-",
+            "recent_pullback": False,
+        }
+
+    last_close = closes[-1]
+    high_20 = max(highs)
+    prev_high = max(highs[:-1]) if len(highs) > 1 else high_20
+    drawdown_ratio = (high_20 - last_close) / high_20 if high_20 > 0 else 0.0
+    recent_pullback = len(closes) >= 3 and closes[-1] < closes[-2] < closes[-3]
+    return {
+        "available": True,
+        "low_price": last_close <= 10,
+        "near_breakout": last_close >= prev_high * 0.98 if prev_high > 0 else False,
+        "drawdown_ratio": drawdown_ratio,
+        "drawdown_text": f"{drawdown_ratio * 100:.1f}%",
+        "recent_pullback": recent_pullback,
+    }
+
+
+def _llm_stance(verdict: str, fallback_stance: str, fallback_label: str) -> tuple[str, str]:
+    mapping = {
+        "重点观察": ("positive", "重点观察"),
+        "候选观察": ("neutral", "候选观察"),
+        "暂不参与": ("caution", "暂不参与"),
+        "风险回避": ("caution", "风险回避"),
+    }
+    if verdict in mapping:
+        return mapping[verdict]
+    return fallback_stance, fallback_label
+
+
+def _llm_conclusion(analysis: dict[str, Any], fallback: str) -> str:
+    pieces = []
+    confidence = _flatten(analysis.get("confidence") or "").strip()
+    if confidence:
+        pieces.append(f"AI 置信度：{confidence}")
+    watch_points = [item for item in (analysis.get("watch_points") or []) if item][:2]
+    if watch_points:
+        pieces.append("观察重点：" + "；".join(_flatten(item) for item in watch_points))
+    risks = [item for item in (analysis.get("risks") or []) if item][:1]
+    if risks:
+        pieces.append("核心风险：" + _flatten(risks[0]))
+    return "。".join(pieces) if pieces else fallback
+
+
+def _llm_tags(analysis: dict[str, Any], fallback_tags: list[str]) -> list[str]:
+    tags: list[str] = []
+    verdict = _flatten(analysis.get("overall_verdict") or "").strip()
+    confidence = _flatten(analysis.get("confidence") or "").strip()
+    if verdict:
+        tags.append(verdict)
+    if confidence:
+        tags.append(f"AI置信度 {confidence}")
+    tags.extend([_flatten(item).strip() for item in fallback_tags if _flatten(item).strip()])
+    deduped: list[str] = []
+    for item in tags:
+        if item and item not in deduped:
+            deduped.append(item)
+    return deduped[:6]
+
+
+def _llm_section(title: str, payload: Any, fallback_tone: str = "neutral") -> dict[str, Any]:
+    section = payload if isinstance(payload, dict) else {}
+    verdict = _flatten(section.get("verdict") or "").strip()
+    return {
+        "title": title,
+        "verdict": verdict,
+        "tone": _llm_tone(verdict, fallback_tone),
+        "summary": _flatten(section.get("reason") or ""),
+        "action": _flatten(section.get("buyable") or ""),
+        "detail": "",
+        "basis": section.get("basis") or [],
+        "conditions": section.get("conditions") or [],
+    }
+
+
+def _llm_risk_section(risk: dict[str, Any], analysis: dict[str, Any]) -> dict[str, Any]:
+    risks = [_flatten(item).strip() for item in (analysis.get("risks") or []) if _flatten(item).strip()]
+    watch_points = [_flatten(item).strip() for item in (analysis.get("watch_points") or []) if _flatten(item).strip()]
+    basis = list(risk.get("basis") or [])
+    for item in risks:
+        if item not in basis:
+            basis.append(item)
+    conditions = list(risk.get("conditions") or [])
+    for item in watch_points:
+        if item not in conditions:
+            conditions.append(item)
+    return {
+        "title": "风控边界",
+        "verdict": risk.get("verdict") or "纪律优先",
+        "tone": risk.get("tone") or "caution",
+        "summary": risks[0] if risks else risk.get("summary", ""),
+        "action": risk.get("action") or "有信号也要先看失效价和承接，不在纪律缺口上硬执行。",
+        "detail": risk.get("detail", ""),
+        "basis": basis,
+        "conditions": conditions,
+    }
+
+
+def _llm_tone(verdict: str, fallback: str = "neutral") -> str:
+    text = _flatten(verdict).strip()
+    if not text:
+        return fallback
+    if any(token in text for token in ["重点", "可看", "可跟踪", "偏多", "主流", "充足"]):
+        return "positive"
+    if any(token in text for token in ["回避", "暂不", "风险", "偏空"]):
+        return "caution"
+    return "neutral"
 
 
 def _structure_summary(analysis: dict[str, Any]) -> dict[str, Any]:
@@ -702,7 +1191,7 @@ def _signal_short_label(signal: dict[str, Any]) -> str:
 
 
 def _catalyst_judgement(item: dict[str, Any]) -> dict[str, str]:
-    text = f"{_flatten(item.get('title') or '')} {_flatten(item.get('summary') or '')}"
+    text = f"{_flatten(item.get('title') or '')} {_flatten(item.get('summary') or '')}".strip()
     strong_words = ("国务院", "工信部", "发改委", "财政部", "政策", "规划", "产业化", "补贴", "并购重组")
     medium_words = ("订单", "业绩", "中标", "合同", "投产", "合作", "回购")
     if any(word in text for word in strong_words):

@@ -10,6 +10,10 @@ from .mx_provider import MXDataProvider, MXProviderError
 from .review_service import ReviewService
 from .smart_picker import SmartPickerService
 from .trading_profile import TradingProfileService
+from .watchtower_service import WatchtowerService
+
+TRADING_PROFILE_EXTERNAL_TIMEOUT_SECONDS = 3
+TRADING_PROFILE_AI_TIMEOUT_SECONDS = 2
 
 
 def create_app(
@@ -19,6 +23,7 @@ def create_app(
     picker_client: SmartPickerService | None = None,
     ai_client: ClaudeProfileExplainer | None = None,
     review_client: ReviewService | None = None,
+    watchtower_client: WatchtowerService | None = None,
 ):
     from pathlib import Path
 
@@ -28,15 +33,19 @@ def create_app(
     app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
     app.config["TEMPLATES_AUTO_RELOAD"] = True
     client = data_client or TushareClient()
-    mx_provider = mx_client or MXDataProvider()
-    trading_profile = profile_client or TradingProfileService(mx_data_provider=mx_provider)
+    mx_provider = mx_client or MXDataProvider(timeout_seconds=TRADING_PROFILE_EXTERNAL_TIMEOUT_SECONDS)
+    ai_explainer = ai_client or ClaudeProfileExplainer(timeout_seconds=TRADING_PROFILE_AI_TIMEOUT_SECONDS)
+    trading_profile = profile_client or TradingProfileService(mx_data_provider=mx_provider, ai_explainer=ai_explainer)
     smart_picker = picker_client or SmartPickerService(
         data_client=client,
         mx_data_provider=mx_provider,
         trading_profile=trading_profile,
     )
-    ai_explainer = ai_client or ClaudeProfileExplainer()
-    review_service = review_client or ReviewService(data_client=client)
+    review_service = review_client or ReviewService(data_client=client, ai_explainer=ClaudeProfileExplainer(timeout_seconds=25))
+    watchtower_service = watchtower_client or WatchtowerService(
+        data_client=client,
+        picker_client=smart_picker,
+    )
 
     def json_error(message: str, status_code: int):
         return jsonify({"error": {"message": message, "status_code": status_code}}), status_code
@@ -83,6 +92,15 @@ def create_app(
 
         try:
             stock = client.resolve_stock(query)
+            stock_payload = stock.as_dict()
+            try:
+                stock_payload["dc_concepts"] = client.get_stock_dc_concepts(stock.ts_code)
+            except DataProviderError:
+                stock_payload["dc_concepts"] = []
+            try:
+                stock_payload["bak_basic"] = client.get_stock_bak_basic(stock.ts_code)
+            except DataProviderError:
+                stock_payload["bak_basic"] = {}
             context_items = []
             for context_level in _higher_context_levels(level):
                 context_start, _context_end = default_date_range(context_level)
@@ -102,7 +120,7 @@ def create_app(
 
             klines = client.get_klines(stock.ts_code, level, start_date, end_date)
             result = analyze_klines(klines, level=level)
-            result["stock"] = stock.as_dict()
+            result["stock"] = stock_payload
             result["query"] = {
                 "level": level,
                 "level_label": LEVELS[level]["label"],
@@ -134,13 +152,62 @@ def create_app(
         payload = request.get_json(silent=True) or {}
         stock = payload.get("stock") or {}
         analysis = payload.get("analysis") or {}
+        include_mx_summary = payload.get("include_mx_summary", True)
         if not stock:
             return json_error("缺少股票信息，无法生成交易画像。", 400)
 
         try:
-            return jsonify(trading_profile.build(stock=stock, analysis=analysis))
+            return jsonify(trading_profile.build(stock=stock, analysis=analysis, include_mx_summary=bool(include_mx_summary)))
         except MXProviderError as exc:
             return json_error(exc.message, exc.status_code)
+
+    @app.post("/api/analysis/watchlist")
+    def analysis_watchlist_manage():
+        payload = request.get_json(silent=True) or {}
+        action = str(payload.get("action", "add") or "add").strip().lower()
+        stock = payload.get("stock") or {}
+        bak_basic = payload.get("bak_basic") or stock.get("bak_basic") or {}
+        target = (
+            str(stock.get("ts_code") or "").strip()
+            or str(stock.get("symbol") or "").strip()
+            or str(stock.get("name") or "").strip()
+        )
+        if not target:
+            return json_error("缺少股票信息，无法加入自选。", 400)
+
+        try:
+            watchlist_result = smart_picker.manage_watchlist(action=action, target=target)
+        except (DataProviderError, MXProviderError) as exc:
+            return json_error(exc.message, exc.status_code)
+
+        cache_result: dict[str, Any]
+        try:
+            cache_result = client.save_stock_basic_cache(stock=stock, bak_basic=bak_basic)
+        except DataProviderError as exc:
+            cache_result = {"status": "error", "message": exc.message}
+
+        watchtower_result: dict[str, Any]
+        try:
+            if action == "delete":
+                deleted = watchtower_service.store.delete_entry(str(stock.get("ts_code") or target).strip().upper())
+                watchtower_result = {"status": "ok", "deleted": deleted}
+            else:
+                watchtower_result = watchtower_service.track_stock(stock=stock, bak_basic=bak_basic)
+        except DataProviderError as exc:
+            watchtower_result = {"status": "error", "message": exc.message}
+
+        return jsonify(
+            {
+                **watchlist_result,
+                "stock": {
+                    "ts_code": stock.get("ts_code", ""),
+                    "symbol": stock.get("symbol", ""),
+                    "name": stock.get("name", ""),
+                },
+                "cache": cache_result,
+                "watchtower": watchtower_result,
+            }
+        )
 
     @app.get("/api/smart-picker/overview")
     def smart_picker_overview():
@@ -154,6 +221,7 @@ def create_app(
         payload = request.get_json(silent=True) or {}
         level = payload.get("level", "daily")
         limit = _safe_int(payload.get("limit"), 20, 1, 80)
+        source_type = str(payload.get("source_type", "")).strip().lower()
         query_text = payload.get("query_text", "")
         board_filters = [
             {
@@ -176,6 +244,9 @@ def create_app(
             },
         ]
         try:
+            if source_type == "watchlist":
+                watchlist_limit = None if payload.get("limit_all", False) else limit
+                return jsonify(smart_picker.screen_watchlist(level=level, limit=watchlist_limit))
             return jsonify(
                 smart_picker.screen_with_scopes(
                     query_text=query_text,
@@ -234,6 +305,53 @@ def create_app(
         trade_date = normalize_yyyymmdd(request.args.get("trade_date"))
         try:
             return jsonify(review_service.overview(trade_date=trade_date))
+        except DataProviderError as exc:
+            return json_error(exc.message, exc.status_code)
+
+    @app.post("/api/review/ai-brief")
+    def review_ai_brief():
+        payload = request.get_json(silent=True) or {}
+        review_payload = payload.get("review") or {}
+        if not review_payload:
+            return json_error("缺少复盘事实层数据，无法生成 AI 复盘结论。", 400)
+        try:
+            return jsonify(review_service.explain_overview(review_payload))
+        except AIProviderError as exc:
+            return json_error(exc.message, exc.status_code)
+
+    @app.get("/api/watchtower/overview")
+    def watchtower_overview():
+        query = request.args.get("q", "")
+        page = _safe_int(request.args.get("page"), 1, 1, 9999)
+        page_size = _safe_int(request.args.get("page_size"), 12, 1, 50)
+        try:
+            return jsonify(watchtower_service.overview(query=query, page=page, page_size=page_size))
+        except DataProviderError as exc:
+            return json_error(exc.message, exc.status_code)
+
+    @app.post("/api/watchtower/delete")
+    def watchtower_delete():
+        payload = request.get_json(silent=True) or {}
+        ts_code = str(payload.get("ts_code") or "").strip()
+        try:
+            return jsonify(watchtower_service.delete_stock(ts_code))
+        except (DataProviderError, MXProviderError) as exc:
+            return json_error(exc.message, exc.status_code)
+
+    @app.post("/api/watchtower/eastmoney-add")
+    def watchtower_eastmoney_add():
+        payload = request.get_json(silent=True) or {}
+        ts_code = str(payload.get("ts_code") or "").strip()
+        try:
+            return jsonify(watchtower_service.add_to_eastmoney_group(ts_code))
+        except (DataProviderError, MXProviderError) as exc:
+            return json_error(exc.message, exc.status_code)
+
+    @app.get("/api/watchtower/realtime")
+    def watchtower_realtime():
+        ts_code = str(request.args.get("ts_code") or "").strip()
+        try:
+            return jsonify(watchtower_service.realtime_detail(ts_code))
         except DataProviderError as exc:
             return json_error(exc.message, exc.status_code)
 

@@ -47,6 +47,7 @@ class FakeClient:
         self.calls = []
         self.board_last_search = None
         self.board_last_members = None
+        self.last_stock_basic_cache = None
 
     def search_stocks(self, query, limit=20):
         if query in {"平安", "000001", "平安银行"}:
@@ -100,6 +101,41 @@ class FakeClient:
         self.board_last_members = {"source": source, "ts_code": ts_code, "trade_date": trade_date}
         return [{"ts_code": ts_code, "con_code": "000001.SZ", "symbol": "000001", "name": "平安银行"}]
 
+    def get_stock_dc_concepts(self, ts_code, trade_date=None, limit=3):
+        return [
+            {
+                "theme_code": "000057.DC",
+                "theme_name": "AI 芯片",
+                "trade_date": "20260520",
+                "industry": "半导体",
+                "reason": "DDR5 与算力链共振",
+                "hot_num": "12",
+            }
+        ]
+
+    def get_stock_bak_basic(self, ts_code, trade_date=None):
+        return {
+            "trade_date": "20260522",
+            "ts_code": ts_code,
+            "area": "深圳",
+            "industry": "银行",
+            "pe": 6.8,
+            "pb": 0.62,
+            "total_share": 194.06,
+            "rev_yoy": 3.2,
+            "profit_yoy": 2.4,
+            "holder_num": 412345,
+        }
+
+    def save_stock_basic_cache(self, stock, bak_basic=None):
+        self.last_stock_basic_cache = {"stock": stock, "bak_basic": bak_basic}
+        return {
+            "status": "ok",
+            "message": "股票基础资料已写入 PostgreSQL 缓存。",
+            "ts_code": stock.get("ts_code", ""),
+            "trade_date": (bak_basic or {}).get("trade_date", ""),
+        }
+
 
 class FakeMxClient:
     def __init__(self):
@@ -126,8 +162,8 @@ class FakeProfileClient:
     def __init__(self):
         self.last_call = None
 
-    def build(self, stock, analysis):
-        self.last_call = {"stock": stock, "analysis": analysis}
+    def build(self, stock, analysis, include_mx_summary=True):
+        self.last_call = {"stock": stock, "analysis": analysis, "include_mx_summary": include_mx_summary}
         return {
             "stock": stock,
             "profile": {
@@ -145,6 +181,7 @@ class FakeProfileClient:
 class FakePickerClient:
     def __init__(self):
         self.last_screen = None
+        self.last_watchlist_screen = None
         self.last_candidate = None
         self.last_watchlist_action = None
 
@@ -200,6 +237,14 @@ class FakePickerClient:
             ],
             "errors": [],
         }
+
+    def screen_watchlist(self, level="daily", limit=None):
+        self.last_watchlist_screen = {"level": level, "limit": limit}
+        payload = self.screen_with_scopes(query_text="", level=level, limit=limit or 6, board_filters=None)
+        payload["source_type"] = "watchlist"
+        payload["description"] = "已把东方财富自选股同步为候选池。"
+        payload["watchlist"] = {"status": "ok", "label": "我的自选", "total": 1}
+        return payload
 
     def candidate_detail(self, stock=None, level="daily"):
         self.last_candidate = {"stock": stock, "level": level}
@@ -278,6 +323,7 @@ class FakeAIClient:
 class FakeReviewClient:
     def __init__(self):
         self.last_trade_date = None
+        self.last_ai_payload = None
 
     def overview(self, trade_date=None):
         self.last_trade_date = trade_date
@@ -328,6 +374,104 @@ class FakeReviewClient:
                 "watch_points": ["先看银行概念能否继续扩散。"],
                 "risk_points": ["若炸板增多，先回防守。"],
             },
+            "ai_review": {"status": "idle", "message": ""},
+        }
+
+    def explain_overview(self, review_payload):
+        self.last_ai_payload = review_payload
+        payload = dict(review_payload)
+        payload["ai_review"] = {
+            "status": "ok",
+            "provider": "Claude",
+            "model": "Claude Sonnet 4.6",
+            "analysis": {
+                "summary": "金融线更强，先看前排承接。",
+                "market_stage": "主流试错",
+                "watch_points": ["先看银行概念前排"],
+                "risk_points": ["若炸板扩散先防守"],
+            },
+        }
+        return payload
+
+
+class FakeWatchtowerStore:
+    def __init__(self):
+        self.deleted = []
+
+    def delete_entry(self, ts_code):
+        self.deleted.append(ts_code)
+        return True
+
+
+class FakeWatchtowerClient:
+    def __init__(self):
+        self.last_overview = None
+        self.last_delete = None
+        self.last_realtime = None
+        self.last_track = None
+        self.last_eastmoney_add = None
+        self.store = FakeWatchtowerStore()
+
+    def overview(self, query="", page=1, page_size=12):
+        self.last_overview = {"query": query, "page": page, "page_size": page_size}
+        return {
+            "status": "ok",
+            "query": query,
+            "page": page,
+            "page_size": page_size,
+            "total": 1,
+            "total_pages": 1,
+            "summary": {
+                "total": 1,
+                "strong_count": 1,
+                "absorb_count": 0,
+                "risk_count": 0,
+                "headline": "今天先盯强承接和主流先手。",
+                "action": "先盯强票。",
+                "realtime_error": "",
+            },
+            "items": [
+                {
+                    "stock": {"ts_code": "000001.SZ", "symbol": "000001", "name": "平安银行", "industry": "银行", "area": "深圳", "market": "主板"},
+                    "cache": {"trade_date": "20260525", "pe": 3.57, "pb": 0.45, "holder_num": 457610, "total_share": 194.06, "rev_yoy": 4.7, "profit_yoy": 3.0},
+                    "realtime": {"close": 11.23, "day_pct": 1.82, "open_pct": 0.42, "amplitude_pct": 2.16, "trade_time": "14:56:22"},
+                    "yangjia": {"label": "主流先手", "tone": "positive", "action": "先盯前排，不追后排。", "summary": "强于昨收。"},
+                }
+            ],
+            "realtime_error": "",
+        }
+
+    def delete_stock(self, ts_code=""):
+        self.last_delete = ts_code
+        return {
+            "status": "ok",
+            "deleted": True,
+            "stock": {"ts_code": ts_code, "name": "平安银行"},
+            "message": "已删除",
+        }
+
+    def realtime_detail(self, ts_code=""):
+        self.last_realtime = ts_code
+        return {
+            "status": "ok",
+            "stock": {"ts_code": ts_code, "symbol": "000001", "name": "平安银行", "industry": "银行"},
+            "cache": {"trade_date": "20260525", "holder_num": 457610},
+            "realtime": {"pre_close": 11.03, "open": 11.08, "high": 11.28, "low": 11.02, "close": 11.23, "day_pct": 1.82},
+            "yangjia": {"label": "主流先手", "tone": "positive", "action": "先盯前排，不追后排。", "summary": "强于昨收。"},
+            "realtime_error": "",
+        }
+
+    def track_stock(self, stock=None, bak_basic=None):
+        self.last_track = {"stock": stock, "bak_basic": bak_basic}
+        return {"status": "ok", "message": "智能盯盘数据库已更新。"}
+
+    def add_to_eastmoney_group(self, ts_code=""):
+        self.last_eastmoney_add = ts_code
+        return {
+            "status": "ok",
+            "group_name": "重点监控",
+            "stock": {"ts_code": ts_code, "name": "平安银行"},
+            "message": "平安银行 已加入东方财富自选组“重点监控”。",
         }
 
 
@@ -340,6 +484,7 @@ class ApiTest(unittest.TestCase):
         self.fake_picker = FakePickerClient()
         self.fake_ai = FakeAIClient()
         self.fake_review = FakeReviewClient()
+        self.fake_watchtower = FakeWatchtowerClient()
         self.app = create_app(
             data_client=self.fake,
             mx_client=self.fake_mx,
@@ -347,6 +492,7 @@ class ApiTest(unittest.TestCase):
             picker_client=self.fake_picker,
             ai_client=self.fake_ai,
             review_client=self.fake_review,
+            watchtower_client=self.fake_watchtower,
         ).test_client()
 
     def test_search_supports_fuzzy_name(self):
@@ -364,15 +510,22 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         data = response.get_json()
         self.assertEqual(data["stock"]["name"], "平安银行")
+        self.assertEqual(data["stock"]["dc_concepts"][0]["theme_name"], "AI 芯片")
+        self.assertEqual(data["stock"]["bak_basic"]["holder_num"], 412345)
         self.assertEqual(data["query"]["level"], "weekly")
         self.assertEqual(self.fake.last_call["start_date"], "20240101")
         self.assertIn("strokes", data)
         self.assertIn("segments", data)
         self.assertIn("trend", data)
         self.assertIn("level_context", data)
+        self.assertIn("ma_centers", data)
+        self.assertIn("ma_signals", data)
         self.assertEqual([item["level"] for item in data["level_context"]["items"]], ["monthly", "weekly"])
         self.assertEqual(len(data["indicators"]["macd"]), len(data["klines"]))
         self.assertEqual(len(data["indicators"]["bbi"]), len(data["klines"]))
+        self.assertEqual(len(data["indicators"]["ma5"]), len(data["klines"]))
+        self.assertEqual(len(data["indicators"]["ma10"]), len(data["klines"]))
+        self.assertEqual(len(data["indicators"]["ma20"]), len(data["klines"]))
 
     def test_board_search_supports_eastmoney_filters(self):
         response = self.app.get("/api/boards/search?q=小金属&type=concept&limit=8")
@@ -453,6 +606,20 @@ class ApiTest(unittest.TestCase):
         data = response.get_json()
         self.assertEqual(self.fake_profile.last_call["stock"]["name"], "平安银行")
         self.assertEqual(data["profile"]["stance_label"], "结构可看")
+        self.assertTrue(self.fake_profile.last_call["include_mx_summary"])
+
+    def test_trading_profile_supports_skipping_mx_summary(self):
+        response = self.app.post(
+            "/api/trading-profile",
+            json={
+                "stock": {"ts_code": "000001.SZ", "name": "平安银行", "symbol": "000001"},
+                "analysis": {"trend": {"label": "上涨趋势"}},
+                "include_mx_summary": False,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(self.fake_profile.last_call["include_mx_summary"])
 
     def test_trading_profile_requires_stock(self):
         response = self.app.post("/api/trading-profile", json={"analysis": {}})
@@ -507,6 +674,18 @@ class ApiTest(unittest.TestCase):
         used_sources = [item["source"] for item in self.fake_picker.last_screen["board_filters"] if item.get("name") or item.get("ts_code")]
         self.assertEqual(used_sources, ["tdx", "ths"])
 
+    def test_smart_picker_screen_watchlist_source(self):
+        response = self.app.post(
+            "/api/smart-picker/screen",
+            json={"source_type": "watchlist", "level": "weekly", "limit_all": True},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertEqual(self.fake_picker.last_watchlist_screen["level"], "weekly")
+        self.assertIsNone(self.fake_picker.last_watchlist_screen["limit"])
+        self.assertEqual(data["source_type"], "watchlist")
+
     def test_smart_picker_candidate_detail(self):
         response = self.app.post(
             "/api/smart-picker/candidate",
@@ -537,6 +716,61 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(self.fake_picker.last_watchlist_action["action"], "add")
         self.assertEqual(data["status"], "ok")
 
+    def test_analysis_watchlist_manage_and_cache(self):
+        response = self.app.post(
+            "/api/analysis/watchlist",
+            json={
+                "action": "add",
+                "stock": {
+                    "ts_code": "000001.SZ",
+                    "symbol": "000001",
+                    "name": "平安银行",
+                    "bak_basic": {"trade_date": "20260522", "holder_num": 412345},
+                },
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertEqual(self.fake_picker.last_watchlist_action["action"], "add")
+        self.assertEqual(self.fake.last_stock_basic_cache["stock"]["name"], "平安银行")
+        self.assertEqual(self.fake_watchtower.last_track["stock"]["name"], "平安银行")
+        self.assertEqual(data["cache"]["status"], "ok")
+        self.assertEqual(data["stock"]["ts_code"], "000001.SZ")
+        self.assertEqual(data["watchtower"]["status"], "ok")
+
+    def test_watchtower_overview(self):
+        response = self.app.get("/api/watchtower/overview?q=平安&page=2&page_size=8")
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertEqual(self.fake_watchtower.last_overview["query"], "平安")
+        self.assertEqual(self.fake_watchtower.last_overview["page"], 2)
+        self.assertEqual(self.fake_watchtower.last_overview["page_size"], 8)
+        self.assertEqual(data["items"][0]["yangjia"]["label"], "主流先手")
+
+    def test_watchtower_delete(self):
+        response = self.app.post("/api/watchtower/delete", json={"ts_code": "000001.SZ"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.fake_watchtower.last_delete, "000001.SZ")
+        self.assertTrue(response.get_json()["deleted"])
+
+    def test_watchtower_eastmoney_add(self):
+        response = self.app.post("/api/watchtower/eastmoney-add", json={"ts_code": "000001.SZ"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.fake_watchtower.last_eastmoney_add, "000001.SZ")
+        self.assertEqual(response.get_json()["group_name"], "重点监控")
+
+    def test_watchtower_realtime(self):
+        response = self.app.get("/api/watchtower/realtime?ts_code=000001.SZ")
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertEqual(self.fake_watchtower.last_realtime, "000001.SZ")
+        self.assertEqual(data["stock"]["name"], "平安银行")
+
     def test_smart_picker_ai_brief(self):
         response = self.app.post(
             "/api/smart-picker/ai-brief",
@@ -560,7 +794,27 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(data["status"], "ok")
         self.assertEqual(data["summary"]["dragon_count"], 12)
         self.assertEqual(data["focus_boards"][0]["name"], "银行概念")
+        self.assertEqual(data["ai_review"]["status"], "idle")
         self.assertEqual(self.fake_review.last_trade_date, "20260515")
+
+    def test_review_ai_brief(self):
+        response = self.app.post(
+            "/api/review/ai-brief",
+            json={
+                "review": {
+                    "status": "ok",
+                    "trade_date": "20260515",
+                    "focus_boards": [{"name": "银行概念"}],
+                    "focus_stocks": [{"ts_code": "000001.SZ", "name": "平安银行"}],
+                    "notes": {"summary": "今天最强先看银行概念。"},
+                }
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertEqual(data["ai_review"]["status"], "ok")
+        self.assertEqual(self.fake_review.last_ai_payload["trade_date"], "20260515")
 
 
 if __name__ == "__main__":

@@ -5,6 +5,7 @@ const state = {
   analysis: null,
   mxSummary: null,
   mxRequestId: 0,
+  analysisWatchlist: { status: "idle", message: "" },
   hoverIndex: null,
   viewStart: 0,
   visibleCount: 120,
@@ -25,9 +26,9 @@ const state = {
     overviewRequestId: 0,
     screenRequestId: 0,
     detailRequestId: 0,
-    watchlistRequestId: 0,
     aiRequestId: 0,
     focusReadyOnly: false,
+    marketScopeFilter: "all",
     structureFilter: "all",
     emotionFilter: "all",
     leaderFilter: "all",
@@ -51,17 +52,32 @@ const state = {
   review: {
     overview: null,
     requestId: 0,
+    aiRequestId: 0,
     loaded: false,
     modalKey: "",
     modalSearch: "",
     hotMoneyPage: 1,
     modalPage: 1,
   },
+  watchtower: {
+    overview: null,
+    requestId: 0,
+    loaded: false,
+    query: "",
+    page: 1,
+    modalDetail: null,
+    modalRequestId: 0,
+    syncingEastmoneyTsCode: "",
+    lastEastmoneyTsCode: "",
+    lastEastmoneyMessage: "",
+  },
 };
 
 const els = {
   mainMenu: document.querySelector("#mainMenu"),
   stockInput: document.querySelector("#stockInput"),
+  analysisWatchlistBtn: document.querySelector("#analysisWatchlistBtn"),
+  analysisWatchlistHint: document.querySelector("#analysisWatchlistHint"),
   suggestions: document.querySelector("#suggestions"),
   statusText: document.querySelector("#statusText"),
   stockBasics: document.querySelector("#stockBasics"),
@@ -85,6 +101,7 @@ const els = {
   metaStats: document.querySelector("#metaStats"),
   centerList: document.querySelector("#centerList"),
   mxDataBox: document.querySelector("#mxDataBox"),
+  leaderAnalysisBox: document.querySelector("#leaderAnalysisBox"),
   pages: document.querySelectorAll(".appPage"),
   pickerStatusText: document.querySelector("#pickerStatusText"),
   pickerOverviewBtn: document.querySelector("#pickerOverviewBtn"),
@@ -109,6 +126,7 @@ const els = {
   pickerLevel: document.querySelector("#pickerLevel"),
   pickerLimit: document.querySelector("#pickerLimit"),
   pickerRunBtn: document.querySelector("#pickerRunBtn"),
+  pickerMarketScopeFilter: document.querySelector("#pickerMarketScopeFilter"),
   pickerStructureFilter: document.querySelector("#pickerStructureFilter"),
   pickerEmotionFilter: document.querySelector("#pickerEmotionFilter"),
   pickerLeaderFilter: document.querySelector("#pickerLeaderFilter"),
@@ -121,7 +139,6 @@ const els = {
   pickerSideTabs: document.querySelector("#pickerSideTabs"),
   pickerMarketBox: document.querySelector("#pickerMarketBox"),
   pickerNewsBox: document.querySelector("#pickerNewsBox"),
-  pickerWatchlistBox: document.querySelector("#pickerWatchlistBox"),
   pickerTableBox: document.querySelector("#pickerTableBox"),
   pickerTableStatus: document.querySelector("#pickerTableStatus"),
   pickerResultMeta: document.querySelector("#pickerResultMeta"),
@@ -144,6 +161,21 @@ const els = {
   reviewModalMeta: document.querySelector("#reviewModalMeta"),
   reviewModalBody: document.querySelector("#reviewModalBody"),
   reviewModalCloseBtn: document.querySelector("#reviewModalCloseBtn"),
+  watchtowerStatusText: document.querySelector("#watchtowerStatusText"),
+  watchtowerQueryInput: document.querySelector("#watchtowerQueryInput"),
+  watchtowerSearchBtn: document.querySelector("#watchtowerSearchBtn"),
+  watchtowerRefreshBtn: document.querySelector("#watchtowerRefreshBtn"),
+  watchtowerErrorBox: document.querySelector("#watchtowerErrorBox"),
+  watchtowerSummaryBox: document.querySelector("#watchtowerSummaryBox"),
+  watchtowerTableStatus: document.querySelector("#watchtowerTableStatus"),
+  watchtowerResultMeta: document.querySelector("#watchtowerResultMeta"),
+  watchtowerTableBox: document.querySelector("#watchtowerTableBox"),
+  watchtowerGuideBox: document.querySelector("#watchtowerGuideBox"),
+  watchtowerModal: document.querySelector("#watchtowerModal"),
+  watchtowerModalTitle: document.querySelector("#watchtowerModalTitle"),
+  watchtowerModalMeta: document.querySelector("#watchtowerModalMeta"),
+  watchtowerModalBody: document.querySelector("#watchtowerModalBody"),
+  watchtowerModalCloseBtn: document.querySelector("#watchtowerModalCloseBtn"),
 };
 
 let searchTimer = null;
@@ -215,6 +247,7 @@ async function loadAnalysis() {
   setLoading(true);
   state.mxRequestId += 1;
   state.mxSummary = null;
+  state.analysisWatchlist = { status: "idle", message: "" };
   try {
     const data = await fetchJson(`/api/analysis?${params.toString()}`);
     state.analysis = data;
@@ -233,12 +266,32 @@ async function loadAnalysis() {
 }
 
 async function fetchJson(url, options = {}) {
-  const response = await fetch(url, options);
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(data.error?.message || `请求失败：${response.status}`);
+  const { timeoutMs = 0, timeoutMessage = "请求超时，请稍后重试。", ...fetchOptions } = options;
+  let controller = null;
+  let timeoutId = null;
+  if (timeoutMs > 0 && typeof AbortController !== "undefined") {
+    controller = new AbortController();
+    fetchOptions.signal = controller.signal;
+    timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
   }
-  return data;
+
+  try {
+    const response = await fetch(url, fetchOptions);
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(data.error?.message || `请求失败：${response.status}`);
+    }
+    return data;
+  } catch (err) {
+    if (err?.name === "AbortError") {
+      throw new Error(timeoutMessage);
+    }
+    throw err;
+  } finally {
+    if (timeoutId !== null) {
+      window.clearTimeout(timeoutId);
+    }
+  }
 }
 
 async function loadMxSummary(stock) {
@@ -248,16 +301,39 @@ async function loadMxSummary(stock) {
   renderMxData();
 
   try {
-    const data = await fetchJson("/api/trading-profile", {
+    const profilePromise = fetchJson("/api/trading-profile", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      timeoutMs: 8000,
+      timeoutMessage: "龙头分析加载超时，请稍后重试。",
       body: JSON.stringify({
         stock,
         analysis: state.analysis,
+        include_mx_summary: false,
       }),
     });
+    const mxCardsPromise = fetchJson(`/api/mx/summary?ts_code=${encodeURIComponent(stock.ts_code || "")}&name=${encodeURIComponent(stock.name || "")}`, {
+      timeoutMs: 8000,
+      timeoutMessage: "妙想数据加载超时，请稍后重试。",
+    });
+
+    const data = await profilePromise;
     if (requestId !== state.mxRequestId) return;
     state.mxSummary = { status: "ok", data };
+    renderMxData();
+
+    try {
+      const mxCards = await mxCardsPromise;
+      if (requestId !== state.mxRequestId || state.mxSummary?.status !== "ok") return;
+      state.mxSummary.data.mx_summary = { status: "ok", data: mxCards };
+    } catch (err) {
+      if (requestId !== state.mxRequestId || state.mxSummary?.status !== "ok") return;
+      state.mxSummary.data.mx_summary = {
+        status: "error",
+        message: err.message,
+        data: { cards: [] },
+      };
+    }
   } catch (err) {
     if (requestId !== state.mxRequestId) return;
     state.mxSummary = { status: "error", message: err.message };
@@ -290,6 +366,11 @@ function switchMainPage(targetId) {
     return;
   }
 
+  if (targetId === "watchtowerPage") {
+    ensureWatchtowerLoaded();
+    return;
+  }
+
   if (targetId === "reviewPage") {
     ensureReviewLoaded();
   }
@@ -307,6 +388,7 @@ function hideError() {
 
 function renderAll() {
   updateReplayControls();
+  renderAnalysisWatchlistAction();
   renderChart();
   renderLevelContext();
   renderStructureDetail();
@@ -315,6 +397,85 @@ function renderAll() {
   renderStats();
   renderCenters();
   renderMxData();
+  renderLeaderAnalysis();
+}
+
+function renderAnalysisWatchlistAction() {
+  if (!els.analysisWatchlistBtn || !els.analysisWatchlistHint) return;
+  const stock = state.analysis?.stock || null;
+  const watch = state.analysisWatchlist || { status: "idle", message: "" };
+  const stockName = stock?.name || stock?.symbol || "";
+
+  els.analysisWatchlistBtn.disabled = !stock || watch.status === "loading" || watch.status === "ok";
+  els.analysisWatchlistBtn.classList.toggle("active", watch.status === "ok");
+
+  if (!stock) {
+    els.analysisWatchlistBtn.textContent = "加入自选";
+    els.analysisWatchlistHint.textContent = "加入后会同步当前股票基础资料到 PostgreSQL 缓存。";
+    return;
+  }
+
+  if (watch.status === "loading") {
+    els.analysisWatchlistBtn.textContent = "加入中";
+    els.analysisWatchlistHint.textContent = `正在把 ${stockName} 加入自选，并同步基础资料缓存。`;
+    return;
+  }
+
+  if (watch.status === "ok") {
+    els.analysisWatchlistBtn.textContent = "已在自选";
+    const cache = watch.cache || {};
+    if (cache.status === "ok") {
+      els.analysisWatchlistHint.textContent = `${stockName} 已加入自选，基础资料已写入 PostgreSQL 缓存。`;
+    } else if (cache.status === "disabled") {
+      els.analysisWatchlistHint.textContent = `${stockName} 已加入自选；当前环境未配置 PostgreSQL 缓存。`;
+    } else if (cache.status === "error") {
+      els.analysisWatchlistHint.textContent = `${stockName} 已加入自选，但基础资料缓存写入失败：${cache.message || "未知错误"}`;
+    } else {
+      els.analysisWatchlistHint.textContent = `${stockName} 已加入自选。`;
+    }
+    return;
+  }
+
+  if (watch.status === "error") {
+    els.analysisWatchlistBtn.textContent = "加入自选";
+    els.analysisWatchlistHint.textContent = watch.message || "加入自选失败，请稍后重试。";
+    return;
+  }
+
+  els.analysisWatchlistBtn.textContent = "加入自选";
+  els.analysisWatchlistHint.textContent = `${stockName} 分析完成后，可以直接加入自选并同步基础资料缓存。`;
+}
+
+async function addCurrentAnalysisToWatchlist() {
+  const stock = state.analysis?.stock;
+  if (!stock || state.analysisWatchlist?.status === "loading" || state.analysisWatchlist?.status === "ok") {
+    return;
+  }
+
+  state.analysisWatchlist = { status: "loading", message: "" };
+  renderAnalysisWatchlistAction();
+  try {
+    const data = await fetchJson("/api/analysis/watchlist", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "add",
+        stock,
+        bak_basic: stock.bak_basic || {},
+      }),
+    });
+    state.analysisWatchlist = {
+      status: "ok",
+      message: data.message || "操作成功",
+      cache: data.cache || {},
+    };
+    if (state.watchtower.loaded || state.currentPage === "watchtowerPage") {
+      loadWatchtowerOverview(state.watchtower.page || 1);
+    }
+  } catch (err) {
+    state.analysisWatchlist = { status: "error", message: err.message };
+  }
+  renderAnalysisWatchlistAction();
 }
 
 function renderLevelContext() {
@@ -467,7 +628,7 @@ function renderStats() {
     ["中枢", counts.centers || 0],
     ["背驰", counts.divergences || 0],
     ["买卖点", counts.signals || 0],
-    ["成笔跨度", `${meta.min_raw_bars_per_stroke}根`],
+    ["成笔规则", "新笔延伸/结束"],
   ];
   els.metaStats.innerHTML = rows.map(([key, value]) => `<dt>${key}</dt><dd>${value}</dd>`).join("");
 }
@@ -545,6 +706,155 @@ function renderMxData() {
     .join("");
 }
 
+function renderLeaderAnalysis() {
+  if (!els.leaderAnalysisBox) return;
+  if (!state.analysis) {
+    els.leaderAnalysisBox.className = "empty";
+    els.leaderAnalysisBox.textContent = "分析完成后结合养家视角、结构、容量和 AI 补充判断是否属于龙头候选。";
+    return;
+  }
+
+  const summary = state.mxSummary;
+  if (!summary || summary.status === "loading") {
+    els.leaderAnalysisBox.className = "mxStack";
+    els.leaderAnalysisBox.innerHTML = `
+      <article class="profileCard stance-neutral">
+        <div class="profileHero">
+          <div>
+            <span class="profileEyebrow">龙头分析</span>
+            <h3>加载中</h3>
+          </div>
+        </div>
+        <div class="mxSkeleton"></div>
+        <div class="mxSkeleton short"></div>
+      </article>
+    `;
+    return;
+  }
+
+  if (summary.status === "error") {
+    els.leaderAnalysisBox.className = "mxError";
+    els.leaderAnalysisBox.textContent = summary.message || "龙头分析加载失败。";
+    return;
+  }
+
+  const leader = summary.data?.leader_profile;
+  if (!leader) {
+    els.leaderAnalysisBox.className = "empty";
+    els.leaderAnalysisBox.textContent = "当前没有可用的龙头分析结果。";
+    return;
+  }
+
+  const checklist = Array.isArray(leader.checklist) ? leader.checklist : [];
+  const tags = Array.isArray(leader.tags) ? leader.tags.filter(Boolean).slice(0, 4) : [];
+  const aiSection = leader.ai_section || null;
+
+  els.leaderAnalysisBox.className = "leaderStack";
+  els.leaderAnalysisBox.innerHTML = `
+    <article class="profileCard stance-${escapeHtml(toneToStance(leader.tone))}">
+      <div class="profileHero">
+        <div>
+          <span class="profileEyebrow">龙头分析</span>
+          <h3>${escapeHtml(leader.label || "先观察")}</h3>
+        </div>
+        <div class="profileTags">
+          ${tags.map((tag) => `<span>${escapeHtml(tag)}</span>`).join("")}
+        </div>
+      </div>
+      <p class="profileHeadline">${escapeHtml(leader.headline || "")}</p>
+      ${leader.action ? `<p class="profileDecisionLine">${escapeHtml(leader.action)}</p>` : ""}
+      ${leader.summary ? `<p class="profileConclusion">${escapeHtml(leader.summary)}</p>` : ""}
+      <div class="profileGrid">
+        ${renderLeaderBlock({
+          title: "龙头定位",
+          verdict: leader.verdict,
+          tone: leader.tone,
+          summary: leader.detail,
+          action: "",
+          basis: leader.basis,
+          conditions: [],
+        })}
+        ${renderLeaderBlock({
+          title: "退潮判断",
+          verdict: leader.retreat_label,
+          tone: toneFromRetreatLabel(leader.retreat_label),
+          summary: `龙头分 ${leader.score ?? "-"} · 退潮分 ${leader.topping_score ?? "-"}`,
+          action: "",
+          basis: [],
+          conditions: leader.conditions,
+        })}
+        ${
+          checklist.length
+            ? `
+              <div class="profileBlock tone-${escapeHtml(leader.tone || "neutral")}">
+                <div class="profileBlockHeader">
+                  <strong>龙头条件清单</strong>
+                  <span class="profileVerdict tone-${escapeHtml(leader.tone || "neutral")}">养家口径</span>
+                </div>
+                <div class="leaderChecklist">
+                  ${checklist
+                    .map(
+                      (item) => `
+                        <article class="leaderCheckItem status-${escapeHtml(item.status || "watch")}">
+                          <div class="leaderCheckHeader">
+                            <strong>${escapeHtml(item.label || "")}</strong>
+                            <span>${escapeHtml(item.status_label || "")}</span>
+                          </div>
+                          <p>${escapeHtml(item.detail || "")}</p>
+                        </article>
+                      `
+                    )
+                    .join("")}
+                </div>
+              </div>
+            `
+            : ""
+        }
+        ${aiSection ? renderLeaderBlock(aiSection) : ""}
+      </div>
+    </article>
+  `;
+}
+
+function renderLeaderBlock(item) {
+  if (!item) return "";
+  return `
+    <div class="profileBlock tone-${escapeHtml(item.tone || "neutral")}">
+      <div class="profileBlockHeader">
+        <strong>${escapeHtml(item.title || "")}</strong>
+        ${item.verdict ? `<span class="profileVerdict tone-${escapeHtml(item.tone || "neutral")}">${escapeHtml(item.verdict)}</span>` : ""}
+      </div>
+      ${item.summary ? `<p>${escapeHtml(item.summary)}</p>` : ""}
+      ${item.action ? `<p class="profileAction">${escapeHtml(item.action)}</p>` : ""}
+      ${item.detail ? `<small>${escapeHtml(item.detail)}</small>` : ""}
+      ${Array.isArray(item.basis) && item.basis.length ? `
+        <div class="profileList">
+          <span>判断依据</span>
+          <ul>${item.basis.map((basis) => `<li>${escapeHtml(basis)}</li>`).join("")}</ul>
+        </div>
+      ` : ""}
+      ${Array.isArray(item.conditions) && item.conditions.length ? `
+        <div class="profileList">
+          <span>观察条件</span>
+          <ul>${item.conditions.map((condition) => `<li>${escapeHtml(condition)}</li>`).join("")}</ul>
+        </div>
+      ` : ""}
+    </div>
+  `;
+}
+
+function toneToStance(tone) {
+  if (tone === "positive") return "positive";
+  if (tone === "caution") return "caution";
+  return "neutral";
+}
+
+function toneFromRetreatLabel(label) {
+  if (label === "疑似退潮见顶") return "caution";
+  if (label === "退潮观察") return "neutral";
+  return "positive";
+}
+
 function renderAnalysisBasics() {
   if (!els.stockBasics) return;
   const stock = state.analysis?.stock;
@@ -557,28 +867,89 @@ function renderAnalysisBasics() {
   const quoteRow = mxSummaryRow("quote");
   const valuationRow = mxSummaryRow("valuation");
   const companyRow = mxSummaryRow("company_profile");
+  const bakBasic = stock?.bak_basic || {};
   const loading = !!state.analysis && (!state.mxSummary || state.mxSummary.status === "loading");
 
-  const basics = [
-    ["换手率", metricValue(quoteRow, ["换手率"]) || loadingText(loading)],
-    ["总市值", metricValue(valuationRow, ["总市值"]) || loadingText(loading)],
-    ["行业 / 题材", buildIndustryConceptText(stock, currentProfilePayload(), companyRow)],
-    ["所属地区", stock.area || "待补充"],
-    ["股东数", metricValue(companyRow, ["股东户数", "股东数", "股东人数"]) || "待补充"],
-    ["主营业务", metricValue(companyRow, ["主营业务", "主营"]) || "待补充"],
+  const compactMetrics = [
+    {
+      label: "换手率",
+      value: metricValue(quoteRow, ["换手率"]) || loadingText(loading),
+      hint: "盘口活跃度",
+    },
+    {
+      label: "总市值",
+      value: metricValue(valuationRow, ["总市值"]) || loadingText(loading),
+      hint: "容量与风格定位",
+    },
+    {
+      label: "PE / PB",
+      value: buildPePbText(bakBasic),
+      hint: "来自 Tushare bak_basic",
+    },
+    {
+      label: "所属地区",
+      value: stock.area || bakBasic.area || "待补充",
+      hint: "",
+    },
+    {
+      label: "股东人数",
+      value: buildHolderText(companyRow, bakBasic, loading),
+      hint: bakBasic.trade_date ? `截至 ${formatDate(bakBasic.trade_date)}` : "",
+    },
+    {
+      label: "总股本",
+      value: buildTotalShareText(bakBasic),
+      hint: "",
+    },
+    {
+      label: "营收 / 利润同比",
+      value: buildGrowthText(bakBasic),
+      hint: "",
+    },
+  ];
+
+  const highlightMetrics = [
+    {
+      label: "行业 / 题材",
+      value: buildIndustryConceptText(stock, currentProfilePayload(), companyRow),
+      hint: "先看题材归属，再看它是不是主流前排。",
+    },
+    {
+      label: "主营业务",
+      value: buildBusinessText(companyRow, stock),
+      hint: "这里保留事实描述，避免把业务说明挤占主图空间。",
+    },
   ];
 
   els.stockBasics.hidden = false;
-  els.stockBasics.innerHTML = basics
-    .map(
-      ([label, value]) => `
-        <article class="stockBasicItem">
-          <span>${escapeHtml(label)}</span>
-          <strong>${escapeHtml(value)}</strong>
-        </article>
-      `
-    )
-    .join("");
+  els.stockBasics.innerHTML = `
+    <section class="stockCompactGrid">
+      ${compactMetrics
+        .map(
+          (item) => `
+            <article class="stockCompactMetric">
+              <span>${escapeHtml(item.label)}</span>
+              <strong>${escapeHtml(item.value)}</strong>
+              ${item.hint ? `<small>${escapeHtml(item.hint)}</small>` : ""}
+            </article>
+          `
+        )
+        .join("")}
+    </section>
+    <section class="stockHighlightGrid">
+      ${highlightMetrics
+        .map(
+          (item) => `
+            <article class="stockHighlightCard">
+              <span>${escapeHtml(item.label)}</span>
+              <strong>${escapeHtml(item.value)}</strong>
+              ${item.hint ? `<em>${escapeHtml(item.hint)}</em>` : ""}
+            </article>
+          `
+        )
+        .join("")}
+    </section>
+  `;
 }
 
 function loadingText(loading) {
@@ -610,11 +981,66 @@ function metricValue(row, labels) {
 
 function buildIndustryConceptText(stock, payload, companyRow) {
   const industry = stock?.industry || "待补充";
+  const tushareConcepts = Array.isArray(stock?.dc_concepts) ? stock.dc_concepts : [];
+  const themeNames = tushareConcepts
+    .map((item) => item.theme_name || "")
+    .filter((value) => value && !/^[0-9]{6}\.DC$/i.test(value))
+    .slice(0, 2);
+  if (themeNames.length) return `${industry} · ${themeNames.join(" / ")}`;
   const concept = metricValue(companyRow, ["所属概念", "题材", "概念"]);
   if (concept) return `${industry} · ${concept}`;
   const emotionLabel = payload?.profile?.emotion?.label || "";
   if (!emotionLabel) return industry;
   return `${industry} · ${emotionLabel}`;
+}
+
+function buildBusinessText(companyRow, stock) {
+  const business = metricValue(companyRow, ["主营业务", "主营"]);
+  if (business) return business;
+  const tushareConcepts = Array.isArray(stock?.dc_concepts) ? stock.dc_concepts : [];
+  const reason = tushareConcepts.map((item) => item.reason || "").find(Boolean);
+  return reason || "待补充";
+}
+
+function buildPePbText(bakBasic) {
+  const pe = formatBakMetric(bakBasic?.pe, "");
+  const pb = formatBakMetric(bakBasic?.pb, "");
+  if (pe && pb) return `${pe} / ${pb}`;
+  if (pe) return `${pe} / -`;
+  if (pb) return `- / ${pb}`;
+  return "待补充";
+}
+
+function buildHolderText(companyRow, bakBasic, loading) {
+  const rowValue = metricValue(companyRow, ["股东户数", "股东数", "股东人数"]);
+  if (rowValue) return rowValue;
+  const holderNum = formatBakMetric(bakBasic?.holder_num, "户", 0);
+  return holderNum || loadingText(loading);
+}
+
+function buildTotalShareText(bakBasic) {
+  return formatBakMetric(bakBasic?.total_share, "亿股", 2) || "待补充";
+}
+
+function buildGrowthText(bakBasic) {
+  const rev = formatBakMetric(bakBasic?.rev_yoy, "%", 1);
+  const profit = formatBakMetric(bakBasic?.profit_yoy, "%", 1);
+  if (rev && profit) return `${rev} / ${profit}`;
+  if (rev) return `${rev} / -`;
+  if (profit) return `- / ${profit}`;
+  return "待补充";
+}
+
+function formatBakMetric(value, suffix = "", digits = 2) {
+  if (value === null || value === undefined || value === "") return "";
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return String(value).trim();
+  const text = digits <= 0 ? `${Math.round(parsed)}` : trimZeroes(parsed.toFixed(digits));
+  return `${text}${suffix}`;
+}
+
+function trimZeroes(value) {
+  return String(value).replace(/\.0+$/, "").replace(/(\.\d*?)0+$/, "$1");
 }
 
 function renderMxCard(card) {
@@ -642,7 +1068,10 @@ function renderMxCard(card) {
 
 function renderProfileCard(profile) {
   if (!profile) return "";
-  const sections = [profile.structure, profile.emotion, profile.capacity, profile.risk]
+  const aiSummary = profile.ai_summary || null;
+  const sections = (Array.isArray(profile.ai_sections) && profile.ai_sections.length
+    ? profile.ai_sections
+    : [profile.structure, profile.emotion, profile.capacity, profile.risk])
     .filter(Boolean)
     .map(
       (item) => `
@@ -682,6 +1111,15 @@ function renderProfileCard(profile) {
           ${(profile.tags || []).slice(0, 4).map((tag) => `<span>${escapeHtml(tag)}</span>`).join("")}
         </div>
       </div>
+      ${
+        aiSummary
+          ? `<p class="mxEntity">${escapeHtml(
+              [aiSummary.provider || "AI", aiSummary.model || "", aiSummary.confidence ? `置信度 ${aiSummary.confidence}` : ""]
+                .filter(Boolean)
+                .join(" · ")
+            )}</p>`
+          : ""
+      }
       <p class="profileHeadline">${escapeHtml(profile.headline || "")}</p>
       ${profile.decision ? `<p class="profileDecisionLine">${escapeHtml(profile.decision)}</p>` : ""}
       <p class="profileConclusion">${escapeHtml(profile.conclusion || "")}</p>
@@ -804,6 +1242,7 @@ function ensureReviewLoaded() {
 }
 
 function syncPickerFiltersFromControls() {
+  state.smartPicker.marketScopeFilter = els.pickerMarketScopeFilter?.value || "all";
   state.smartPicker.structureFilter = els.pickerStructureFilter?.value || "all";
   state.smartPicker.emotionFilter = els.pickerEmotionFilter?.value || "all";
   state.smartPicker.leaderFilter = els.pickerLeaderFilter?.value || "all";
@@ -836,22 +1275,45 @@ async function loadPickerOverview() {
 }
 
 async function loadPickerWatchlist() {
-  const requestId = ++state.smartPicker.watchlistRequestId;
-  state.smartPicker.watchlist = { status: "loading" };
-  renderPickerWatchlist();
+  const requestId = ++state.smartPicker.screenRequestId;
+  const level = els.pickerLevel?.value || "daily";
+  state.smartPicker.screen = { status: "loading", source_type: "watchlist" };
+  state.smartPicker.detail = null;
+  state.smartPicker.ai = null;
+  state.smartPicker.selectedTsCode = "";
+  renderPickerTable();
+  renderPickerDetail();
   hidePickerError();
+  setPickerStatus("正在同步我的自选股，并逐只生成结构候选池...");
 
   try {
-    const data = await fetchJson("/api/smart-picker/watchlist");
-    if (requestId !== state.smartPicker.watchlistRequestId) return;
-    state.smartPicker.watchlist = data;
+    const data = await fetchJson("/api/smart-picker/screen", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        source_type: "watchlist",
+        level,
+        limit_all: true,
+      }),
+    });
+    if (requestId !== state.smartPicker.screenRequestId) return;
+    state.smartPicker.screen = data;
+    state.smartPicker.watchlist = data.watchlist || null;
+    const count = (data.candidates || []).length;
+    const total = data.total || data.source_total || count;
+    setPickerStatus(
+      count
+        ? `已把 ${total} 只自选股同步到候选池，当前生成 ${count} 只结构分析。`
+        : "自选股已同步，但当前没有生成可用候选。"
+    );
   } catch (err) {
-    if (requestId !== state.smartPicker.watchlistRequestId) return;
+    if (requestId !== state.smartPicker.screenRequestId) return;
+    state.smartPicker.screen = { status: "error", source_type: "watchlist", message: err.message };
     state.smartPicker.watchlist = { status: "error", message: err.message, items: [] };
     showPickerError(err.message);
   }
 
-  renderPickerWatchlist();
+  renderPickerTable();
   renderPickerDetail();
 }
 
@@ -1068,7 +1530,9 @@ async function managePickerWatchlist(action, target) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action, target }),
     });
-    await loadPickerWatchlist();
+    if (state.smartPicker.screen?.source_type === "watchlist") {
+      await loadPickerWatchlist();
+    }
     if (state.smartPicker.detail?.stock) {
       await loadPickerCandidateDetail(state.smartPicker.detail.stock);
     }
@@ -1110,6 +1574,399 @@ function openReviewStockInAnalysis(rowOrPayload) {
 function resolveReviewStockCode(row) {
   if (!row) return "";
   return String(row.ts_code || row.code || row.con_code || row.symbol || "").trim();
+}
+
+async function ensureWatchtowerLoaded() {
+  if (state.watchtower.loaded && state.watchtower.overview) {
+    renderWatchtower();
+    return;
+  }
+  await loadWatchtowerOverview(1);
+}
+
+async function loadWatchtowerOverview(page = 1) {
+  state.watchtower.requestId += 1;
+  const requestId = state.watchtower.requestId;
+  state.watchtower.page = Math.max(1, intValue(page) || 1);
+  state.watchtower.query = els.watchtowerQueryInput?.value.trim() || state.watchtower.query || "";
+  hideWatchtowerError();
+  if (els.watchtowerStatusText) {
+    els.watchtowerStatusText.textContent = "正在按数据库自选股加载盯盘列表与实时日线。";
+  }
+  if (els.watchtowerSummaryBox) {
+    els.watchtowerSummaryBox.innerHTML = `
+      <article class="reviewStatCard loading"><div class="mxSkeleton"></div></article>
+      <article class="reviewStatCard loading"><div class="mxSkeleton"></div></article>
+      <article class="reviewStatCard loading"><div class="mxSkeleton"></div></article>
+      <article class="reviewStatCard loading"><div class="mxSkeleton"></div></article>
+    `;
+  }
+  if (els.watchtowerTableBox) {
+    els.watchtowerTableBox.innerHTML = `<div class="empty">正在加载智能盯盘列表...</div>`;
+  }
+  try {
+    const params = new URLSearchParams({
+      q: state.watchtower.query,
+      page: String(state.watchtower.page),
+      page_size: "12",
+    });
+    const data = await fetchJson(`/api/watchtower/overview?${params.toString()}`);
+    if (requestId !== state.watchtower.requestId) return;
+    state.watchtower.overview = data;
+    state.watchtower.loaded = true;
+    renderWatchtower();
+  } catch (err) {
+    if (requestId !== state.watchtower.requestId) return;
+    state.watchtower.overview = null;
+    showWatchtowerError(err.message);
+    if (els.watchtowerSummaryBox) {
+      els.watchtowerSummaryBox.innerHTML = "";
+    }
+    if (els.watchtowerTableBox) {
+      els.watchtowerTableBox.innerHTML = `<div class="empty">智能盯盘加载失败。</div>`;
+    }
+  }
+}
+
+function renderWatchtower() {
+  renderWatchtowerSummary();
+  renderWatchtowerTable();
+  renderWatchtowerGuide();
+}
+
+function renderWatchtowerSummary() {
+  if (!els.watchtowerSummaryBox) return;
+  const overview = state.watchtower.overview;
+  if (!overview || overview.status !== "ok") {
+    els.watchtowerSummaryBox.innerHTML = `<article class="reviewStatCard"><span>智能盯盘</span><strong>--</strong><p>等待数据库自选股加载。</p></article>`;
+    return;
+  }
+  const summary = overview.summary || {};
+  const cards = [
+    { label: "数据库自选", value: intValue(summary.total), note: "数据库里当前可盯的自选股数量" },
+    { label: "主流先手", value: intValue(summary.strong_count), note: "强于昨收且日内收在高位附近" },
+    { label: "分歧承接", value: intValue(summary.absorb_count), note: "盘中有分歧，但承接还在" },
+    { label: "兑现回避", value: intValue(summary.risk_count), note: summary.realtime_error || "收弱或日内回落明显，先别硬接" },
+  ];
+  els.watchtowerSummaryBox.innerHTML = cards
+    .map(
+      (card) => `
+        <article class="reviewStatCard">
+          <span>${escapeHtml(card.label)}</span>
+          <strong>${escapeHtml(String(card.value))}</strong>
+          <p>${escapeHtml(card.note)}</p>
+        </article>
+      `
+    )
+    .join("");
+  if (els.watchtowerStatusText) {
+    els.watchtowerStatusText.textContent = summary.headline || "先盯强承接，再看弱转强。";
+  }
+}
+
+function renderWatchtowerTable() {
+  if (!els.watchtowerTableBox || !els.watchtowerResultMeta || !els.watchtowerTableStatus) return;
+  const overview = state.watchtower.overview;
+  if (!overview || overview.status !== "ok") {
+    els.watchtowerTableStatus.textContent = "等待智能盯盘数据。";
+    els.watchtowerResultMeta.textContent = "还没有可展示的数据库自选股。";
+    els.watchtowerTableBox.innerHTML = `<div class="empty">等待智能盯盘数据。</div>`;
+    return;
+  }
+  const items = overview.items || [];
+  els.watchtowerTableStatus.textContent = state.watchtower.lastEastmoneyMessage || overview.summary?.action || "先看强弱，再看承接。";
+  els.watchtowerResultMeta.textContent = `匹配 ${intValue(overview.total)} 只 · 第 ${intValue(overview.page)} / ${intValue(overview.total_pages)} 页`;
+  if (!items.length) {
+    els.watchtowerTableBox.innerHTML = `<div class="empty">当前没有匹配的数据库自选股。</div>`;
+    return;
+  }
+
+  els.watchtowerTableBox.innerHTML = `
+    <div class="watchtowerTable">
+      ${items.map((item) => renderWatchtowerRow(item)).join("")}
+    </div>
+    ${renderWatchtowerPager(overview)}
+  `;
+}
+
+function renderWatchtowerRow(item) {
+  const stock = item.stock || {};
+  const realtime = item.realtime || {};
+  const cache = item.cache || {};
+  const yangjia = item.yangjia || {};
+  const tsCode = String(stock.ts_code || "").trim();
+  const syncing = state.watchtower.syncingEastmoneyTsCode === tsCode;
+  const synced = state.watchtower.lastEastmoneyTsCode === tsCode;
+  const eastmoneyLabel = syncing ? "加入中" : synced ? "已加入东财" : "加入东财";
+  const tradeTime = realtime.trade_time ? ` · ${escapeHtml(realtime.trade_time)}` : "";
+  return `
+    <article class="watchtowerRow">
+      <div class="watchtowerStockCol">
+        <button type="button" class="watchtowerStockButton" data-watchtower-open="1" data-ts-code="${escapeHtml(stock.ts_code || "")}">
+          <strong>${escapeHtml(stock.name || stock.symbol || stock.ts_code || "-")}</strong>
+          <span>${escapeHtml(stock.ts_code || "")} · ${escapeHtml(stock.industry || cache.industry || "行业待补充")}</span>
+        </button>
+        <small>${escapeHtml(stock.area || "区域待补充")} · ${escapeHtml(stock.market || "市场待补充")}</small>
+      </div>
+      <div class="watchtowerSignalCol">
+        <span class="watchtowerBadge tone-${escapeHtml(yangjia.tone || "neutral")}">${escapeHtml(yangjia.label || "轮动观察")}</span>
+        <strong>${escapeHtml(yangjia.action || "先看，不追。")}</strong>
+        <p>${escapeHtml(yangjia.summary || "")}</p>
+      </div>
+      <div class="watchtowerRealtimeCol">
+        <strong>${formatPrice(realtime.close)}</strong>
+        <span class="${Number(realtime.day_pct || 0) >= 0 ? "textSell" : "textBuy"}">${formatSignedPercentValue(realtime.day_pct)}</span>
+        <small>开 ${formatSignedPercentValue(realtime.open_pct)} · 振幅 ${formatSignedPercentValue(realtime.amplitude_pct)}${tradeTime}</small>
+      </div>
+      <div class="watchtowerCacheCol">
+        <strong>PE / PB ${formatCompactValue(cache.pe)} / ${formatCompactValue(cache.pb)}</strong>
+        <span>股东 ${formatHolderCount(cache.holder_num)} · 总股本 ${formatCompactShare(cache.total_share)}</span>
+        <small>营收 / 利润同比 ${formatSignedCompact(cache.rev_yoy)} / ${formatSignedCompact(cache.profit_yoy)}</small>
+      </div>
+      <div class="watchtowerActionCol">
+        <button type="button" class="ghostButton miniButton" data-watchtower-open="1" data-ts-code="${escapeHtml(tsCode)}">实时日线</button>
+        <button type="button" class="ghostButton miniButton accentButton" data-watchtower-eastmoney-add="1" data-ts-code="${escapeHtml(tsCode)}" ${syncing ? "disabled" : ""}>${escapeHtml(eastmoneyLabel)}</button>
+        <button type="button" class="ghostButton miniButton" data-watchtower-analysis="1" data-ts-code="${escapeHtml(tsCode)}" data-name="${escapeHtml(stock.name || "")}" data-symbol="${escapeHtml(stock.symbol || "")}">股票分析</button>
+        <button type="button" class="ghostButton miniButton dangerButton" data-watchtower-delete="1" data-ts-code="${escapeHtml(tsCode)}">删除</button>
+      </div>
+    </article>
+  `;
+}
+
+function renderWatchtowerPager(overview) {
+  const total = intValue(overview.total);
+  const totalPages = intValue(overview.total_pages);
+  const page = intValue(overview.page);
+  const pageSize = intValue(overview.page_size) || 12;
+  if (!total || totalPages <= 1) return "";
+  const start = (page - 1) * pageSize + 1;
+  const end = Math.min(total, page * pageSize);
+  return `
+    <div class="reviewPager">
+      <small>第 ${page} / ${totalPages} 页 · 显示 ${start}-${end} / ${total}</small>
+      <div class="reviewPagerActions">
+        <button type="button" class="ghostButton miniButton" data-watchtower-page="${page - 1}" ${page <= 1 ? "disabled" : ""}>上一页</button>
+        <button type="button" class="ghostButton miniButton" data-watchtower-page="${page + 1}" ${page >= totalPages ? "disabled" : ""}>下一页</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderWatchtowerGuide() {
+  if (!els.watchtowerGuideBox) return;
+  const summary = state.watchtower.overview?.summary || {};
+  els.watchtowerGuideBox.className = "watchtowerGuideStack";
+  els.watchtowerGuideBox.innerHTML = `
+    <article class="reviewFocusItem reviewFocusHero">
+      <div class="reviewFocusHeroHeader">
+        <strong>今天先盯什么</strong>
+        <span class="reviewBadge">${escapeHtml(summary.strong_count || 0)} 强 / ${escapeHtml(summary.absorb_count || 0)} 承接</span>
+      </div>
+      <p>${escapeHtml(summary.headline || "先看最强，再看分歧承接。")}</p>
+      <div class="reviewBulletListWrap">
+        <ul class="reviewBulletList">
+          <li>${escapeHtml(summary.action || "先看强票和承接。")}</li>
+          <li>养家视角先问有没有主流、有没有承接，再问是不是值得出手。</li>
+          <li>后排、缩量、收弱的票先别脑补成龙头。</li>
+        </ul>
+      </div>
+      ${summary.realtime_error ? `<p class="watchtowerWarnText">实时日线提示：${escapeHtml(summary.realtime_error)}</p>` : ""}
+    </article>
+  `;
+}
+
+function showWatchtowerError(message) {
+  if (!els.watchtowerErrorBox) return;
+  els.watchtowerErrorBox.hidden = false;
+  els.watchtowerErrorBox.textContent = message;
+}
+
+function hideWatchtowerError() {
+  if (!els.watchtowerErrorBox) return;
+  els.watchtowerErrorBox.hidden = true;
+  els.watchtowerErrorBox.textContent = "";
+}
+
+async function openWatchtowerRealtimeModal(tsCode) {
+  if (!tsCode || !els.watchtowerModal || !els.watchtowerModalBody) return;
+  state.watchtower.modalRequestId += 1;
+  const requestId = state.watchtower.modalRequestId;
+  state.watchtower.modalDetail = null;
+  els.watchtowerModalTitle.textContent = "实时日线";
+  els.watchtowerModalMeta.textContent = "正在拉取 rt_k 实时日线...";
+  els.watchtowerModalBody.innerHTML = `<div class="empty">正在加载实时日线...</div>`;
+  els.watchtowerModal.hidden = false;
+  document.body.classList.add("modalOpen");
+  try {
+    const data = await fetchJson(`/api/watchtower/realtime?ts_code=${encodeURIComponent(tsCode)}`);
+    if (requestId !== state.watchtower.modalRequestId) return;
+    state.watchtower.modalDetail = data;
+    renderWatchtowerModalDetail();
+  } catch (err) {
+    if (requestId !== state.watchtower.modalRequestId) return;
+    els.watchtowerModalTitle.textContent = "实时日线";
+    els.watchtowerModalMeta.textContent = "实时日线加载失败";
+    els.watchtowerModalBody.innerHTML = `<div class="empty">${escapeHtml(err.message)}</div>`;
+  }
+}
+
+async function addWatchtowerStockToEastmoney(tsCode) {
+  const cleanedCode = String(tsCode || "").trim();
+  if (!cleanedCode || state.watchtower.syncingEastmoneyTsCode === cleanedCode) return;
+  state.watchtower.syncingEastmoneyTsCode = cleanedCode;
+  state.watchtower.lastEastmoneyMessage = "";
+  renderWatchtowerTable();
+  hideWatchtowerError();
+  try {
+    const data = await fetchJson("/api/watchtower/eastmoney-add", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      timeoutMs: 12000,
+      timeoutMessage: "加入东方财富自选超时，请稍后重试。",
+      body: JSON.stringify({ ts_code: cleanedCode }),
+    });
+    state.watchtower.lastEastmoneyTsCode = cleanedCode;
+    state.watchtower.lastEastmoneyMessage = data.message || "已加入东方财富重点监控。";
+    if (els.watchtowerStatusText) {
+      els.watchtowerStatusText.textContent = state.watchtower.lastEastmoneyMessage;
+    }
+  } catch (err) {
+    showWatchtowerError(err.message);
+  } finally {
+    state.watchtower.syncingEastmoneyTsCode = "";
+    renderWatchtowerTable();
+  }
+}
+
+function renderWatchtowerModalDetail() {
+  if (!els.watchtowerModalBody || !els.watchtowerModalTitle || !els.watchtowerModalMeta) return;
+  const detail = state.watchtower.modalDetail;
+  if (!detail || detail.status !== "ok") {
+    els.watchtowerModalBody.innerHTML = `<div class="empty">实时日线暂无数据。</div>`;
+    return;
+  }
+  const stock = detail.stock || {};
+  const realtime = detail.realtime || {};
+  const yangjia = detail.yangjia || {};
+  const cache = detail.cache || {};
+  els.watchtowerModalTitle.textContent = `${stock.name || stock.symbol || stock.ts_code || "实时日线"} · ${stock.ts_code || ""}`;
+  els.watchtowerModalMeta.textContent = detail.realtime_error
+    ? `实时日线降级展示 · ${detail.realtime_error}`
+    : `实时日线 · ${realtime.trade_time || "当日最新"} · 养家视角`;
+  els.watchtowerModalBody.innerHTML = `
+    <section class="watchtowerModalGrid">
+      <article class="watchtowerRealtimeHero tone-${escapeHtml(yangjia.tone || "neutral")}">
+        <div class="watchtowerRealtimeHeadline">
+          <div>
+            <span class="watchtowerBadge tone-${escapeHtml(yangjia.tone || "neutral")}">${escapeHtml(yangjia.label || "轮动观察")}</span>
+            <h3>${escapeHtml(yangjia.action || "先看，不追。")}</h3>
+            <p>${escapeHtml(yangjia.summary || "")}</p>
+          </div>
+          <div class="watchtowerRealtimePrice">
+            <strong>${formatPrice(realtime.close)}</strong>
+            <span class="${Number(realtime.day_pct || 0) >= 0 ? "textSell" : "textBuy"}">${formatSignedPercentValue(realtime.day_pct)}</span>
+          </div>
+        </div>
+        <div class="watchtowerRealtimeCanvas">
+          ${renderWatchtowerCandleSvg(realtime)}
+        </div>
+      </article>
+      <article class="watchtowerRealtimeStats">
+        <h3>实时日线</h3>
+        <dl class="miniStats watchtowerMetricList">
+          <dt>昨收</dt><dd>${formatPrice(realtime.pre_close)}</dd>
+          <dt>今开</dt><dd>${formatPrice(realtime.open)}</dd>
+          <dt>最高</dt><dd>${formatPrice(realtime.high)}</dd>
+          <dt>最低</dt><dd>${formatPrice(realtime.low)}</dd>
+          <dt>成交量</dt><dd>${formatVolumeHand(realtime.vol)}</dd>
+          <dt>成交额</dt><dd>${formatAmountYi(realtime.amount)}</dd>
+          <dt>成交笔数</dt><dd>${formatPlainNumber(realtime.num)}</dd>
+          <dt>时间</dt><dd>${escapeHtml(realtime.trade_time || "--")}</dd>
+          <dt>买一</dt><dd>${formatPrice(realtime.bid_price1)} / ${formatPlainNumber(realtime.bid_volume1)}</dd>
+          <dt>卖一</dt><dd>${formatPrice(realtime.ask_price1)} / ${formatPlainNumber(realtime.ask_volume1)}</dd>
+        </dl>
+      </article>
+      <article class="watchtowerRealtimeStats">
+        <h3>基础资料快照</h3>
+        <dl class="miniStats watchtowerMetricList">
+          <dt>行业</dt><dd>${escapeHtml(stock.industry || cache.industry || "--")}</dd>
+          <dt>地区</dt><dd>${escapeHtml(stock.area || cache.area || "--")}</dd>
+          <dt>PE / PB</dt><dd>${formatCompactValue(cache.pe)} / ${formatCompactValue(cache.pb)}</dd>
+          <dt>股东人数</dt><dd>${formatHolderCount(cache.holder_num)}</dd>
+          <dt>总股本</dt><dd>${formatCompactShare(cache.total_share)}</dd>
+          <dt>营收同比</dt><dd>${formatSignedCompact(cache.rev_yoy)}</dd>
+          <dt>利润同比</dt><dd>${formatSignedCompact(cache.profit_yoy)}</dd>
+          <dt>快照日期</dt><dd>${formatDate(cache.trade_date || "")}</dd>
+        </dl>
+      </article>
+      <article class="watchtowerRealtimeStats wide">
+        <h3>养家盯盘依据</h3>
+        <ul class="reviewBulletList">
+          ${(yangjia.basis || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}
+          <li>${escapeHtml(yangjia.risk || "先看承接，再看有没有必要动手。")}</li>
+        </ul>
+      </article>
+    </section>
+  `;
+}
+
+function renderWatchtowerCandleSvg(realtime) {
+  const open = Number(realtime.open || 0);
+  const high = Number(realtime.high || 0);
+  const low = Number(realtime.low || 0);
+  const close = Number(realtime.close || 0);
+  const preClose = Number(realtime.pre_close || 0);
+  const valid = high > 0 && low > 0 && close > 0 && open > 0 && preClose > 0;
+  if (!valid) {
+    return `<div class="empty">暂无可绘制的实时日线。</div>`;
+  }
+  const top = Math.max(high, preClose, open, close);
+  const bottom = Math.min(low, preClose, open, close);
+  const span = Math.max(top - bottom, top * 0.01);
+  const projectY = (value) => 18 + ((top - value) / span) * 184;
+  const yHigh = projectY(high);
+  const yLow = projectY(low);
+  const yOpen = projectY(open);
+  const yClose = projectY(close);
+  const bodyTop = Math.min(yOpen, yClose);
+  const bodyHeight = Math.max(8, Math.abs(yOpen - yClose));
+  const rising = close >= open;
+  const color = rising ? "#d91c1c" : "#15803d";
+  const preCloseY = projectY(preClose);
+  return `
+    <svg viewBox="0 0 180 220" class="watchtowerCandleSvg" role="img" aria-label="实时日线">
+      <line x1="90" y1="${yHigh.toFixed(2)}" x2="90" y2="${yLow.toFixed(2)}" stroke="${color}" stroke-width="6" stroke-linecap="round"></line>
+      <rect x="58" y="${bodyTop.toFixed(2)}" width="64" height="${bodyHeight.toFixed(2)}" rx="12" fill="${color}" opacity="0.92"></rect>
+      <line x1="26" y1="${preCloseY.toFixed(2)}" x2="154" y2="${preCloseY.toFixed(2)}" stroke="#94a3b8" stroke-width="2" stroke-dasharray="5 5"></line>
+      <text x="20" y="20" font-size="12" fill="#64748b">高 ${formatPrice(high)}</text>
+      <text x="20" y="212" font-size="12" fill="#64748b">低 ${formatPrice(low)}</text>
+      <text x="20" y="${Math.max(34, preCloseY - 8).toFixed(2)}" font-size="12" fill="#64748b">昨收 ${formatPrice(preClose)}</text>
+    </svg>
+  `;
+}
+
+function closeWatchtowerModal() {
+  if (!els.watchtowerModal) return;
+  els.watchtowerModal.hidden = true;
+  document.body.classList.remove("modalOpen");
+}
+
+async function deleteWatchtowerStock(tsCode) {
+  if (!tsCode) return;
+  try {
+    await fetchJson("/api/watchtower/delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ts_code: tsCode }),
+    });
+    await loadWatchtowerOverview(state.watchtower.page || 1);
+    if (state.analysis?.stock?.ts_code === tsCode) {
+      state.analysisWatchlist = { status: "idle", message: "" };
+      renderAnalysisWatchlistAction();
+    }
+  } catch (err) {
+    showWatchtowerError(err.message);
+  }
 }
 
 function setAnalysisLevel(level) {
@@ -1157,6 +2014,7 @@ function hideReviewError() {
 
 async function loadReviewOverview() {
   const requestId = ++state.review.requestId;
+  const aiRequestId = ++state.review.aiRequestId;
   state.review.overview = { status: "loading" };
   state.review.hotMoneyPage = 1;
   state.review.modalPage = 1;
@@ -1172,14 +2030,40 @@ async function loadReviewOverview() {
     const suffix = dateValue ? `?trade_date=${encodeURIComponent(dateValue)}` : "";
     const data = await fetchJson(`/api/review/overview${suffix}`);
     if (requestId !== state.review.requestId) return;
+    data.ai_review = { status: "loading", message: "" };
     state.review.overview = data;
-    setReviewStatus(`复盘已更新到 ${formatDate(data.trade_date || dateValue)}，先看主线板块，再看龙虎榜与游资共振。`);
+    setReviewStatus(`复盘已更新到 ${formatDate(data.trade_date || dateValue)}，先看主线板块，再等 AI 补充养家视角结论。`);
+    renderReview();
+    void loadReviewAiBrief(data, requestId, aiRequestId, dateValue);
   } catch (err) {
     if (requestId !== state.review.requestId) return;
     state.review.overview = { status: "error", message: err.message };
     showReviewError(err.message);
   }
 
+  renderReview();
+}
+
+async function loadReviewAiBrief(reviewPayload, requestId, aiRequestId, dateValue = "") {
+  try {
+    const data = await fetchJson("/api/review/ai-brief", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ review: reviewPayload }),
+    });
+    if (requestId !== state.review.requestId || aiRequestId !== state.review.aiRequestId) return;
+    state.review.overview = data;
+    setReviewStatus(`复盘已更新到 ${formatDate(data.trade_date || dateValue)}，先看养家视角阶段判断，再看主线板块与核心个股。`);
+  } catch (err) {
+    if (requestId !== state.review.requestId || aiRequestId !== state.review.aiRequestId) return;
+    if (state.review.overview && state.review.overview.status === "ok") {
+      state.review.overview = {
+        ...state.review.overview,
+        ai_review: { status: "error", message: err.message },
+      };
+      setReviewStatus(`复盘已更新到 ${formatDate(state.review.overview.trade_date || dateValue)}，先看主线板块，再看龙虎榜与游资共振。`);
+    }
+  }
   renderReview();
 }
 
@@ -1393,22 +2277,66 @@ function renderReviewFocus() {
     return;
   }
   const notes = review.notes || {};
-  els.reviewFocusBox.className = "reviewList";
+  const aiReview = review.ai_review?.status === "ok" ? review.ai_review.analysis || {} : null;
+  const aiLoading = review.ai_review?.status === "loading";
+  const indices = (review.market_indices?.items || []).slice(0, 3);
+  const aiError = review.ai_review?.status === "error" ? review.ai_review.message || "" : "";
+  els.reviewFocusBox.className = "reviewFocusStack";
   els.reviewFocusBox.innerHTML = `
-    <article class="reviewFocusItem">
-      <strong>一句话复盘</strong>
-      <p>${escapeHtml(notes.summary || "暂无复盘结论。")}</p>
+    <article class="reviewFocusItem reviewFocusHero">
+      <div class="reviewFocusHeroHeader">
+        <strong>一句话复盘</strong>
+        ${aiReview?.market_stage ? `<span class="reviewBadge">${escapeHtml(aiReview.market_stage)}</span>` : ""}
+      </div>
+      <p>${escapeHtml(aiReview?.summary || notes.summary || "暂无复盘结论。")}</p>
+      ${
+        aiReview
+          ? `<small class="reviewFocusMeta">养家视角 AI 已接入当前复盘事实层。</small>`
+          : aiLoading
+            ? `<small class="reviewFocusMeta">AI 正在补充养家视角，不影响下方事实层先看。</small>`
+            : aiError
+              ? `<small class="reviewFocusMeta">AI 复盘暂时降级：${escapeHtml(aiError)}</small>`
+              : ""
+      }
     </article>
+    ${
+      indices.length
+        ? `<section class="reviewIndexStrip">
+            ${indices
+              .map(
+                (item) => `
+                  <article class="reviewIndexCard">
+                    <span>${escapeHtml(item.name || item.ts_code || "")}</span>
+                    <strong>${formatBakMetric(item.pct_chg, "%", 2) || "-"}</strong>
+                    <small>收 ${formatPrice(item.close)} · PB ${formatBakMetric(item.pb, "", 2) || "-"}</small>
+                  </article>
+                `
+              )
+              .join("")}
+          </section>`
+        : ""
+    }
+    <section class="reviewInsightGrid">
+      ${renderReviewInsightCard("指数复盘", aiReview?.index_review?.summary || "先看三大指数强弱与估值位置。", aiReview?.index_review?.signals || [])}
+      ${renderReviewInsightCard("情绪周期", aiReview?.emotion_cycle?.summary || "先看赚钱效应、亏钱效应和接力反馈。", aiReview?.emotion_cycle?.signals || notes.watch_points || [])}
+      ${renderReviewInsightCard("盘面复盘", aiReview?.tape_review?.summary || "先看热点板块、资金流向和涨跌停前排。", []
+        .concat(aiReview?.tape_review?.hot_themes || [])
+        .concat(aiReview?.tape_review?.fund_flow || [])
+        .concat(aiReview?.tape_review?.limit_watch || []))}
+      ${renderReviewInsightCard("消息复盘", aiReview?.news_review?.summary || "先看催化强度和连板梯队是否继续扩散。", []
+        .concat(aiReview?.news_review?.catalysts || [])
+        .concat(aiReview?.news_review?.ladder_focus || []))}
+    </section>
     <article class="reviewFocusItem">
       <strong>今天先看什么</strong>
       <ul class="reviewBulletList">
-        ${(notes.watch_points || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("") || "<li>暂无重点观察项。</li>"}
+        ${(aiReview?.watch_points || notes.watch_points || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("") || "<li>暂无重点观察项。</li>"}
       </ul>
     </article>
     <article class="reviewFocusItem">
       <strong>风险提醒</strong>
       <ul class="reviewBulletList">
-        ${(notes.risk_points || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("") || "<li>暂无额外风险提醒。</li>"}
+        ${(aiReview?.risk_points || notes.risk_points || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("") || "<li>暂无额外风险提醒。</li>"}
       </ul>
     </article>
   `;
@@ -1438,6 +2366,8 @@ function renderReviewBoards() {
           <strong>${escapeHtml(item.name || "")} <span class="reviewBadge">第 ${intValue(item.rank)} 名</span></strong>
           <div class="reviewFocusMeta">涨停 ${intValue(item.limit_count)} 家 · 板块样本 ${intValue(item.count)} 家 · 涨幅 ${formatSignedPercentValue(item.pct_chg)}</div>
           <p>${escapeHtml(item.watch_reason || "")}</p>
+          ${item.ai_action ? `<p class="reviewActionText">${escapeHtml(item.ai_action)}</p>` : ""}
+          ${item.ai_reason ? `<p>${escapeHtml(item.ai_reason)}</p>` : ""}
         </article>
       `
     )
@@ -1468,11 +2398,26 @@ function renderReviewStocks() {
           ${renderReviewStockHeadline(item)}
           <div class="reviewFocusMeta">${escapeHtml(item.ts_code || "")} · 分数 ${escapeHtml(String(item.score ?? "-"))}</div>
           <p>${escapeHtml((item.tags || []).join(" / "))}</p>
+          ${item.ai_action ? `<p class="reviewActionText">${escapeHtml(item.ai_action)}</p>` : ""}
+          ${item.ai_reason ? `<p>${escapeHtml(item.ai_reason)}</p>` : ""}
           <p>${escapeHtml(item.reason || "")}</p>
         </article>
       `
     )
     .join("");
+}
+
+function renderReviewInsightCard(title, summary, bullets) {
+  const items = Array.isArray(bullets) ? bullets.filter(Boolean).slice(0, 4) : [];
+  return `
+    <article class="reviewFocusItem reviewInsightCard">
+      <strong>${escapeHtml(title)}</strong>
+      <p>${escapeHtml(summary || "暂无补充结论。")}</p>
+      <ul class="reviewBulletList">
+        ${items.map((item) => `<li>${escapeHtml(item)}</li>`).join("") || "<li>暂无补充样本。</li>"}
+      </ul>
+    </article>
+  `;
 }
 
 function renderReviewTable(columns, rows) {
@@ -1517,48 +2462,183 @@ function renderReviewStockButton(label, row, className = "reviewStockLink") {
 
 function renderReviewInstitutionModal(items, searchTerm = "", page = 1) {
   const keyword = String(searchTerm || "").trim().toLowerCase();
+  const groups = groupReviewHotMoneyRecords(items);
   const filtered = keyword
-    ? items.filter((row) =>
-        `${row.hm_name || ""} ${row.hot_money_label || ""} ${(row.hot_money_names || []).join(" ")} ${row.hm_orgs || ""}`
-          .toLowerCase()
-          .includes(keyword)
-      )
-    : items;
-  const { rows, page: currentPage, totalPages } = paginateRows(filtered, page, 20);
+    ? groups.filter((row) => `${row.name || ""} ${row.org_summary || ""} ${row.stock_names.join(" ")}`.toLowerCase().includes(keyword))
+    : groups;
+  const { rows, page: currentPage, totalPages } = paginateRows(filtered, page, 10);
   state.review.modalPage = currentPage;
-  const table = filtered.length
-    ? renderReviewTable(
-        [
-          { key: "name", label: "股票", stockLink: true },
-          { key: "hot_money_label", label: "游资" },
-          { key: "org_count", label: "席位数", format: intValue },
-          { key: "record_count", label: "记录数", format: intValue },
-          { key: "buy_amount", label: "买入额", format: formatAmountYi },
-          { key: "sell_amount", label: "卖出额", format: formatAmountYi },
-          { key: "net_amount", label: "净买入", format: formatAmountYi },
-          { key: "tag", label: "标签" },
-        ],
-        rows
-      )
+  const tree = filtered.length
+    ? `
+      <div class="reviewHotMoneyTree">
+        ${rows.map((group) => renderReviewHotMoneyGroup(group)).join("")}
+      </div>
+    `
     : `<div class="empty">没有匹配当前游资名称的游资明细。</div>`;
   return `
-    <div class="reviewModalSearchBar">
+    <form class="reviewModalSearchBar" data-review-modal-search-form="hot-money">
       <label class="reviewModalSearchField">
         <span>按游资名称搜索</span>
         <input type="search" data-review-modal-search="hot-money" placeholder="例如：量化基金、北京帮" value="${escapeHtml(searchTerm)}" />
       </label>
-      <small>匹配 ${intValue(filtered.length)} / 合并后 ${intValue(items.length)} 只</small>
-    </div>
+      <div class="reviewModalSearchActions">
+        <button type="submit" class="miniButton">确定</button>
+        <button type="button" class="ghostButton miniButton" data-review-modal-reset-search="hot-money">重置</button>
+      </div>
+      <small>匹配 ${intValue(filtered.length)} / 共 ${intValue(groups.length)} 组游资</small>
+    </form>
     <div class="reviewPanelStack">
-      ${table}
+      <div class="reviewPanelMeta">
+        <small>按“游资机构 → 股票 → 买卖金额 / 席位”关系展示，同组内股票可直接跳转到股票分析。</small>
+      </div>
+      ${tree}
       ${renderReviewPager({
         page: currentPage,
         totalPages,
         totalItems: filtered.length,
-        pageSize: 20,
+        pageSize: 10,
         action: "hot-money-modal",
       })}
     </div>
+  `;
+}
+
+function groupReviewHotMoneyRecords(items) {
+  const groups = new Map();
+  (items || []).forEach((row) => {
+    const names = Array.isArray(row.hot_money_names) && row.hot_money_names.length
+      ? row.hot_money_names
+      : [row.hm_name || row.hot_money_label || "未识别游资"];
+    names
+      .map((item) => String(item || "").trim())
+      .filter(Boolean)
+      .forEach((name) => {
+        const group = groups.get(name) || {
+          name,
+          buy_amount: 0,
+          sell_amount: 0,
+          net_amount: 0,
+          record_count: 0,
+          orgs: new Set(),
+          stocks: new Map(),
+          stock_names: [],
+        };
+        group.buy_amount += Number(row.buy_amount || 0);
+        group.sell_amount += Number(row.sell_amount || 0);
+        group.net_amount += Number(row.net_amount || 0);
+        group.record_count += 1;
+        String(row.exalter || row.hm_orgs || "")
+          .split(/[；;\n]+/)
+          .map((item) => item.trim())
+          .filter(Boolean)
+          .forEach((org) => group.orgs.add(org));
+        const stockKey = String(resolveReviewStockCode(row) || row.name || row.ts_name || "").trim();
+        if (!stockKey) {
+          groups.set(name, group);
+          return;
+        }
+        const stock = group.stocks.get(stockKey) || {
+          ts_code: resolveReviewStockCode(row),
+          name: row.name || row.ts_name || stockKey,
+          buy_amount: 0,
+          sell_amount: 0,
+          net_amount: 0,
+          record_count: 0,
+          orgs: new Set(),
+          tags: new Set(),
+        };
+        stock.buy_amount += Number(row.buy_amount || 0);
+        stock.sell_amount += Number(row.sell_amount || 0);
+        stock.net_amount += Number(row.net_amount || 0);
+        stock.record_count += 1;
+        String(row.exalter || row.hm_orgs || "")
+          .split(/[；;\n]+/)
+          .map((item) => item.trim())
+          .filter(Boolean)
+          .forEach((org) => stock.orgs.add(org));
+        if (row.tag) stock.tags.add(String(row.tag));
+        group.stocks.set(stockKey, stock);
+        groups.set(name, group);
+      });
+  });
+
+  return Array.from(groups.values())
+    .map((group) => {
+      const stocks = Array.from(group.stocks.values())
+        .map((item) => ({
+          ...item,
+          org_summary: Array.from(item.orgs || []).slice(0, 3).join("；"),
+          org_count: (item.orgs && item.orgs.size) || 0,
+          tags: Array.from(item.tags),
+        }))
+        .sort((a, b) => Math.abs(Number(b.net_amount || 0)) - Math.abs(Number(a.net_amount || 0)));
+      return {
+        name: group.name,
+        buy_amount: group.buy_amount,
+        sell_amount: group.sell_amount,
+        net_amount: group.net_amount,
+        record_count: group.record_count,
+        org_count: group.orgs.size,
+        org_summary: Array.from(group.orgs).slice(0, 3).join("；"),
+        stock_count: stocks.length,
+        stock_names: stocks.map((item) => item.name).filter(Boolean),
+        stocks,
+      };
+    })
+    .sort((a, b) => Math.abs(Number(b.net_amount || 0)) - Math.abs(Number(a.net_amount || 0)));
+}
+
+function renderReviewHotMoneyGroup(group) {
+  const positive = Number(group.net_amount || 0) >= 0;
+  return `
+    <article class="reviewHotMoneyGroup reviewHotMoneyFlowCard">
+      <div class="reviewHotMoneyFlowHeader">
+        <div class="reviewHotMoneyHeadline">
+          <strong>${escapeHtml(group.name || "未识别游资")}</strong>
+          <p>关联 ${intValue(group.stock_count)} 只股票 · ${intValue(group.org_count)} 个席位 · ${intValue(group.record_count)} 条记录</p>
+        </div>
+        <div class="reviewHotMoneyFlowTotals">
+          <span>买入 ${formatAmountYi(group.buy_amount)}</span>
+          <span>卖出 ${formatAmountYi(group.sell_amount)}</span>
+          <span class="reviewHotMoneyNet ${positive ? "" : "negative"}">净额 ${formatSignedAmountShort(group.net_amount)}</span>
+        </div>
+      </div>
+      <div class="reviewHotMoneyFlow">
+        <div class="reviewHotMoneyOrgNode ${positive ? "positive" : "negative"}">
+          <strong>${escapeHtml(group.name || "未识别游资")}</strong>
+          <small>${escapeHtml(group.org_summary || "席位数据待补充")}</small>
+        </div>
+        <div class="reviewHotMoneyBranchList">
+          ${group.stocks.map((stock) => renderReviewHotMoneyStockRow(stock)).join("")}
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+function renderReviewHotMoneyStockRow(stock) {
+  const tags = Array.isArray(stock.tags) ? stock.tags.filter(Boolean) : [];
+  const positive = Number(stock.net_amount || 0) >= 0;
+  return `
+    <article class="reviewHotMoneyBranch">
+      <div class="reviewHotMoneyStockNode ${positive ? "positive" : "negative"}${reviewRowCanOpen(stock) ? " reviewClickable" : ""}" ${reviewRowCanOpen(stock) ? `data-review-open-analysis="1" data-ts-code="${escapeHtml(resolveReviewStockCode(stock))}" data-name="${escapeHtml(stock.name || "")}"` : ""}>
+        <div class="reviewHotMoneyStockLabel">
+          <strong>${renderReviewStockButton(stock.name || stock.ts_code || "-", stock, "reviewStockLink inline light")}</strong>
+          <small>${escapeHtml(stock.ts_code || "-")}</small>
+        </div>
+        <span class="reviewHotMoneyStockAmount">${formatSignedAmountShort(stock.net_amount)}</span>
+      </div>
+      <div class="reviewHotMoneyAmountNode">
+        <strong>${escapeHtml(stock.org_summary || "关联席位")}</strong>
+        <div class="reviewHotMoneyAmountMeta">
+          <span>买入 ${formatAmountYi(stock.buy_amount)}</span>
+          <span>卖出 ${formatAmountYi(stock.sell_amount)}</span>
+          <span class="reviewHotMoneyNet ${positive ? "" : "negative"}">净额 ${formatSignedAmountShort(stock.net_amount)}</span>
+          <span>记录 ${intValue(stock.record_count)} 条</span>
+        </div>
+        ${tags.length ? `<p>${escapeHtml(tags.join(" / "))}</p>` : ""}
+      </div>
+    </article>
   `;
 }
 
@@ -1627,10 +2707,10 @@ function openReviewSummaryModal(key) {
         )
       : `<div class="empty">当天没有可用龙虎榜数据。</div>`;
   } else if (key === "hot_money_trades") {
-    title = "游资数据明细";
-    meta = `复盘日期 ${formatDate(review.trade_date || "")} · 原始 ${intValue(review.hot_money_stats?.record_count)} 条 · 合并后 ${intValue((review.hot_money_trades || []).length)} 只股票`;
-    body = (review.hot_money_trades || []).length
-      ? renderReviewInstitutionModal(review.hot_money_trades || [], "", 1)
+    title = "游资龙虎榜关系图";
+    meta = `复盘日期 ${formatDate(review.trade_date || "")} · 原始 ${intValue(review.hot_money_stats?.record_count)} 条 · 归并 ${intValue((review.hot_money_trades || []).length)} 只股票`;
+    body = (review.hot_money_records || []).length
+      ? renderReviewInstitutionModal(review.hot_money_records || [], "", 1)
       : `<div class="empty">当天没有游资明细。</div>`;
   } else if (key === "limit_lists") {
     const groups = review.limit_lists || {};
@@ -1724,9 +2804,19 @@ function closeReviewModal() {
 function updateReviewInstitutionModalSearch(term) {
   const review = state.review.overview;
   if (!review || review.status !== "ok" || state.review.modalKey !== "hot_money_trades" || !els.reviewModalBody) return;
-  state.review.modalSearch = term;
+  state.review.modalSearch = String(term || "").trim();
   state.review.modalPage = 1;
-  els.reviewModalBody.innerHTML = renderReviewInstitutionModal(review.hot_money_trades || [], term, 1);
+  els.reviewModalBody.innerHTML = renderReviewInstitutionModal(review.hot_money_records || [], state.review.modalSearch, 1);
+}
+
+function applyReviewInstitutionModalSearch() {
+  if (!els.reviewModalBody) return;
+  const field = els.reviewModalBody.querySelector("[data-review-modal-search='hot-money']");
+  updateReviewInstitutionModalSearch(field?.value || "");
+}
+
+function resetReviewInstitutionModalSearch() {
+  updateReviewInstitutionModalSearch("");
 }
 
 function updateReviewHotMoneyPage(page) {
@@ -1739,7 +2829,7 @@ function updateReviewModalPage(page) {
   if (!review || review.status !== "ok" || state.review.modalKey !== "hot_money_trades" || !els.reviewModalBody) return;
   state.review.modalPage = Math.max(1, intValue(page) || 1);
   els.reviewModalBody.innerHTML = renderReviewInstitutionModal(
-    review.hot_money_trades || [],
+    review.hot_money_records || [],
     state.review.modalSearch || "",
     state.review.modalPage
   );
@@ -1934,70 +3024,15 @@ function renderPickerNews() {
   els.pickerNewsBox.innerHTML = renderNewsDigest(overview.news);
 }
 
-function renderPickerWatchlist() {
-  const watchlist = state.smartPicker.watchlist;
-  if (!els.pickerWatchlistBox) return;
-
-  if (!watchlist || watchlist.status === "loading") {
-    els.pickerWatchlistBox.className = "mxStack";
-    els.pickerWatchlistBox.innerHTML = `
-      <article class="mxCard loading"><div class="mxSkeleton"></div><div class="mxSkeleton short"></div></article>
-    `;
-    return;
-  }
-
-  if (watchlist.status === "error") {
-    els.pickerWatchlistBox.className = "mxError";
-    els.pickerWatchlistBox.textContent = watchlist.message || "自选同步失败。";
-    return;
-  }
-
-  const items = watchlist.items || [];
-  els.pickerWatchlistBox.className = "mxStack";
-  els.pickerWatchlistBox.innerHTML = `
-    <article class="mxCard status-${items.length ? "ok" : "empty"}">
-      <div class="mxCardHeader">
-        <strong>东方财富自选</strong>
-        <small>${items.length ? `共 ${items.length} 只` : "空列表"}</small>
-      </div>
-      ${
-        items.length
-          ? `<div class="newsList">
-              ${items
-                .slice(0, 6)
-                .map(
-                  (item) => `
-                    <article class="newsItem">
-                      <strong>${escapeHtml(item.name || "")} ${escapeHtml(item.code || "")}</strong>
-                      <span>${escapeHtml(
-                        [item.latest_price ? `最新价 ${item.latest_price}` : "", item.change_pct ? `涨跌幅 ${item.change_pct}` : ""]
-                          .filter(Boolean)
-                          .join(" · ")
-                      )}</span>
-                      <p>${escapeHtml(
-                        [item.turnover ? `换手率 ${item.turnover}` : "", item.volume_ratio ? `量比 ${item.volume_ratio}` : ""]
-                          .filter(Boolean)
-                          .join(" · ") || "已同步到本地观察页"
-                      )}</p>
-                    </article>
-                  `
-                )
-                .join("")}
-            </div>`
-          : `<p class="mxCardMessage">当前没有自选股，可以从候选详情里一键加入。</p>`
-      }
-    </article>
-  `;
-}
-
 function renderPickerTable() {
   const screen = state.smartPicker.screen;
   if (!els.pickerTableBox) return;
 
   if (!screen || screen.status === "loading") {
-    els.pickerTableStatus.textContent = "正在生成候选池...";
+    const isWatchlist = screen?.source_type === "watchlist";
+    els.pickerTableStatus.textContent = isWatchlist ? "正在同步自选股并生成候选池..." : "正在生成候选池...";
     if (els.pickerResultMeta) {
-      els.pickerResultMeta.textContent = "默认从全 A 股范围执行条件筛选。";
+      els.pickerResultMeta.textContent = isWatchlist ? "我的自选股会作为默认候选池。" : "默认从全 A 股范围执行条件筛选。";
     }
     els.pickerTableBox.innerHTML = `
       <div class="pickerLoadingTable">
@@ -2022,6 +3057,7 @@ function renderPickerTable() {
   const candidates = filterAndSortPickerCandidates(rawCandidates);
   const universe = screen.universe || {};
   const boardFilters = screen.board_filters || [];
+  const isWatchlist = screen.source_type === "watchlist";
   const filterSummary = buildPickerFilterSummary(rawCandidates.length, candidates.length);
   els.pickerTableStatus.textContent = screen.description || screen.parser_text || `候选总数 ${screen.total || 0}`;
   if (els.pickerResultMeta) {
@@ -2030,7 +3066,9 @@ function renderPickerTable() {
           .map((item) => `${item.source_label || "板块"}${item.idx_type || "板块"}“${item.name || ""}”`)
           .join(" + ")}；`
       : "";
-    const totalText = boardFilters.length && !screen.query_text
+    const totalText = isWatchlist
+      ? `我的自选共 ${screen.total || rawCandidates.length} 只`
+      : boardFilters.length && !screen.query_text
       ? `板块成分股共 ${screen.total || rawCandidates.length} 只`
       : boardFilters.length
       ? `条件命中 ${screen.total || rawCandidates.length} 只`
@@ -2040,7 +3078,9 @@ function renderPickerTable() {
     els.pickerResultMeta.textContent = `${boardScope}${totalText}；当前展示 ${candidates.length} 只。${filterSummary}`;
   }
   if (!candidates.length) {
-    els.pickerTableBox.innerHTML = `<div class="empty">当前条件下没有筛出可用候选，可以放宽条件再试一次。</div>`;
+    els.pickerTableBox.innerHTML = `<div class="empty">${
+      isWatchlist ? "当前自选股没有生成可用候选，可以先检查自选同步或稍后重试。" : "当前条件下没有筛出可用候选，可以放宽条件再试一次。"
+    }</div>`;
     return;
   }
 
@@ -2108,7 +3148,11 @@ function renderPickerTable() {
     </table>
     ${
       screen.errors?.length
-        ? `<div class="pickerHint">有 ${screen.errors.length} 条结果因股票匹配或数据缺失被跳过，当前优先展示可用候选。</div>`
+        ? `<div class="pickerHint">${
+            isWatchlist && Number(screen.fallback_count || 0) > 0
+              ? `有 ${screen.fallback_count} 只自选股暂缺结构数据，已先按自选行情展示；其余 ${screen.errors.length - screen.fallback_count} 条因股票匹配或数据缺失未展示。`
+              : `有 ${screen.errors.length} 条结果因股票匹配或数据缺失被跳过，当前优先展示可用候选。`
+          }</div>`
         : ""
     }
   `;
@@ -2132,6 +3176,9 @@ function buildPickerFilterSummary(rawCount, visibleCount) {
   }
   if (state.smartPicker.focusReadyOnly) {
     parts.push("已启用“主流强票”快捷筛选");
+  }
+  if (state.smartPicker.marketScopeFilter !== "all") {
+    parts.push(`市场=${pickerMarketScopeLabel(state.smartPicker.marketScopeFilter)}`);
   }
   if (state.smartPicker.structureFilter !== "all") {
     parts.push(`结构=${state.smartPicker.structureFilter}`);
@@ -2159,6 +3206,18 @@ function boardTypeApiValue(source, value) {
     ths: { all: "", concept: "concept", industry: "industry", region: "region", feature: "feature", style: "style", theme: "theme", broad: "broad" },
   };
   return mapping[source]?.[value] ?? "";
+}
+
+function pickerMarketScopeLabel(value) {
+  const mapping = {
+    all: "全部市场",
+    sz: "深证",
+    sh: "上证",
+    chinext: "创业板",
+    star: "科创板",
+    bse: "北交所",
+  };
+  return mapping[value] || "全部市场";
 }
 
 function pickerBoardDom(source) {
@@ -2319,6 +3378,9 @@ function filterAndSortPickerCandidates(candidates) {
   if (state.smartPicker.focusReadyOnly) {
     items = items.filter((item) => item.structure?.label === "结构可看" && item.emotion?.label === "主流热点");
   }
+  if (state.smartPicker.marketScopeFilter !== "all") {
+    items = items.filter((item) => matchesPickerMarketScope(item.stock || {}, state.smartPicker.marketScopeFilter));
+  }
   if (state.smartPicker.structureFilter !== "all") {
     items = items.filter((item) => item.structure?.label === state.smartPicker.structureFilter);
   }
@@ -2336,6 +3398,28 @@ function filterAndSortPickerCandidates(candidates) {
   const sortBy = state.smartPicker.sortBy;
   items.sort((left, right) => comparePickerCandidate(left, right, sortBy) * direction);
   return items;
+}
+
+function matchesPickerMarketScope(stock, scope) {
+  const exchange = String(stock?.exchange || "").toUpperCase();
+  const market = String(stock?.market || "");
+  const tsCode = String(stock?.ts_code || "").toUpperCase();
+  const symbol = String(stock?.symbol || "");
+
+  switch (scope) {
+    case "sz":
+      return exchange === "SZSE" || tsCode.endsWith(".SZ");
+    case "sh":
+      return exchange === "SSE" || tsCode.endsWith(".SH");
+    case "chinext":
+      return market.includes("创业板") || symbol.startsWith("300") || tsCode.startsWith("300");
+    case "star":
+      return market.includes("科创板") || symbol.startsWith("688") || tsCode.startsWith("688");
+    case "bse":
+      return exchange === "BSE" || exchange === "BJSE" || market.includes("北交所") || tsCode.endsWith(".BJ") || symbol.startsWith("4") || symbol.startsWith("8");
+    default:
+      return true;
+  }
 }
 
 function comparePickerCandidate(left, right, sortBy) {
@@ -2372,7 +3456,7 @@ function renderPickerDetail() {
 
   if (!detail) {
     els.pickerDetailBox.className = "empty";
-    els.pickerDetailBox.textContent = "点击候选池中的股票，这里会展开三视角交易画像和自选操作。";
+    els.pickerDetailBox.textContent = "点击候选池中的自选股，这里会展开三视角交易画像和自选操作。";
     return;
   }
 
@@ -2433,7 +3517,7 @@ function renderPickerDetail() {
           .filter(Boolean)
           .join(" · ")
       )}</p>
-      <p class="mxCardMessage">${escapeHtml(analysis.trend?.reason || "暂无补充结构说明。")}</p>
+      <p class="mxCardMessage">${escapeHtml(analysis.message || analysis.trend?.reason || "暂无补充结构说明。")}</p>
     </article>
     ${renderMarketScan(profilePayload.market_scan)}
     ${renderNewsDigest(profilePayload.news)}
@@ -2711,14 +3795,22 @@ function renderChart() {
   const visibleKlines = klines.slice(view.start, view.end);
   const plots = chartPlots(rect);
   const plot = plots.main;
+  const maPlot = plots.ma;
   const macdPlot = plots.macd;
   const visibleCenters = replayItemsByEnd(analysis.centers || [], "end_index").filter((item) => overlapsWindow(item.start_index, item.end_index, view));
   const visibleMacd = (analysis.indicators?.macd || []).slice(view.start, view.end);
   const visibleBbi = (analysis.indicators?.bbi || []).slice(view.start, view.end);
+  const visibleMa5 = (analysis.indicators?.ma5 || []).slice(view.start, view.end);
+  const visibleMa10 = (analysis.indicators?.ma10 || []).slice(view.start, view.end);
+  const visibleMa20 = (analysis.indicators?.ma20 || []).slice(view.start, view.end);
+  const visibleMaCenters = visibleItems(replayItemsByEnd(analysis.ma_centers || [], "end_index"), "start_index", "end_index", view);
+  const visibleMaSignals = visibleIndexSignals(replayFilteredIndexSignals(analysis.ma_signals || []), view);
   const weakToStrongSet = buildWeakToStrongSet(analysis);
   const range = priceRange(visibleKlines, visibleCenters, visibleBbi);
+  const maRange = movingAverageRange(visibleKlines, visibleMa5, visibleMa10, visibleMa20, visibleMaCenters);
   const x = (idx) => plot.left + ((idx - view.start + 0.5) / view.count) * plot.width;
   const y = (price) => plot.top + ((range.high - price) / (range.high - range.low)) * plot.height;
+  const maY = (price) => maPlot.top + ((maRange.high - price) / (maRange.high - maRange.low)) * maPlot.height;
   const candleW = Math.max(4, Math.min(13, (plot.width / view.count) * 0.62));
 
   drawGrid(ctx, rect, plot, range, visibleKlines, x, false);
@@ -2727,12 +3819,22 @@ function renderChart() {
   drawBbi(ctx, visibleBbi, x, y);
   if (state.showStrokes) {
     drawStrokes(ctx, visibleItems(replayItemsByEnd(analysis.strokes || [], "end_index"), "start_index", "end_index", view), x, y, view);
+    drawActiveStroke(ctx, analysis.active_stroke, x, y, view);
   }
   if (state.showSegments) {
     drawSegments(ctx, visibleItems(replayItemsByEnd(analysis.segments || [], "end_index"), "start_index", "end_index", view), x, y, view);
   }
   drawFractals(ctx, visibleItems(replayItemsByEnd(analysis.fractals || [], "raw_index"), "raw_index", "raw_index", view), x, y);
   drawSignals(ctx, visibleSignals(replayFilteredSignals(analysis.signals || []), view), x, y, plot);
+  drawGrid(ctx, rect, maPlot, maRange, visibleKlines, x, false);
+  drawMaCenters(ctx, visibleMaCenters, x, maY, maPlot);
+  drawCandles(ctx, visibleKlines, x, maY, Math.max(3, candleW * 0.72), weakToStrongSet, 0.18);
+  drawMovingAverageLines(ctx, x, maY, [
+    { key: "MA5", rows: visibleMa5, color: "#f59e0b" },
+    { key: "MA10", rows: visibleMa10, color: "#2563eb" },
+    { key: "MA20", rows: visibleMa20, color: "#7c3aed" },
+  ]);
+  drawMaSignals(ctx, visibleMaSignals, x, maY, maPlot);
   drawMacd(ctx, rect, macdPlot, visibleMacd, visibleDivergences(replayFilteredDivergences(analysis.divergences || []), view), x, candleW);
 
   if (state.hoverIndex !== null && state.hoverIndex >= view.start && state.hoverIndex < view.end) {
@@ -2776,20 +3878,29 @@ function chartPlots(rect) {
   const right = 22;
   const top = 24;
   const bottom = 36;
-  const gap = 28;
-  const usableHeight = Math.max(320, rect.height - top - bottom - gap);
-  const macdHeight = Math.max(92, Math.min(150, usableHeight * 0.28));
-  const mainHeight = Math.max(220, usableHeight - macdHeight);
+  const gap = 24;
+  const usableHeight = Math.max(620, rect.height - top - bottom - gap * 2);
+  const mainHeight = Math.max(320, Math.min(usableHeight * 0.54, usableHeight - 260));
+  const maHeight = Math.max(160, Math.min(220, usableHeight * 0.24));
+  const macdHeight = Math.max(140, usableHeight - mainHeight - maHeight);
   const width = rect.width - left - right;
   return {
     main: { left, right, top, bottom: rect.height - top - mainHeight, width, height: mainHeight },
-    macd: {
+    ma: {
       left,
       right,
       top: top + mainHeight + gap,
+      bottom: rect.height - (top + mainHeight + gap + maHeight),
+      width,
+      height: maHeight,
+    },
+    macd: {
+      left,
+      right,
+      top: top + mainHeight + gap + maHeight + gap,
       bottom,
       width,
-      height: Math.max(72, rect.height - (top + mainHeight + gap) - bottom),
+      height: Math.max(72, rect.height - (top + mainHeight + gap + maHeight + gap) - bottom),
     },
   };
 }
@@ -2808,16 +3919,16 @@ function drawCenters(ctx, centers, x, y, plot) {
   });
 }
 
-function drawCandles(ctx, klines, x, y, candleW, weakToStrongSet = new Set()) {
+function drawCandles(ctx, klines, x, y, candleW, weakToStrongSet = new Set(), fillAlpha = 0.22) {
   klines.forEach((bar) => {
     const up = bar.close >= bar.open;
     const weakToStrong = weakToStrongSet.has(bar.index);
     const color = weakToStrong ? "#c7a100" : up ? "#c24136" : "#14845f";
     const fill = weakToStrong
-      ? "rgba(199, 161, 0, 0.24)"
+      ? `rgba(199, 161, 0, ${Math.max(fillAlpha, 0.18)})`
       : up
-        ? "rgba(194, 65, 54, 0.22)"
-        : "rgba(20, 132, 95, 0.22)";
+        ? `rgba(194, 65, 54, ${fillAlpha})`
+        : `rgba(20, 132, 95, ${fillAlpha})`;
     const px = x(bar.index);
     const openY = y(bar.open);
     const closeY = y(bar.close);
@@ -2833,6 +3944,59 @@ function drawCandles(ctx, klines, x, y, candleW, weakToStrongSet = new Set()) {
     const height = Math.max(Math.abs(closeY - openY), 1);
     ctx.fillRect(px - candleW / 2, top, candleW, height);
     ctx.strokeRect(px - candleW / 2, top, candleW, height);
+  });
+}
+
+function drawMovingAverageLines(ctx, x, y, lines) {
+  lines.forEach(({ key, rows, color }) => {
+    const validRows = (rows || []).filter((item) => item.value !== null && item.value !== undefined && Number.isFinite(Number(item.value)));
+    if (validRows.length < 2) return;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    validRows.forEach((item, idx) => {
+      const px = x(item.index);
+      const py = y(item.value);
+      if (idx === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    });
+    ctx.stroke();
+    const last = validRows[validRows.length - 1];
+    ctx.fillStyle = color;
+    ctx.font = "11px sans-serif";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    ctx.fillText(key, x(last.index) + 5, y(last.value));
+  });
+  ctx.lineWidth = 1;
+}
+
+function drawMaCenters(ctx, centers, x, y, plot) {
+  centers.forEach((item) => {
+    const left = Math.max(plot.left, x(Math.min(item.start_index, item.end_index)));
+    const right = Math.min(plot.left + plot.width, x(Math.max(item.start_index, item.end_index)));
+    const top = y(item.high);
+    const bottom = y(item.low);
+    if (right < plot.left || left > plot.left + plot.width) return;
+    ctx.fillStyle = "rgba(37, 99, 235, 0.08)";
+    ctx.strokeStyle = "rgba(37, 99, 235, 0.42)";
+    ctx.fillRect(left, top, Math.max(right - left, 4), Math.max(bottom - top, 2));
+    ctx.strokeRect(left, top, Math.max(right - left, 4), Math.max(bottom - top, 2));
+  });
+}
+
+function drawMaSignals(ctx, signals, x, y, plot) {
+  signals.forEach((item) => {
+    const px = x(item.index);
+    const py = y(item.price);
+    drawSignalTag(ctx, {
+      x: px,
+      y: py,
+      label: maSignalLabel(item),
+      buy: item.side === "buy",
+      plot,
+      compact: true,
+    });
   });
 }
 
@@ -3000,6 +4164,19 @@ function drawStrokes(ctx, strokes, x, y, view) {
   ctx.lineWidth = 1;
 }
 
+function drawActiveStroke(ctx, item, x, y, view) {
+  if (!item || !overlapsWindow(item.start_index, item.end_index, view)) return;
+  ctx.lineWidth = 2.2;
+  ctx.strokeStyle = item.direction === "up" ? "rgba(169, 53, 45, 0.7)" : "rgba(15, 111, 82, 0.7)";
+  ctx.setLineDash([7, 4]);
+  ctx.beginPath();
+  ctx.moveTo(x(item.start_index), y(item.start_price));
+  ctx.lineTo(x(item.end_index), y(item.end_price));
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.lineWidth = 1;
+}
+
 function drawSegments(ctx, segments, x, y, view) {
   ctx.lineWidth = 3.2;
   ctx.setLineDash([8, 5]);
@@ -3010,9 +4187,55 @@ function drawSegments(ctx, segments, x, y, view) {
     ctx.moveTo(x(item.start_index), y(item.start_price));
     ctx.lineTo(x(item.end_index), y(item.end_price));
     ctx.stroke();
+    drawSegmentFeatureSequence(ctx, item, x, y, view);
   });
   ctx.setLineDash([]);
   ctx.lineWidth = 1;
+}
+
+function drawSegmentFeatureSequence(ctx, segment, x, y, view) {
+  const features = Array.isArray(segment.feature_sequence) ? segment.feature_sequence : [];
+  const featureColor = segment.direction === "up" ? "rgba(31, 118, 255, 0.82)" : "rgba(139, 92, 246, 0.82)";
+  const gapColor = segment.direction === "up" ? "rgba(245, 158, 11, 0.86)" : "rgba(16, 185, 129, 0.86)";
+
+  features.forEach((item) => {
+    if (!overlapsWindow(item.start_index, item.end_index, view)) return;
+    const left = x(item.start_index);
+    const right = x(item.end_index);
+    const top = Math.min(y(item.high), y(item.low)) - 4;
+    const bottom = Math.max(y(item.high), y(item.low)) + 4;
+    ctx.save();
+    ctx.strokeStyle = featureColor;
+    ctx.lineWidth = 1.4;
+    ctx.setLineDash([4, 3]);
+    ctx.strokeRect(left - 3, top, Math.max(right - left + 6, 8), Math.max(bottom - top, 10));
+    ctx.restore();
+  });
+
+  const gap = segment.feature_gap || {};
+  if (!gap.direction || !overlapsWindow(gap.start_index, gap.end_index, view)) return;
+  const left = x(gap.start_index);
+  const right = x(gap.end_index);
+  const top = y(gap.high);
+  const bottom = y(gap.low);
+  const centerY = (top + bottom) / 2;
+
+  ctx.save();
+  ctx.strokeStyle = gapColor;
+  ctx.lineWidth = 1.6;
+  ctx.setLineDash([2, 2]);
+  ctx.beginPath();
+  ctx.moveTo(left, centerY);
+  ctx.lineTo(right, centerY);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.beginPath();
+  ctx.moveTo(left, top);
+  ctx.lineTo(left, bottom);
+  ctx.moveTo(right, top);
+  ctx.lineTo(right, bottom);
+  ctx.stroke();
+  ctx.restore();
 }
 
 function drawFractals(ctx, fractals, x, y) {
@@ -3050,8 +4273,8 @@ function drawSignals(ctx, signals, x, y, plot) {
   });
 }
 
-function drawSignalTag(ctx, { x, y, label, buy, plot }) {
-  const { tagX, tagY, width, height } = signalTagBounds(x, y, buy, plot);
+function drawSignalTag(ctx, { x, y, label, buy, plot, compact = false }) {
+  const { tagX, tagY, width, height } = signalTagBounds(x, y, buy, plot, compact);
   const color = buy ? "#14845f" : "#c24136";
 
   ctx.fillStyle = color;
@@ -3076,7 +4299,7 @@ function drawSignalTag(ctx, { x, y, label, buy, plot }) {
   ctx.fill();
 
   ctx.fillStyle = "#fff";
-  ctx.font = "600 12px sans-serif";
+  ctx.font = compact ? "600 11px sans-serif" : "600 12px sans-serif";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.fillText(label, tagX + width / 2, tagY + height / 2 + 0.5);
@@ -3085,17 +4308,17 @@ function drawSignalTag(ctx, { x, y, label, buy, plot }) {
   ctx.strokeStyle = "#fff";
   ctx.lineWidth = 1.5;
   ctx.beginPath();
-  ctx.arc(x, y, 3.5, 0, Math.PI * 2);
+  ctx.arc(x, y, compact ? 3 : 3.5, 0, Math.PI * 2);
   ctx.fill();
   ctx.stroke();
   ctx.lineWidth = 1;
 }
 
-function signalTagBounds(x, y, buy, plot) {
-  const width = 34;
-  const height = 20;
-  const pointer = 6;
-  const gap = 7;
+function signalTagBounds(x, y, buy, plot, compact = false) {
+  const width = compact ? 28 : 34;
+  const height = compact ? 18 : 20;
+  const pointer = compact ? 5 : 6;
+  const gap = compact ? 5 : 7;
   const tagX = Math.max(plot.left + 2, Math.min(x - width / 2, plot.left + plot.width - width - 2));
   const idealY = buy ? y + gap + pointer : y - gap - pointer - height;
   const tagY = Math.max(plot.top + 2, Math.min(idealY, plot.top + plot.height - height - 2));
@@ -3127,6 +4350,15 @@ function signalLabel(signal) {
   if (match) {
     return `${side}${{ 一: "1", 二: "2", 三: "3" }[match[1]]}`;
   }
+  return side;
+}
+
+function maSignalLabel(signal) {
+  const type = signal.type || "";
+  const side = signal.side === "sell" ? "S" : "B";
+  if (type.includes("三类")) return `${side}3`;
+  if (type.includes("二类")) return `${side}2`;
+  if (type.includes("一类")) return `${side}1`;
   return side;
 }
 
@@ -3173,6 +4405,19 @@ function priceRange(klines, centers, bbiRows = []) {
   const high = Math.max(...highs);
   const low = Math.min(...lows);
   const padding = Math.max((high - low) * 0.08, high * 0.005, 0.01);
+  return { high: high + padding, low: low - padding };
+}
+
+function movingAverageRange(klines, ma5Rows = [], ma10Rows = [], ma20Rows = [], centers = []) {
+  const maValues = [ma5Rows, ma10Rows, ma20Rows]
+    .flat()
+    .map((item) => item?.value)
+    .filter((value) => value !== null && value !== undefined && Number.isFinite(Number(value)));
+  const highs = klines.map((item) => item.high).concat(centers.map((item) => item.high), maValues);
+  const lows = klines.map((item) => item.low).concat(centers.map((item) => item.low), maValues);
+  const high = Math.max(...highs);
+  const low = Math.min(...lows);
+  const padding = Math.max((high - low) * 0.09, high * 0.006, 0.01);
   return { high: high + padding, low: low - padding };
 }
 
@@ -3266,6 +4511,12 @@ function replayFilteredDivergences(divergences) {
   return divergences.filter((item) => divergenceIndex(item) <= cutoff);
 }
 
+function replayFilteredIndexSignals(signals) {
+  const cutoff = replayCutoffIndex();
+  if (cutoff < 0) return [];
+  return signals.filter((item) => Number(item.index) <= cutoff);
+}
+
 function overlapsWindow(startIndex, endIndex, view) {
   const start = Math.min(startIndex, endIndex);
   const end = Math.max(startIndex, endIndex);
@@ -3290,6 +4541,10 @@ function visibleDivergences(divergences, view) {
   });
 }
 
+function visibleIndexSignals(signals, view) {
+  return signals.filter((item) => item.index >= view.start && item.index < view.end);
+}
+
 function indexFromPointer(event) {
   const analysis = state.analysis;
   if (!analysis?.klines?.length) return null;
@@ -3307,6 +4562,7 @@ function chartRegionFromPointer(event) {
   const plots = chartPlots(rect);
   const y = event.clientY - rect.top;
   if (y >= plots.main.top && y <= plots.main.top + plots.main.height) return "main";
+  if (y >= plots.ma.top && y <= plots.ma.top + plots.ma.height) return "ma";
   if (y >= plots.macd.top && y <= plots.macd.top + plots.macd.height) return "macd";
   return "gap";
 }
@@ -3359,6 +4615,48 @@ function signalFromMainPointer(event, analysis) {
   return best;
 }
 
+function maSignalFromPointer(event, analysis) {
+  const rect = els.canvas.getBoundingClientRect();
+  const plots = chartPlots(rect);
+  const plot = plots.ma;
+  const pointerX = event.clientX - rect.left;
+  const pointerY = event.clientY - rect.top;
+  if (pointerY < plot.top || pointerY > plot.top + plot.height) return null;
+
+  const view = visibleWindow();
+  const visibleKlines = analysis.klines.slice(view.start, view.end);
+  const visibleMa5 = (analysis.indicators?.ma5 || []).slice(view.start, view.end);
+  const visibleMa10 = (analysis.indicators?.ma10 || []).slice(view.start, view.end);
+  const visibleMa20 = (analysis.indicators?.ma20 || []).slice(view.start, view.end);
+  const visibleMaCenters = visibleItems(replayItemsByEnd(analysis.ma_centers || [], "end_index"), "start_index", "end_index", view);
+  const range = movingAverageRange(visibleKlines, visibleMa5, visibleMa10, visibleMa20, visibleMaCenters);
+  const x = (idx) => plot.left + ((idx - view.start + 0.5) / view.count) * plot.width;
+  const y = (price) => plot.top + ((range.high - price) / (range.high - range.low)) * plot.height;
+  const candidates = visibleIndexSignals(replayFilteredIndexSignals(analysis.ma_signals || []), view);
+  const barHit = Math.max(10, plot.width / view.count);
+
+  let best = null;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (const item of candidates) {
+    const px = x(item.index);
+    const py = y(item.price);
+    const bounds = signalTagBounds(px, py, item.side === "buy", plot, true);
+    const insideTag =
+      pointerX >= bounds.tagX - 4 &&
+      pointerX <= bounds.tagX + bounds.width + 4 &&
+      pointerY >= bounds.tagY - 4 &&
+      pointerY <= bounds.tagY + bounds.height + 4;
+    const nearAnchor = Math.abs(pointerX - px) <= barHit && Math.abs(pointerY - py) <= 16;
+    if (!insideTag && !nearAnchor) continue;
+    const distance = Math.hypot(pointerX - px, pointerY - py);
+    if (distance < bestDistance) {
+      best = item;
+      bestDistance = distance;
+    }
+  }
+  return best;
+}
+
 function showSignalTooltip(event, signal) {
   els.tooltip.hidden = false;
   positionTooltip(event, 280, 180);
@@ -3372,10 +4670,23 @@ function showSignalTooltip(event, signal) {
   `;
 }
 
+function showMaSignalTooltip(event, signal) {
+  els.tooltip.hidden = false;
+  positionTooltip(event, 260, 140);
+  els.tooltip.innerHTML = `
+    <strong>${maSignalLabel(signal)} · ${formatDate(signal.date)}</strong><br>
+    状态 ${signal.status_label || "均线辅助"} · 价格 ${formatPrice(signal.price)}<br>
+    ${signal.reason || ""}
+  `;
+}
+
 function showMainTooltip(event, analysis, idx) {
   const bar = analysis.klines[idx];
   const macd = analysis.indicators?.macd?.[idx];
   const bbi = analysis.indicators?.bbi?.[idx];
+  const ma5 = analysis.indicators?.ma5?.[idx];
+  const ma10 = analysis.indicators?.ma10?.[idx];
+  const ma20 = analysis.indicators?.ma20?.[idx];
   const changePct = barChangePct(analysis.klines, idx);
   const weakToStrong = isWeakToStrongBar(analysis, idx);
   const weakToStrongReasons = weakToStrong ? weakToStrongReasonList(analysis, idx) : [];
@@ -3388,6 +4699,7 @@ function showMainTooltip(event, analysis, idx) {
     低 ${formatPrice(bar.low)} 收 ${formatPrice(bar.close)}<br>
     涨跌幅 ${changePct === null ? "-" : formatSignedPercent(changePct)}${weakToStrong ? " · 弱转强黄K" : ""}<br>
     BBI ${bbi?.value !== null && bbi?.value !== undefined ? formatPrice(bbi.value) : "-"}<br>
+    MA5 ${ma5?.value !== null && ma5?.value !== undefined ? formatPrice(ma5.value) : "-"} · MA10 ${ma10?.value !== null && ma10?.value !== undefined ? formatPrice(ma10.value) : "-"} · MA20 ${ma20?.value !== null && ma20?.value !== undefined ? formatPrice(ma20.value) : "-"}<br>
     量 ${Math.round(bar.vol).toLocaleString()}<br>
     MACD ${macd ? formatMacd(macd.hist) : "-"} · DIF ${macd ? formatMacd(macd.dif) : "-"} · DEA ${macd ? formatMacd(macd.dea) : "-"}
     ${
@@ -3555,6 +4867,53 @@ function formatAmountYi(value) {
   return `${(num / 100000000).toFixed(2)} 亿`;
 }
 
+function formatPlainNumber(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "-";
+  return new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 0 }).format(num);
+}
+
+function formatVolumeHand(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "-";
+  return `${trimZeroes((num / 100).toFixed(0))} 手`;
+}
+
+function formatCompactValue(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "-";
+  return trimZeroes(num.toFixed(2));
+}
+
+function formatCompactShare(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "-";
+  return `${trimZeroes(num.toFixed(2))} 亿股`;
+}
+
+function formatSignedCompact(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "-";
+  return `${num > 0 ? "+" : ""}${trimZeroes(num.toFixed(1))}%`;
+}
+
+function formatHolderCount(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "-";
+  if (num >= 10000) return `${trimZeroes((num / 10000).toFixed(2))}万户`;
+  return `${Math.round(num)}户`;
+}
+
+function formatSignedAmountShort(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "-";
+  const sign = num > 0 ? "+" : num < 0 ? "-" : "";
+  const abs = Math.abs(num);
+  if (abs >= 100000000) return `${sign}${trimZeroes((abs / 100000000).toFixed(2))}亿`;
+  if (abs >= 10000) return `${sign}${trimZeroes((abs / 10000).toFixed(0))}万`;
+  return `${sign}${trimZeroes(abs.toFixed(0))}`;
+}
+
 function intValue(value) {
   const num = Number(value);
   if (!Number.isFinite(num)) return "0";
@@ -3710,6 +5069,14 @@ function bindEvents() {
 
   els.pickerOverviewBtn?.addEventListener("click", loadPickerOverview);
   els.pickerWatchlistBtn?.addEventListener("click", loadPickerWatchlist);
+  els.watchtowerRefreshBtn?.addEventListener("click", () => loadWatchtowerOverview(1));
+  els.watchtowerSearchBtn?.addEventListener("click", () => loadWatchtowerOverview(1));
+  els.watchtowerQueryInput?.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      loadWatchtowerOverview(1);
+    }
+  });
   els.reviewRefreshBtn?.addEventListener("click", loadReviewOverview);
   els.pickerRunBtn?.addEventListener("click", () => runSmartPicker("combined"));
   els.pickerRunConditionBtn?.addEventListener("click", () => runSmartPicker("condition"));
@@ -3751,7 +5118,7 @@ function bindEvents() {
       }
     });
   });
-  [els.pickerStructureFilter, els.pickerEmotionFilter, els.pickerLeaderFilter, els.pickerOverallFilter, els.pickerSortBy, els.pickerSortDirection].forEach((input) => {
+  [els.pickerMarketScopeFilter, els.pickerStructureFilter, els.pickerEmotionFilter, els.pickerLeaderFilter, els.pickerOverallFilter, els.pickerSortBy, els.pickerSortDirection].forEach((input) => {
     input?.addEventListener("change", () => {
       syncPickerFiltersFromControls();
       renderPickerTable();
@@ -3767,6 +5134,7 @@ function bindEvents() {
     if (els.pickerFocusReadyBtn) {
       els.pickerFocusReadyBtn.classList.remove("active");
     }
+    if (els.pickerMarketScopeFilter) els.pickerMarketScopeFilter.value = "all";
     if (els.pickerStructureFilter) els.pickerStructureFilter.value = "all";
     if (els.pickerEmotionFilter) els.pickerEmotionFilter.value = "all";
     if (els.pickerLeaderFilter) els.pickerLeaderFilter.value = "all";
@@ -3852,9 +5220,45 @@ function bindEvents() {
     });
   });
 
+  document.querySelector("#watchtowerPage")?.addEventListener("click", (event) => {
+    const pagerTrigger = event.target.closest("[data-watchtower-page]");
+    if (pagerTrigger) {
+      const page = pagerTrigger.dataset.watchtowerPage || "1";
+      loadWatchtowerOverview(page);
+      return;
+    }
+    const openTrigger = event.target.closest("[data-watchtower-open]");
+    if (openTrigger) {
+      openWatchtowerRealtimeModal(openTrigger.dataset.tsCode || "");
+      return;
+    }
+    const analysisTrigger = event.target.closest("[data-watchtower-analysis]");
+    if (analysisTrigger) {
+      openCandidateInAnalysis({
+        ts_code: analysisTrigger.dataset.tsCode || "",
+        name: analysisTrigger.dataset.name || "",
+        symbol: analysisTrigger.dataset.symbol || "",
+      });
+      return;
+    }
+    const eastmoneyTrigger = event.target.closest("[data-watchtower-eastmoney-add]");
+    if (eastmoneyTrigger) {
+      addWatchtowerStockToEastmoney(eastmoneyTrigger.dataset.tsCode || "");
+      return;
+    }
+    const deleteTrigger = event.target.closest("[data-watchtower-delete]");
+    if (deleteTrigger) {
+      deleteWatchtowerStock(deleteTrigger.dataset.tsCode || "");
+    }
+  });
+
   els.reviewModal?.addEventListener("click", (event) => {
     if (event.target.closest("[data-review-modal-close]")) {
       closeReviewModal();
+      return;
+    }
+    if (event.target.closest("[data-review-modal-reset-search='hot-money']")) {
+      resetReviewInstitutionModalSearch();
       return;
     }
     const pagerTrigger = event.target.closest("[data-review-page-action]");
@@ -3866,14 +5270,24 @@ function bindEvents() {
       }
     }
   });
-  els.reviewModal?.addEventListener("input", (event) => {
-    const field = event.target.closest("[data-review-modal-search='hot-money']");
-    if (!field) return;
-    updateReviewInstitutionModalSearch(field.value || "");
+  els.reviewModal?.addEventListener("submit", (event) => {
+    const form = event.target.closest("[data-review-modal-search-form='hot-money']");
+    if (!form) return;
+    event.preventDefault();
+    applyReviewInstitutionModalSearch();
+  });
+  els.watchtowerModal?.addEventListener("click", (event) => {
+    if (event.target.closest("[data-watchtower-modal-close]")) {
+      closeWatchtowerModal();
+    }
   });
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && els.reviewModal && !els.reviewModal.hidden) {
       closeReviewModal();
+      return;
+    }
+    if (event.key === "Escape" && els.watchtowerModal && !els.watchtowerModal.hidden) {
+      closeWatchtowerModal();
     }
   });
 
@@ -3886,6 +5300,7 @@ function bindEvents() {
   });
 
   els.refreshBtn.addEventListener("click", loadAnalysis);
+  els.analysisWatchlistBtn?.addEventListener("click", addCurrentAnalysisToWatchlist);
 
   els.showStrokes.addEventListener("change", () => {
     state.showStrokes = els.showStrokes.checked;
@@ -3973,6 +5388,10 @@ function bindEvents() {
     if (region === "main") {
       const signal = signalFromMainPointer(event, analysis);
       if (signal) showSignalTooltip(event, signal);
+      else showMainTooltip(event, analysis, idx);
+    } else if (region === "ma") {
+      const signal = maSignalFromPointer(event, analysis);
+      if (signal) showMaSignalTooltip(event, signal);
       else showMainTooltip(event, analysis, idx);
     } else if (region === "macd") {
       showMacdTooltip(event, analysis);

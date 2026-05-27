@@ -4,15 +4,22 @@ from collections import defaultdict
 import re
 from typing import Any
 
+from .ai_profile import AIProviderError, ClaudeProfileExplainer
 from .data_provider import DataProviderError, TushareClient, _is_tushare_rate_limit_error
 
 
 class ReviewService:
-    def __init__(self, data_client: TushareClient | None = None):
+    def __init__(self, data_client: TushareClient | None = None, ai_explainer: ClaudeProfileExplainer | None = None):
         self.data_client = data_client or TushareClient()
+        self.ai_explainer = ai_explainer or ClaudeProfileExplainer()
 
-    def overview(self, trade_date: str | None = None) -> dict[str, Any]:
+    def overview(self, trade_date: str | None = None, include_ai: bool = False) -> dict[str, Any]:
         top_list = self.data_client.get_top_list(trade_date)
+        market_indices = {"trade_date": trade_date or "", "items": []}
+        try:
+            market_indices = self.data_client.get_market_indices(trade_date)
+        except DataProviderError:
+            market_indices = {"trade_date": trade_date or "", "items": []}
         hot_money_detail = {"trade_date": trade_date or "", "items": []}
         hot_money_state = {"status": "ok", "message": ""}
         try:
@@ -52,7 +59,7 @@ class ReviewService:
             focus_boards,
         )
 
-        return {
+        result = {
             "status": "ok",
             "trade_date": actual_trade_date,
             "summary": {
@@ -65,6 +72,7 @@ class ReviewService:
                 "focus_board_count": len(focus_boards),
                 "focus_stock_count": len(focus_stocks),
             },
+            "market_indices": market_indices,
             "dragon_tiger": top_list.get("items", []),
             "hot_money_state": hot_money_state,
             "hot_money_trades": merged_hot_money_trades,
@@ -79,6 +87,30 @@ class ReviewService:
             "focus_stocks": focus_stocks,
             "notes": _build_review_notes(limit_groups, focus_boards, focus_stocks),
         }
+
+        if not include_ai:
+            result["ai_review"] = {"status": "idle", "message": ""}
+            return result
+
+        return self.explain_overview(result)
+
+    def explain_overview(self, review_payload: dict[str, Any]) -> dict[str, Any]:
+        result = dict(review_payload or {})
+        try:
+            ai_review = self.ai_explainer.explain_review(result)
+            result["ai_review"] = ai_review
+            result["focus_boards"] = _merge_ai_focus_boards(
+                result.get("focus_boards", []),
+                ai_review.get("analysis", {}).get("focus_boards"),
+            )
+            result["focus_stocks"] = _merge_ai_focus_stocks(
+                result.get("focus_stocks", []),
+                ai_review.get("analysis", {}).get("focus_stocks"),
+            )
+        except AIProviderError as exc:
+            result["ai_review"] = {"status": "error", "message": exc.message}
+
+        return result
 
 
 def _build_hot_money_trades(items: list[dict[str, Any]], hot_money_items: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -361,6 +393,55 @@ def _build_review_notes(
             "若龙虎榜净买入前排转弱而跌停增多，先把复盘结论切回防守。",
         ],
     }
+
+
+def _merge_ai_focus_boards(
+    boards: list[dict[str, Any]],
+    ai_items: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    if not ai_items:
+        return boards
+    board_map = {str(item.get("name", "")).strip(): dict(item) for item in boards}
+    ordered: list[dict[str, Any]] = []
+    for ai_item in ai_items:
+        name = str(ai_item.get("name", "")).strip()
+        if not name or name not in board_map:
+            continue
+        merged = dict(board_map[name])
+        merged["ai_reason"] = str(ai_item.get("reason", "") or "").strip()
+        merged["ai_action"] = str(ai_item.get("action", "") or "").strip()
+        ordered.append(merged)
+        board_map.pop(name, None)
+    ordered.extend(board_map.values())
+    return ordered[:10]
+
+
+def _merge_ai_focus_stocks(
+    stocks: list[dict[str, Any]],
+    ai_items: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    if not ai_items:
+        return stocks
+    stock_map: dict[str, dict[str, Any]] = {}
+    for item in stocks:
+        key = str(item.get("ts_code", "")).strip() or str(item.get("name", "")).strip()
+        if key:
+            stock_map[key] = dict(item)
+
+    ordered: list[dict[str, Any]] = []
+    for ai_item in ai_items:
+        key = str(ai_item.get("ts_code", "")).strip() or str(ai_item.get("name", "")).strip()
+        if not key or key not in stock_map:
+            continue
+        merged = dict(stock_map[key])
+        merged["ai_reason"] = str(ai_item.get("reason", "") or "").strip()
+        merged["ai_action"] = str(ai_item.get("action", "") or "").strip()
+        if str(ai_item.get("name", "")).strip():
+            merged["name"] = str(ai_item.get("name", "")).strip()
+        ordered.append(merged)
+        stock_map.pop(key, None)
+    ordered.extend(stock_map.values())
+    return ordered[:12]
 
 
 def _highest_board(items: list[dict[str, Any]]) -> int:

@@ -3,10 +3,12 @@ import unittest
 import numpy as np
 
 from chanlun_app.chanlun import (
+    ActiveStroke,
     Fractal,
     MergedBar,
     Stroke,
     analyze_klines,
+    build_active_stroke,
     build_centers,
     build_segments,
     build_strokes,
@@ -120,15 +122,62 @@ class ChanlunEngineTest(unittest.TestCase):
         self.assertEqual(result[0].price, 12)
         self.assertEqual(result[-1].price, 6)
 
-    def test_build_strokes_requires_five_raw_bars(self):
+    def test_build_strokes_opposite_fractals_end_previous_stroke(self):
         macd = np.zeros(20)
 
-        too_short = build_strokes([fractal("bottom", 0, 5), fractal("top", 3, 8)], macd)
-        enough = build_strokes([fractal("bottom", 0, 5), fractal("top", 4, 8)], macd)
+        result = build_strokes([fractal("bottom", 0, 5), fractal("top", 3, 8)], macd)
 
-        self.assertEqual(too_short, [])
-        self.assertEqual(len(enough), 1)
-        self.assertEqual(enough[0].direction, "up")
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0].direction, "up")
+        self.assertEqual(result[0].raw_span, 4)
+
+    def test_build_strokes_allows_adjacent_independent_fractals(self):
+        macd = np.zeros(20)
+
+        result = build_strokes([fractal("bottom", 10, 5), fractal("top", 11, 8)], macd)
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0].direction, "up")
+        self.assertEqual(result[0].raw_span, 2)
+
+    def test_build_strokes_extends_same_direction_until_opposite_fractal_ends_it(self):
+        macd = np.zeros(20)
+
+        result = build_strokes(
+            [
+                fractal("bottom", 0, 5),
+                fractal("top", 2, 8),
+                fractal("top", 4, 9),
+                fractal("bottom", 6, 6),
+            ],
+            macd,
+        )
+
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result[0].start_price, 5)
+        self.assertEqual(result[0].end_price, 9)
+        self.assertEqual(result[0].end_index, 4)
+        self.assertEqual(result[1].direction, "down")
+        self.assertEqual(result[1].start_price, 9)
+        self.assertEqual(result[1].end_price, 6)
+
+    def test_build_active_stroke_tracks_latest_extension_after_last_fractal(self):
+        bars = [
+            raw(0, 10, 8),
+            raw(1, 11, 9),
+            raw(2, 10.5, 8.8),
+            raw(3, 12, 9.5),
+            raw(4, 13, 10.2),
+        ]
+
+        result = build_active_stroke(bars, [fractal("bottom", 2, 8.8)])
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result.direction, "up")
+        self.assertEqual(result.start_index, 2)
+        self.assertEqual(result.end_index, 4)
+        self.assertEqual(result.end_price, 13)
+        self.assertEqual(result.status, "extending")
 
     def test_build_centers_from_three_overlapping_strokes(self):
         strokes = [
@@ -158,6 +207,24 @@ class ChanlunEngineTest(unittest.TestCase):
         self.assertEqual(len(segments), 2)
         self.assertEqual(segments[0].stroke_ids, ["b1", "b2", "b3"])
         self.assertEqual(segments[-1].status, "active")
+        self.assertEqual(segments[0].feature_sequence[0]["stroke_id"], "b2")
+        self.assertEqual(segments[1].feature_sequence[0]["stroke_id"], "b4")
+        self.assertEqual(segments[1].feature_gap, {})
+
+    def test_build_segments_marks_feature_gap(self):
+        strokes = [
+            stroke(0, "up", 8, 12, 8, 12),
+            stroke(1, "down", 12, 9, 9, 12),
+            stroke(2, "up", 9, 15, 9, 15),
+            stroke(3, "down", 15, 13, 13, 15),
+            stroke(4, "up", 13, 17, 13, 17),
+        ]
+
+        segments = build_segments(strokes)
+
+        self.assertEqual(segments[1].feature_gap["direction"], "up")
+        self.assertEqual(segments[1].feature_gap["low"], 12)
+        self.assertEqual(segments[1].feature_gap["high"], 13)
 
     def test_detect_divergence_and_first_signal(self):
         strokes = [
@@ -208,6 +275,11 @@ class ChanlunEngineTest(unittest.TestCase):
         self.assertIn("trend", result)
         self.assertIn("backtest", result)
         self.assertIn("risk_cards", result)
+        self.assertIn("ma_centers", result)
+        self.assertIn("ma_signals", result)
+        self.assertIn("ma5", result["indicators"])
+        self.assertIn("ma10", result["indicators"])
+        self.assertIn("ma20", result["indicators"])
         self.assertIn("position_label", result["trend"])
         self.assertIn("summary", result["backtest"])
 

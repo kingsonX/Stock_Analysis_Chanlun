@@ -19,65 +19,158 @@ class AIProviderError(Exception):
 class ClaudeProfileExplainer:
     BASE_URL = "https://api.anthropic.com"
     API_VERSION = "2023-06-01"
+    OPENAI_BASE_URL = "https://api.moonshot.cn/v1"
+    OPENAI_MODEL = "kimi-k2.6"
+    OPENAI_THINKING = {"type": "disabled"}
 
     def __init__(
         self,
         api_key: str | None = None,
         base_url: str | None = None,
         model: str | None = None,
-        timeout_seconds: int = 45,
+        timeout_seconds: int = 120,
     ):
-        self.api_key = api_key or _env_value("CLAUDE_API_KEY")
-        self.base_url = base_url or _env_value("CLAUDE_BASE_URL") or self.BASE_URL
-        self.model = model or _env_value("CLAUDE_MODEL") or "Claude Sonnet 4.6"
+        kimi_key = _env_value("KIMI_API_KEY")
+        kimi_base_url = _env_value("KIMI_BASE_URL")
+        kimi_model = _env_value("KIMI_MODEL")
+        claude_key = _env_value("CLAUDE_API_KEY")
+        claude_base_url = _env_value("CLAUDE_BASE_URL")
+        claude_model = _env_value("CLAUDE_MODEL")
+        explicit_provider = _provider_from_model(model) or (_provider_kind(base_url, default="") if base_url else "")
+        default_provider = explicit_provider or ("openai" if kimi_key else "anthropic")
+
+        self.api_key = api_key or kimi_key or claude_key
+        if base_url:
+            self.base_url = base_url
+        elif explicit_provider == "anthropic":
+            self.base_url = claude_base_url or self.BASE_URL
+        elif explicit_provider == "openai":
+            self.base_url = kimi_base_url or self.OPENAI_BASE_URL
+        else:
+            self.base_url = kimi_base_url or claude_base_url or (self.OPENAI_BASE_URL if kimi_key else self.BASE_URL)
+        self.provider = _provider_kind(self.base_url, default=default_provider)
+        self.provider_label = "Kimi" if self.provider == "openai" else "Claude"
+        self.model = model or (kimi_model if self.provider == "openai" else claude_model) or (self.OPENAI_MODEL if self.provider == "openai" else "Claude Sonnet 4.6")
         self.api_version = _env_value("CLAUDE_API_VERSION") or self.API_VERSION
-        self.max_tokens = _safe_int(_env_value("CLAUDE_MAX_TOKENS"), 1800)
+        default_max_tokens = 1400 if self.provider == "openai" else 1800
+        self.max_tokens = _safe_int(_env_value("KIMI_MAX_TOKENS") or _env_value("CLAUDE_MAX_TOKENS"), default_max_tokens)
         self.timeout_seconds = timeout_seconds
 
     def explain(self, stock: dict[str, Any], analysis: dict[str, Any], profile_payload: dict[str, Any]) -> dict[str, Any]:
         if not self.api_key:
-            raise AIProviderError("缺少 CLAUDE_API_KEY 环境变量，暂时无法生成 Claude 研究解读。", 500)
+            missing_env = "KIMI_API_KEY" if self.provider == "openai" else "CLAUDE_API_KEY"
+            raise AIProviderError(f"缺少 {missing_env} 环境变量，暂时无法生成 {self.provider_label} 研究解读。", 500)
 
         facts = _build_fact_packet(stock=stock, analysis=analysis, profile_payload=profile_payload)
-        payload = {
-            "model": self.model,
-            "max_tokens": self.max_tokens,
-            "system": _system_prompt(),
-            "messages": [
-                {
-                    "role": "user",
-                    "content": (
-                        "下面是当前股票的结构化事实，请严格基于这些事实输出 JSON，不要输出任何解释性前缀或 Markdown 代码块。\n"
-                        f"返回格式要求：{_response_contract_text()}\n"
-                        f"事实数据：{json.dumps(facts, ensure_ascii=False)}"
-                    ),
-                }
-            ],
-        }
+        payload = self._build_payload(facts)
 
         result = self._post_json(payload)
-        content = _extract_json_content(result)
+        content = self._extract_content(result)
         try:
             parsed = json.loads(content)
         except json.JSONDecodeError as exc:
-            raise AIProviderError("Claude 返回内容无法解析为结构化 JSON。", 502) from exc
+            raise AIProviderError(f"{self.provider_label} 返回内容无法解析为结构化 JSON。", 502) from exc
 
         return {
             "status": "ok",
             "model": self.model,
+            "provider": self.provider_label,
             "facts": facts,
             "analysis": parsed,
         }
 
+    def explain_review(self, review_payload: dict[str, Any]) -> dict[str, Any]:
+        if not self.api_key:
+            missing_env = "KIMI_API_KEY" if self.provider == "openai" else "CLAUDE_API_KEY"
+            raise AIProviderError(f"缺少 {missing_env} 环境变量，暂时无法生成 {self.provider_label} 复盘结论。", 500)
+
+        facts = _build_review_fact_packet(review_payload)
+        payload = self._build_review_payload(facts)
+        result = self._post_json(payload)
+        content = self._extract_content(result)
+        try:
+            parsed = json.loads(content)
+        except json.JSONDecodeError as exc:
+            raise AIProviderError(f"{self.provider_label} 返回的复盘内容无法解析为结构化 JSON。", 502) from exc
+
+        return {
+            "status": "ok",
+            "model": self.model,
+            "provider": self.provider_label,
+            "facts": facts,
+            "analysis": parsed,
+        }
+
+    def _build_payload(self, facts: dict[str, Any]) -> dict[str, Any]:
+        user_prompt = (
+            "下面是当前股票的结构化事实，请严格基于这些事实输出 JSON，不要输出任何解释性前缀或 Markdown 代码块。\n"
+            "输出务必简洁：summary、buy_judgement、reason 控制在两句话内；basis、conditions、risks、watch_points 各最多 3 条，单条尽量不超过 24 个字。\n"
+            f"返回格式要求：{_response_contract_text()}\n"
+            f"事实数据：{json.dumps(facts, ensure_ascii=False)}"
+        )
+        if self.provider == "openai":
+            return {
+                "model": self.model,
+                "max_tokens": self.max_tokens,
+                "temperature": 0.6,
+                "thinking": self.OPENAI_THINKING,
+                "messages": [
+                    {"role": "system", "content": _system_prompt()},
+                    {"role": "user", "content": user_prompt},
+                ],
+            }
+
+        return {
+            "model": self.model,
+            "max_tokens": self.max_tokens,
+            "system": _system_prompt(),
+            "messages": [{"role": "user", "content": user_prompt}],
+        }
+
+    def _build_review_payload(self, facts: dict[str, Any]) -> dict[str, Any]:
+        user_prompt = (
+            "下面是智能复盘页面的结构化事实，请严格基于这些事实，"
+            "从炒股养家公开心法的角度完成盘后复盘。"
+            "你必须覆盖四个部分：指数复盘、情绪周期、盘面复盘、消息复盘。"
+            "同时更新关注板块和关注股票，且只能使用事实里已经给出的候选。"
+            "输出务必是合法 JSON，不要加 Markdown 代码块或额外说明。\n"
+            "一句话复盘、阶段判断、各分块 summary 保持短句；列表每项尽量不超过 24 个字。\n"
+            f"返回格式要求：{_review_response_contract_text()}\n"
+            f"事实数据：{json.dumps(facts, ensure_ascii=False)}"
+        )
+        system_prompt = _review_system_prompt()
+        if self.provider == "openai":
+            return {
+                "model": self.model,
+                "max_tokens": max(self.max_tokens, 1600),
+                "temperature": 0.6,
+                "thinking": self.OPENAI_THINKING,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+            }
+
+        return {
+            "model": self.model,
+            "max_tokens": max(self.max_tokens, 1800),
+            "system": system_prompt,
+            "messages": [{"role": "user", "content": user_prompt}],
+        }
+
     def _post_json(self, payload: dict[str, Any]) -> dict[str, Any]:
+        url = _chat_completions_url(self.base_url) if self.provider == "openai" else _messages_url(self.base_url)
+        headers = {"Content-Type": "application/json"}
+        if self.provider == "openai":
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        else:
+            headers["x-api-key"] = self.api_key
+            headers["anthropic-version"] = self.api_version
+
         request = urllib.request.Request(
-            _messages_url(self.base_url),
+            url,
             data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-            headers={
-                "Content-Type": "application/json",
-                "x-api-key": self.api_key,
-                "anthropic-version": self.api_version,
-            },
+            headers=headers,
             method="POST",
         )
         try:
@@ -88,22 +181,28 @@ class ClaudeProfileExplainer:
                 body = exc.read().decode("utf-8")
             except Exception:
                 body = ""
-            raise AIProviderError(_http_error_message(exc.code, body), 502) from exc
+            raise AIProviderError(_http_error_message(self.provider_label, exc.code, body), 502) from exc
         except urllib.error.URLError as exc:
-            raise AIProviderError(f"Claude 网络访问失败：{exc.reason}", 502) from exc
+            raise AIProviderError(f"{self.provider_label} 网络访问失败：{exc.reason}", 502) from exc
         except TimeoutError as exc:
-            raise AIProviderError("Claude 请求超时。", 504) from exc
+            raise AIProviderError(f"{self.provider_label} 请求超时。", 504) from exc
 
         try:
             return json.loads(raw)
         except json.JSONDecodeError as exc:
-            raise AIProviderError("Claude 返回内容不是有效 JSON。", 502) from exc
+            raise AIProviderError(f"{self.provider_label} 返回内容不是有效 JSON。", 502) from exc
+
+    def _extract_content(self, result: dict[str, Any]) -> str:
+        if self.provider == "openai":
+            return _extract_openai_json_content(result)
+        return _extract_json_content(result)
 
 
 OpenAIProfileExplainer = ClaudeProfileExplainer
+KimiProfileExplainer = ClaudeProfileExplainer
 
 
-def _http_error_message(status_code: int, body: str) -> str:
+def _http_error_message(provider_label: str, status_code: int, body: str) -> str:
     try:
         payload = json.loads(body) if body else {}
     except json.JSONDecodeError:
@@ -111,8 +210,8 @@ def _http_error_message(status_code: int, body: str) -> str:
     error = payload.get("error") or {}
     message = _flatten(error.get("message") or body or f"HTTP {status_code}")
     if status_code == 401:
-        return f"Claude 鉴权失败：{message}"
-    return f"Claude 请求失败：{message}"
+        return f"{provider_label} 鉴权失败：{message}"
+    return f"{provider_label} 请求失败：{message}"
 
 
 def _extract_json_content(result: dict[str, Any]) -> str:
@@ -128,10 +227,25 @@ def _extract_json_content(result: dict[str, Any]) -> str:
     raise AIProviderError("Claude 没有返回可用文本。", 502)
 
 
+def _extract_openai_json_content(result: dict[str, Any]) -> str:
+    choices = result.get("choices") or []
+    if not choices:
+        raise AIProviderError("Kimi 没有返回可用结果。", 502)
+    message = choices[0].get("message") or {}
+    content = message.get("content") or ""
+    if isinstance(content, list):
+        content = "".join(_flatten(item.get("text") if isinstance(item, dict) else item) for item in content)
+    merged = _strip_json_fence(_flatten(content).strip())
+    if merged:
+        return merged
+    raise AIProviderError("Kimi 没有返回可用文本。", 502)
+
+
 def _system_prompt() -> str:
     return (
         "你是A股研究助理。请严格基于提供的事实，分别用缠中说禅、炒股养家、章建平三个视角，"
         "写出克制、可执行、像研究员写给交易员看的判断。"
+        "输出要短，适合直接展示在交易工作台卡片中。"
         "不要编造龙虎榜、盘口、机构持仓、内幕消息或额外公告。"
         "不要承诺收益，不要输出确定性荐股措辞。"
         "买入表达只能使用可跟踪、候选观察、暂不参与、风险回避这类克制口径。"
@@ -174,6 +288,54 @@ def _response_contract_text() -> str:
     )
 
 
+def _review_system_prompt() -> str:
+    return (
+        "你是A股短线复盘助理，站在炒股养家公开心法的表达框架里做盘后总结。"
+        "先判断市场阶段，再判断赚钱效应和亏钱效应，再看主流热点与龙头辨识度，最后给观察重点和风险边界。"
+        "不要编造指数、龙虎榜、游资、政策、资金流、连板或新闻。"
+        "不能输出荐股、梭哈、必涨这类措辞。"
+        "关注板块和关注股票只能从输入事实已有候选里挑选并排序。"
+        "返回内容必须是合法 JSON。"
+    )
+
+
+def _review_response_contract_text() -> str:
+    return json.dumps(
+        {
+            "summary": "string",
+            "market_stage": "强势推进|主流试错|分歧整理|退潮防守",
+            "index_review": {
+                "summary": "string",
+                "signals": ["string"],
+            },
+            "emotion_cycle": {
+                "summary": "string",
+                "signals": ["string"],
+            },
+            "tape_review": {
+                "summary": "string",
+                "hot_themes": ["string"],
+                "fund_flow": ["string"],
+                "limit_watch": ["string"],
+            },
+            "news_review": {
+                "summary": "string",
+                "catalysts": ["string"],
+                "ladder_focus": ["string"],
+            },
+            "watch_points": ["string"],
+            "risk_points": ["string"],
+            "focus_boards": [
+                {"name": "string", "reason": "string", "action": "string"}
+            ],
+            "focus_stocks": [
+                {"ts_code": "string", "name": "string", "reason": "string", "action": "string"}
+            ],
+        },
+        ensure_ascii=False,
+    )
+
+
 def _messages_url(base_url: str) -> str:
     cleaned = (base_url or ClaudeProfileExplainer.BASE_URL).rstrip("/")
     if cleaned.endswith("/messages"):
@@ -181,6 +343,33 @@ def _messages_url(base_url: str) -> str:
     if cleaned.endswith("/v1"):
         return f"{cleaned}/messages"
     return f"{cleaned}/v1/messages"
+
+
+def _chat_completions_url(base_url: str) -> str:
+    cleaned = (base_url or ClaudeProfileExplainer.OPENAI_BASE_URL).rstrip("/")
+    if cleaned.endswith("/chat/completions"):
+        return cleaned
+    if cleaned.endswith("/v1"):
+        return f"{cleaned}/chat/completions"
+    return f"{cleaned}/v1/chat/completions"
+
+
+def _provider_kind(base_url: str | None, default: str = "anthropic") -> str:
+    cleaned = (base_url or "").lower()
+    if "moonshot" in cleaned or "openai" in cleaned or "chat/completions" in cleaned:
+        return "openai"
+    if "anthropic" in cleaned or cleaned.endswith("/messages"):
+        return "anthropic"
+    return default
+
+
+def _provider_from_model(model: str | None) -> str:
+    text = _flatten(model or "").lower()
+    if "kimi" in text:
+        return "openai"
+    if "claude" in text:
+        return "anthropic"
+    return ""
 
 
 def _strip_json_fence(text: str) -> str:
@@ -292,5 +481,110 @@ def _build_fact_packet(stock: dict[str, Any], analysis: dict[str, Any], profile_
                 "summary": item.get("summary", ""),
             }
             for item in news_items[:4]
+        ],
+    }
+
+
+def _build_review_fact_packet(review_payload: dict[str, Any]) -> dict[str, Any]:
+    summary = review_payload.get("summary") or {}
+    notes = review_payload.get("notes") or {}
+    indices = (review_payload.get("market_indices") or {}).get("items") or []
+    dragon = review_payload.get("dragon_tiger") or []
+    hot_money = review_payload.get("hot_money_trades") or []
+    limit_lists = review_payload.get("limit_lists") or {}
+    ladder = review_payload.get("ladder") or []
+    focus_boards = review_payload.get("focus_boards") or []
+    focus_stocks = review_payload.get("focus_stocks") or []
+
+    return {
+        "trade_date": review_payload.get("trade_date", ""),
+        "summary": {
+            "dragon_count": summary.get("dragon_count", 0),
+            "hot_money_count": summary.get("hot_money_count", 0),
+            "up_limit_count": summary.get("up_limit_count", 0),
+            "down_limit_count": summary.get("down_limit_count", 0),
+            "burst_count": summary.get("burst_count", 0),
+            "highest_board": summary.get("highest_board", 0),
+            "focus_board_count": summary.get("focus_board_count", 0),
+            "focus_stock_count": summary.get("focus_stock_count", 0),
+        },
+        "market_indices": [
+            {
+                "ts_code": item.get("ts_code", ""),
+                "name": item.get("name", ""),
+                "close": item.get("close", ""),
+                "pct_chg": item.get("pct_chg", ""),
+                "amount": item.get("amount", ""),
+                "pe": item.get("pe", ""),
+                "pb": item.get("pb", ""),
+                "turnover_rate": item.get("turnover_rate", ""),
+            }
+            for item in indices[:3]
+        ],
+        "dragon_tiger": [
+            {
+                "ts_code": item.get("ts_code", ""),
+                "name": item.get("name", ""),
+                "pct_change": item.get("pct_change", ""),
+                "net_amount": item.get("net_amount", ""),
+                "reason": item.get("reason", ""),
+            }
+            for item in dragon[:8]
+        ],
+        "hot_money_trades": [
+            {
+                "ts_code": item.get("ts_code", ""),
+                "name": item.get("name", ""),
+                "hot_money_label": item.get("hot_money_label", ""),
+                "net_amount": item.get("net_amount", ""),
+                "tag": item.get("tag", ""),
+            }
+            for item in hot_money[:8]
+        ],
+        "limit_stats": {
+            "up_preview": [
+                {"ts_code": item.get("ts_code", ""), "name": item.get("name", ""), "limit_times": item.get("limit_times", ""), "strth": item.get("strth", "")}
+                for item in (limit_lists.get("up") or [])[:6]
+            ],
+            "burst_preview": [
+                {"ts_code": item.get("ts_code", ""), "name": item.get("name", ""), "open_times": item.get("open_times", ""), "fd_amount": item.get("fd_amount", "")}
+                for item in (limit_lists.get("burst") or [])[:6]
+            ],
+            "down_preview": [
+                {"ts_code": item.get("ts_code", ""), "name": item.get("name", ""), "pct_chg": item.get("pct_chg", "")}
+                for item in (limit_lists.get("down") or [])[:6]
+            ],
+        },
+        "ladder": [
+            {
+                "ts_code": item.get("ts_code", ""),
+                "name": item.get("name", ""),
+                "continue_num": item.get("continue_num", ""),
+                "concept": item.get("concept", ""),
+                "pct_chg": item.get("pct_chg", ""),
+            }
+            for item in ladder[:8]
+        ],
+        "rule_notes": notes,
+        "focus_board_candidates": [
+            {
+                "name": item.get("name", ""),
+                "rank": item.get("rank", ""),
+                "limit_count": item.get("limit_count", ""),
+                "pct_chg": item.get("pct_chg", ""),
+                "watch_reason": item.get("watch_reason", ""),
+            }
+            for item in focus_boards[:8]
+        ],
+        "focus_stock_candidates": [
+            {
+                "ts_code": item.get("ts_code", ""),
+                "name": item.get("name", ""),
+                "score": item.get("score", ""),
+                "tags": item.get("tags", []),
+                "reason": item.get("reason", ""),
+                "verdict": item.get("verdict", ""),
+            }
+            for item in focus_stocks[:10]
         ],
     }

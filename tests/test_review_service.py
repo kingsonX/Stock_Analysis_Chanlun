@@ -1,9 +1,20 @@
 import unittest
 
 from chanlun_app.review_service import ReviewService
+from chanlun_app.ai_profile import ClaudeProfileExplainer
 
 
 class FakeReviewDataClient:
+    def get_market_indices(self, trade_date=None):
+        return {
+            "trade_date": trade_date or "20260515",
+            "items": [
+                {"ts_code": "000001.SH", "name": "上证综指", "close": 3200.0, "pct_chg": 0.85, "pb": 1.32},
+                {"ts_code": "399001.SZ", "name": "深证成指", "close": 10350.0, "pct_chg": 1.42, "pb": 2.08},
+                {"ts_code": "399006.SZ", "name": "创业板指", "close": 2100.0, "pct_chg": 2.18, "pb": 3.21},
+            ],
+        }
+
     def get_top_list(self, trade_date=None):
         return {
             "trade_date": trade_date or "20260515",
@@ -76,11 +87,37 @@ class FakeReviewDataClient:
         ]
 
 
+class FakeReviewExplainer(ClaudeProfileExplainer):
+    def __init__(self):
+        super().__init__(api_key="test-key", model="Claude Sonnet 4.6")
+
+    def explain_review(self, review_payload):
+        self.last_payload = review_payload
+        return {
+            "status": "ok",
+            "provider": "Claude",
+            "model": "Claude Sonnet 4.6",
+            "facts": {"trade_date": review_payload.get("trade_date", "")},
+            "analysis": {
+                "summary": "指数偏强，情绪修复，主线往金融与互金集中。",
+                "market_stage": "主流试错",
+                "index_review": {"summary": "指数共振修复。", "signals": ["上证与创业板同步翻红"]},
+                "emotion_cycle": {"summary": "赚钱效应回暖。", "signals": ["涨停多于跌停"]},
+                "tape_review": {"summary": "热点集中。", "hot_themes": ["银行概念前排集中"], "fund_flow": ["龙虎榜净买入偏金融"], "limit_watch": ["高标 3 板观察分歧"]},
+                "news_review": {"summary": "催化围绕金融与政策。", "catalysts": ["金融链消息发酵"], "ladder_focus": ["三板高度仍可观察"]},
+                "watch_points": ["先看银行概念能否继续扩散"],
+                "risk_points": ["若炸板增加先切防守"],
+                "focus_boards": [{"name": "银行概念", "reason": "主流承接最好", "action": "先看前排封板质量"}],
+                "focus_stocks": [{"ts_code": "000001.SZ", "name": "平安银行", "reason": "板块辨识度高", "action": "观察是否继续获得资金共振"}],
+            },
+        }
+
+
 class ReviewServiceTest(unittest.TestCase):
     def setUp(self):
-        self.service = ReviewService(data_client=FakeReviewDataClient())
+        self.service = ReviewService(data_client=FakeReviewDataClient(), ai_explainer=FakeReviewExplainer())
 
-    def test_overview_aggregates_focus_lists(self):
+    def test_overview_aggregates_focus_lists_without_ai_blocking(self):
         result = self.service.overview("20260515")
 
         self.assertEqual(result["status"], "ok")
@@ -95,7 +132,16 @@ class ReviewServiceTest(unittest.TestCase):
         self.assertEqual(result["hot_money_stats"]["merged_count"], 2)
         self.assertEqual(result["focus_boards"][0]["name"], "银行概念")
         self.assertEqual(result["focus_stocks"][0]["name"], "平安银行")
+        self.assertEqual(result["ai_review"]["status"], "idle")
         self.assertIn("今天涨停", result["notes"]["summary"])
+
+    def test_explain_overview_merges_ai_focus_lists(self):
+        base = self.service.overview("20260515")
+        result = self.service.explain_overview(base)
+
+        self.assertEqual(result["ai_review"]["analysis"]["market_stage"], "主流试错")
+        self.assertEqual(result["focus_boards"][0]["ai_action"], "先看前排封板质量")
+        self.assertEqual(result["focus_stocks"][0]["ai_action"], "观察是否继续获得资金共振")
 
 
 if __name__ == "__main__":

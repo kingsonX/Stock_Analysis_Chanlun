@@ -58,12 +58,61 @@ class FakeScreenProvider:
         }
 
 
+class FakeAIExplainer:
+    def explain(self, stock=None, analysis=None, profile_payload=None):
+        return {
+            "status": "ok",
+            "provider": "Kimi",
+            "model": "kimi-k2.6",
+            "analysis": {
+                "summary": "结构、主流和容量可以一起看，但执行仍要等确认。",
+                "overall_verdict": "候选观察",
+                "buy_judgement": "先跟踪，不急着追高。",
+                "confidence": "中",
+                "chan_view": {
+                    "verdict": "候选观察",
+                    "buyable": "买点还要确认",
+                    "reason": "结构尚未走到强确认。",
+                    "basis": ["仍在中枢上方运行"],
+                    "conditions": ["不能跌破失效价"],
+                },
+                "yangjia_view": {
+                    "verdict": "主流活跃",
+                    "buyable": "主流里优先看强票",
+                    "reason": "赚钱效应仍在。",
+                    "basis": ["高涨幅样本仍活跃"],
+                    "conditions": ["主流继续扩散"],
+                },
+                "zhang_view": {
+                    "verdict": "容量可跟踪",
+                    "buyable": "容量够看，但别重仓",
+                    "reason": "流动性仍有承接。",
+                    "basis": ["成交额不差"],
+                    "conditions": ["继续放量承接"],
+                },
+                "risks": ["跌回中枢内部要重算假设"],
+                "watch_points": ["观察是否放量突破前高"],
+            },
+        }
+
+
 class TradingProfileTest(unittest.TestCase):
+    def test_profile_service_reuses_external_timeout_for_news_and_scan(self):
+        class TimedDataProvider(FakeDataProvider):
+            timeout_seconds = 6
+            api_key = "fake"
+
+        service = TradingProfileService(mx_data_provider=TimedDataProvider())
+
+        self.assertEqual(service.news_provider.timeout_seconds, 6)
+        self.assertEqual(service.screen_provider.timeout_seconds, 6)
+
     def test_profile_combines_structure_emotion_capacity(self):
         service = TradingProfileService(
             mx_data_provider=FakeDataProvider(),
             news_provider=FakeNewsProvider(),
             screen_provider=FakeScreenProvider(),
+            ai_explainer=FakeAIExplainer(),
         )
         stock = {"ts_code": "000001.SZ", "name": "平安银行", "symbol": "000001", "industry": "银行"}
         analysis = {
@@ -90,13 +139,20 @@ class TradingProfileTest(unittest.TestCase):
         result = service.build(stock=stock, analysis=analysis)
 
         self.assertEqual(result["profile"]["stance"], "neutral")
-        self.assertIn("结构偏多", result["profile"]["headline"])
-        self.assertIn("是否值得买", result["profile"]["decision"])
+        self.assertEqual(result["profile"]["headline"], "结构、主流和容量可以一起看，但执行仍要等确认。")
+        self.assertEqual(result["profile"]["decision"], "先跟踪，不急着追高。")
+        self.assertEqual(result["profile"]["stance_label"], "候选观察")
+        self.assertEqual(result["profile"]["ai_summary"]["provider"], "Kimi")
+        self.assertEqual(len(result["profile"]["ai_sections"]), 4)
         self.assertEqual(result["profile"]["emotion"]["label"], "主流活跃")
         self.assertEqual(result["profile"]["emotion"]["title"], "养家视角")
         self.assertEqual(result["profile"]["capacity"]["label"], "容量充足")
         self.assertEqual(result["profile"]["capacity"]["title"], "章盟主视角")
         self.assertEqual(result["profile"]["risk"]["label"], "风险需盯")
+        self.assertEqual(result["leader_profile"]["label"], "总龙头候选")
+        self.assertEqual(result["leader_profile"]["retreat_label"], "未见明确退潮")
+        self.assertEqual(result["leader_profile"]["ai_section"]["title"], "AI养家补充")
+        self.assertGreaterEqual(result["leader_profile"]["score"], 8)
         self.assertTrue(result["profile"]["structure"]["basis"])
         self.assertIn("是否值得买", result["profile"]["structure"]["action"])
 
@@ -122,6 +178,7 @@ class TradingProfileTest(unittest.TestCase):
         self.assertEqual(result["profile"]["stance"], "neutral")
         self.assertEqual(result["news"]["status"], "error")
         self.assertEqual(result["market_scan"]["status"], "error")
+        self.assertEqual(result["leader_profile"]["label"], "非龙头")
         self.assertIn("是否值得买", result["profile"]["decision"])
 
 

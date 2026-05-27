@@ -96,6 +96,53 @@ class MXWatchlistProvider(MXBaseClient):
             "message": _flatten(result.get("message") or "操作成功"),
         }
 
+    def manage_group(self, action: str, target: str, group_name: str) -> dict[str, Any]:
+        cleaned_action = (action or "").strip().lower()
+        cleaned_target = (target or "").strip()
+        cleaned_group = (group_name or "").strip()
+        if cleaned_action not in {"add", "delete"}:
+            raise MXProviderError("分组自选操作只支持 add 或 delete。", 400)
+        if not cleaned_target:
+            raise MXProviderError("缺少自选股代码或名称。", 400)
+        if not cleaned_group:
+            raise MXProviderError("缺少自选股组名称。", 400)
+
+        if cleaned_action == "add":
+            queries = [
+                f"把{cleaned_target}添加到{cleaned_group}自选股组",
+                f"把{cleaned_target}加入{cleaned_group}分组",
+            ]
+        else:
+            queries = [
+                f"把{cleaned_target}从{cleaned_group}自选股组删除",
+                f"把{cleaned_target}从{cleaned_group}分组移除",
+            ]
+
+        last_error = ""
+        for query in queries:
+            try:
+                result = self._post_json(self.MANAGE_URL, {"query": query})
+            except MXProviderError as exc:
+                last_error = exc.message
+                continue
+            if not isinstance(result, dict):
+                last_error = "自选股分组操作返回格式异常。"
+                continue
+            status = result.get("status")
+            code = result.get("code")
+            if status not in (0, "0", None) and code not in (0, "0", None):
+                last_error = f"自选分组操作失败：{result.get('message') or status or code}"
+                continue
+            return {
+                "status": "ok",
+                "action": cleaned_action,
+                "target": cleaned_target,
+                "group_name": cleaned_group,
+                "message": _flatten(result.get("message") or "操作成功"),
+            }
+
+        raise MXProviderError(last_error or "自选分组操作失败。", 502)
+
 
 class SmartPickerService:
     def __init__(
@@ -210,6 +257,58 @@ class SmartPickerService:
             "errors": errors,
         }
 
+    def screen_watchlist(self, level: str = "daily", limit: int | None = None) -> dict[str, Any]:
+        if level not in LEVELS:
+            raise MXProviderError(f"level 只支持 {'、'.join(LEVELS)}。", 400)
+
+        watchlist = self.watchlist()
+        rows = self._rows_from_watchlist(watchlist.get("items", []))
+        market_cards = self._market_cards()
+        stage = _market_stage(market_cards)
+        theme_context = self._build_theme_context(self._market_theme_rows(market_cards))
+
+        scan_rows = rows if limit is None else rows[:limit]
+        candidates = []
+        errors = []
+        fallback_count = 0
+        for row in scan_rows:
+            try:
+                candidates.append(self._candidate_from_row(row, level, stage, theme_context))
+            except (DataProviderError, MXProviderError) as exc:
+                message = getattr(exc, "message", str(exc))
+                fallback = self._fallback_candidate_from_row(row, level, stage, theme_context, message)
+                if fallback:
+                    candidates.append(fallback)
+                    fallback_count += 1
+                errors.append({"row": row, "message": message})
+
+        return {
+            "status": "ok",
+            "source_type": "watchlist",
+            "query_text": "",
+            "level": level,
+            "level_label": LEVELS[level]["label"],
+            "universe": self._universe(),
+            "description": "已把东方财富自选股同步为候选池，按当前结构级别做自选分析。",
+            "parser_text": "",
+            "source_total": watchlist.get("total", len(rows)),
+            "total": len(rows),
+            "stage": stage,
+            "theme_ladders": theme_context.get("groups", []),
+            "leader_board": theme_context.get("leaders", []),
+            "theme_sample_size": theme_context.get("sample_size", 0),
+            "board_filter": None,
+            "board_filters": [],
+            "watchlist": {
+                "status": watchlist.get("status"),
+                "label": watchlist.get("label", "我的自选"),
+                "total": watchlist.get("total", len(rows)),
+            },
+            "fallback_count": fallback_count,
+            "candidates": candidates,
+            "errors": errors,
+        }
+
     def candidate_detail(self, stock: dict[str, Any], level: str = "daily") -> dict[str, Any]:
         query = _flatten(stock.get("ts_code") or stock.get("symbol") or stock.get("name")).strip()
         if not query:
@@ -217,9 +316,32 @@ class SmartPickerService:
         if level not in LEVELS:
             raise MXProviderError(f"level 只支持 {'、'.join(LEVELS)}。", 400)
 
-        stock_record = self.data_client.resolve_stock(query)
+        try:
+            stock_record = self.data_client.resolve_stock(query)
+        except DataProviderError as exc:
+            symbol = _flatten(stock.get("symbol") or query).strip()
+            name = _flatten(stock.get("name") or query).strip()
+            if not symbol and not name:
+                raise
+            stock_record = StockRecord(
+                ts_code=_flatten(stock.get("ts_code") or symbol or name).strip(),
+                symbol=symbol,
+                name=name or symbol,
+                industry=_flatten(stock.get("industry") or "").strip(),
+                area=_flatten(stock.get("area") or "").strip(),
+                market=_flatten(stock.get("market") or "").strip(),
+                exchange=_flatten(stock.get("exchange") or "").strip(),
+                list_date=_flatten(stock.get("list_date") or "").strip(),
+                cnspell=_flatten(stock.get("cnspell") or "").strip(),
+            )
+            watchlist, in_watchlist, watchlist_row = self._watchlist_state(stock_record)
+            return self._fallback_candidate_detail(stock_record, level, exc.message, watchlist, in_watchlist, watchlist_row)
+        watchlist, in_watchlist, watchlist_row = self._watchlist_state(stock_record)
         start_date, end_date = default_date_range(level)
-        klines = self.data_client.get_klines(stock_record.ts_code, level, start_date, end_date)
+        try:
+            klines = self.data_client.get_klines(stock_record.ts_code, level, start_date, end_date)
+        except DataProviderError as exc:
+            return self._fallback_candidate_detail(stock_record, level, exc.message, watchlist, in_watchlist, watchlist_row)
         analysis = analyze_klines(klines, level=level)
         analysis["stock"] = stock_record.as_dict()
         analysis["query"] = {
@@ -231,7 +353,7 @@ class SmartPickerService:
         market_cards = self._market_cards()
         stage = _market_stage(market_cards)
         theme_context = self._build_theme_context(self._market_theme_rows(market_cards))
-        market_row = _match_market_row(stock_record.as_dict(), market_cards)
+        market_row = _match_market_row(stock_record.as_dict(), market_cards) or watchlist_row
         emotion = _candidate_emotion(stock_record.as_dict(), market_row or {}, theme_context)
         leader = _candidate_leader(stock_record.as_dict(), market_row or {}, theme_context)
         capacity = _candidate_capacity(market_row or {})
@@ -246,14 +368,6 @@ class SmartPickerService:
             capacity=capacity,
             quote_row=market_row or {},
         )
-        try:
-            watchlist = self.watchlist()
-            watch_codes = {item.get("code", "") for item in watchlist.get("items", [])}
-            in_watchlist = stock_record.symbol in watch_codes or stock_record.ts_code.split(".")[0] in watch_codes
-        except Exception as exc:
-            message = getattr(exc, "message", "") or str(exc) or "自选同步失败。"
-            watchlist = {"status": "error", "message": message, "items": [], "total": 0}
-            in_watchlist = False
         return {
             "status": "ok",
             "stock": stock_record.as_dict(),
@@ -283,6 +397,9 @@ class SmartPickerService:
 
     def manage_watchlist(self, action: str, target: str) -> dict[str, Any]:
         return self.watchlist_provider.manage(action=action, target=target)
+
+    def manage_watchlist_group(self, action: str, target: str, group_name: str) -> dict[str, Any]:
+        return self.watchlist_provider.manage_group(action=action, target=target, group_name=group_name)
 
     def _universe(self) -> dict[str, Any]:
         load_stocks = getattr(self.data_client, "load_stocks", None)
@@ -382,6 +499,79 @@ class SmartPickerService:
             "leader": leader,
             "overall": overall,
             "screen_row": row,
+        }
+
+    def _fallback_candidate_from_row(
+        self,
+        row: dict[str, Any],
+        level: str,
+        stage: dict[str, Any],
+        theme_context: dict[str, Any],
+        message: str,
+    ) -> dict[str, Any] | None:
+        query = (
+            _row_value(row, ["股票代码", "代码"])
+            or _row_value(row, ["股票简称", "名称"])
+            or _row_value(row, ["股票名称", "名称"])
+        )
+        if not query:
+            return None
+
+        try:
+            stock = self.data_client.resolve_stock(query)
+            stock_payload = stock.as_dict()
+        except DataProviderError:
+            stock_payload = {
+                "ts_code": _row_value(row, ["股票代码", "代码"]) or query,
+                "symbol": _row_value(row, ["股票代码", "代码"]) or query,
+                "name": _row_value(row, ["股票简称", "股票名称", "名称"]) or query,
+                "industry": "",
+                "area": "",
+                "market": "",
+                "exchange": "",
+                "list_date": "",
+                "cnspell": "",
+            }
+
+        structure = {
+            "score": 35,
+            "label": "结构待补充",
+            "tone": "neutral",
+            "summary": f"{LEVELS[level]['label']} · 当前环境暂缺结构数据，先展示自选行情。",
+            "signal": message,
+            "divergence": "",
+            "invalidation_price": None,
+            "unavailable": True,
+        }
+        emotion = _candidate_emotion(stock_payload, row, theme_context)
+        capacity = _candidate_capacity(row)
+        leader = _candidate_leader(stock_payload, row, theme_context)
+        overall = _candidate_overall(structure, emotion, capacity, leader, stage)
+        overall["label"] = "候选观察"
+        overall["tone"] = "neutral"
+        overall["decision"] = "自选已同步，先看行情与主流位置；补齐结构数据后再升级判断。"
+
+        return {
+            "stock": stock_payload,
+            "level": level,
+            "level_label": LEVELS[level]["label"],
+            "quote": {
+                "latest_price": _row_value(row, ["最新价"]),
+                "change_pct": _row_value(row, ["涨跌幅"]),
+                "change_pct_value": _parse_numeric(_row_value(row, ["涨跌幅"])),
+                "turnover": _row_value(row, ["换手率"]),
+                "turnover_value": _parse_numeric(_row_value(row, ["换手率"])),
+                "amount": _row_value(row, ["成交额", "成交金额"]),
+                "amount_value": _parse_numeric(_row_value(row, ["成交额", "成交金额"])),
+            },
+            "structure": structure,
+            "emotion": emotion,
+            "capacity": capacity,
+            "leader": leader,
+            "overall": overall,
+            "screen_row": row,
+            "analysis_available": False,
+            "error_message": message,
         }
 
     def _market_cards(self) -> list[dict[str, Any]]:
@@ -646,6 +836,153 @@ class SmartPickerService:
                     }
                 )
         return rows
+
+    def _watchlist_state(self, stock_record: StockRecord) -> tuple[dict[str, Any], bool, dict[str, Any]]:
+        try:
+            watchlist = self.watchlist()
+            matched_item = self._match_watchlist_item(watchlist.get("items", []), stock_record)
+            in_watchlist = matched_item is not None
+            return watchlist, in_watchlist, self._watchlist_item_row(matched_item)
+        except Exception as exc:
+            message = getattr(exc, "message", "") or str(exc) or "自选同步失败。"
+            return {"status": "error", "message": message, "items": [], "total": 0}, False, {}
+
+    @staticmethod
+    def _match_watchlist_item(items: list[dict[str, Any]], stock_record: StockRecord) -> dict[str, Any] | None:
+        for item in items or []:
+            code = _flatten(item.get("code") or "").strip().upper()
+            name = _flatten(item.get("name") or "").strip()
+            if code in {stock_record.symbol.upper(), stock_record.ts_code.split(".")[0].upper()}:
+                return item
+            if name and name == stock_record.name:
+                return item
+        return None
+
+    def _watchlist_item_row(self, item: dict[str, Any] | None) -> dict[str, Any]:
+        rows = self._rows_from_watchlist([item] if item else [])
+        return rows[0] if rows else {}
+
+    def _rows_from_watchlist(self, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            raw = item.get("raw") if isinstance(item.get("raw"), dict) else {}
+            row = dict(raw)
+            if not _row_value(row, ["股票代码", "代码"]):
+                row["股票代码"] = _flatten(item.get("code") or item.get("ts_code") or "")
+            if not _row_value(row, ["股票简称", "股票名称", "名称"]):
+                row["股票简称"] = _flatten(item.get("name") or "")
+            if not _row_value(row, ["最新价"]):
+                row["最新价"] = _flatten(item.get("latest_price") or "")
+            if not _row_value(row, ["涨跌幅"]):
+                row["涨跌幅"] = _flatten(item.get("change_pct") or "")
+            if not _row_value(row, ["换手率"]):
+                row["换手率"] = _flatten(item.get("turnover") or "")
+            if not _row_value(row, ["量比"]):
+                row["量比"] = _flatten(item.get("volume_ratio") or "")
+
+            query_key = (
+                _row_value(row, ["股票代码", "代码"])
+                or _row_value(row, ["股票简称", "股票名称", "名称"])
+            ).strip()
+            if not query_key:
+                continue
+            dedupe_key = query_key.upper()
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+            row["__source_scope"] = "我的自选"
+            row["__source_label"] = "东方财富自选"
+            rows.append(row)
+        return rows
+
+    def _fallback_candidate_detail(
+        self,
+        stock_record: StockRecord,
+        level: str,
+        message: str,
+        watchlist: dict[str, Any],
+        in_watchlist: bool,
+        watchlist_row: dict[str, Any],
+    ) -> dict[str, Any]:
+        market_cards = self._market_cards()
+        stage = _market_stage(market_cards)
+        theme_context = self._build_theme_context(self._market_theme_rows(market_cards))
+        market_row = _match_market_row(stock_record.as_dict(), market_cards) or watchlist_row
+        emotion = _candidate_emotion(stock_record.as_dict(), market_row or {}, theme_context)
+        leader = _candidate_leader(stock_record.as_dict(), market_row or {}, theme_context)
+        capacity = _candidate_capacity(market_row or {})
+        return {
+            "status": "ok",
+            "stock": stock_record.as_dict(),
+            "analysis": {
+                "unavailable": True,
+                "message": message,
+                "trend": {"label": "结构待补充", "position_label": "等待结构数据"},
+                "signals": [],
+                "divergences": [],
+                "risk_cards": [],
+                "backtest": {"summary": {}, "trades": [], "note": "当前环境缺少结构数据，复盘统计暂不展示。"},
+                "level_context": {},
+            },
+            "profile": {
+                "profile": {
+                    "stance": "neutral",
+                    "stance_label": "候选观察",
+                    "headline": "自选股已同步，但当前环境暂缺缠论结构数据。",
+                    "decision": "先把它放在观察位，补齐 Tushare 结构数据后再升级判断。",
+                    "conclusion": "当前先依据自选行情、主流梯队和容量信息观察，不直接下执行结论。",
+                    "tags": ["自选同步", "结构待补充"],
+                },
+                "mx_summary": {"status": "empty", "data": {"cards": []}},
+                "news": {"status": "empty", "items": []},
+                "market_scan": {"status": "empty", "cards": []},
+            },
+            "execution": {
+                "plan": {
+                    "title": "交易计划",
+                    "setup": "数据待补充",
+                    "tone": "neutral",
+                    "verdict": "先观察",
+                    "summary": f"{stock_record.name} 已进入自选候选池，但当前缺少 {LEVELS[level]['label']} 结构数据。",
+                    "action": "先观察行情、热点与容量，不在结构信息缺失时提前下执行判断。",
+                    "position_hint": "不执行，先补数据。",
+                    "basis": [message, f"主流梯队：{emotion.get('label') or '未归类'}", f"容量情况：{capacity.get('label') or '待判断'}"],
+                    "watch_points": ["补齐 Tushare 数据后再看买卖点。", "先看热点位置和承接，不把自选本身当成买入理由。"],
+                    "avoid_if": ["结构数据未恢复前，不做执行升级。"],
+                },
+                "discipline": {
+                    "title": "纪律引擎",
+                    "score": 40,
+                    "tone": "neutral",
+                    "label": "先补数据",
+                    "position_hint": "观察仓或空仓",
+                    "summary": "当前环境缺少结构数据，纪律引擎先保持观察状态。",
+                    "next_step": "补齐 Tushare 结构数据后，再检查买点、失效价和风报比。",
+                    "checks": [
+                        {"label": "结构数据是否可用", "passed": False, "detail": message},
+                        {"label": "主流位置是否可跟踪", "passed": emotion.get("label") in {"主流热点", "次主流"}, "detail": f"当前归类为 {emotion.get('label') or '未归类'}。"},
+                        {"label": "容量信息是否可参考", "passed": bool(market_row), "detail": capacity.get("summary") or "当前仅有有限行情字段。"},
+                    ],
+                },
+                "review": {
+                    "title": "复盘系统",
+                    "label": "结构缺失",
+                    "tone": "neutral",
+                    "summary": "先把自选同步回来，等结构数据恢复后再补复盘样本和执行结论。",
+                    "lessons": ["自选同步不应因为结构数据缺失而整页空白。"],
+                    "recent_cases": [],
+                    "note": "当前详情页先提供观察框架，避免因为单一数据源缺失直接中断工作流。",
+                },
+            },
+            "watchlist": {
+                "status": watchlist.get("status"),
+                "in_watchlist": in_watchlist,
+                "total": watchlist.get("total", 0),
+            },
+        }
 
     def _resolve_theme_stock(self, row: dict[str, Any]) -> dict[str, Any] | None:
         code = _row_value(row, ["股票代码", "代码"])

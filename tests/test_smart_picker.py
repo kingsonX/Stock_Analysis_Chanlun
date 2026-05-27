@@ -3,6 +3,7 @@ import unittest
 import pandas as pd
 
 from chanlun_app.smart_picker import SmartPickerService
+from chanlun_app.data_provider import DataProviderError
 
 
 def sample_klines():
@@ -154,6 +155,16 @@ class FakeDataClient:
         return self.board_members.get(ts_code, [])
 
 
+class TokenlessKlineDataClient(FakeDataClient):
+    def get_klines(self, ts_code, level, start_date, end_date):
+        raise DataProviderError("缺少 TUSHARE_TOKEN 环境变量，请先配置 Tushare Pro Token。", 500)
+
+
+class MissingStockDataClient(TokenlessKlineDataClient):
+    def resolve_stock(self, query):
+        raise DataProviderError("缺少 TUSHARE_TOKEN 环境变量，请先配置 Tushare Pro Token。", 500)
+
+
 class FakeScreenProvider:
     def search(self, query):
         return {"query": query}
@@ -253,7 +264,20 @@ class FakeWatchlistProvider:
         self.last_manage = None
 
     def query(self):
-        return {"status": "ok", "items": [{"code": "000001", "name": "平安银行"}], "total": 1}
+        return {
+            "status": "ok",
+            "items": [
+                {
+                    "code": "000001",
+                    "name": "平安银行",
+                    "latest_price": "10.22",
+                    "change_pct": "2.0%",
+                    "turnover": "5.6%",
+                    "raw": {"成交额": "16.0亿"},
+                }
+            ],
+            "total": 1,
+        }
 
     def manage(self, action="", target=""):
         self.last_manage = {"action": action, "target": target}
@@ -341,6 +365,32 @@ class SmartPickerServiceTest(unittest.TestCase):
         self.assertEqual(result["total"], 1)
         self.assertEqual(result["candidates"][0]["stock"]["symbol"], "300059")
 
+    def test_screen_watchlist_builds_candidates(self):
+        result = self.service.screen_watchlist(level="daily")
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["source_type"], "watchlist")
+        self.assertEqual(result["watchlist"]["total"], 1)
+        self.assertEqual(result["candidates"][0]["stock"]["symbol"], "000001")
+        self.assertEqual(result["candidates"][0]["quote"]["amount_value"], 1600000000.0)
+
+    def test_screen_watchlist_degrades_when_structure_data_missing(self):
+        service = SmartPickerService(
+            data_client=TokenlessKlineDataClient(),
+            mx_data_provider=None,
+            news_provider=FakeNewsProvider(),
+            screen_provider=FakeScreenProvider(),
+            watchlist_provider=self.watchlist,
+            trading_profile=FakeProfileService(),
+        )
+
+        result = service.screen_watchlist(level="daily")
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["fallback_count"], 1)
+        self.assertEqual(result["candidates"][0]["structure"]["label"], "结构待补充")
+        self.assertFalse(result["candidates"][0]["analysis_available"])
+
     def test_candidate_detail_contains_profile_and_watchlist(self):
         result = self.service.candidate_detail(stock={"ts_code": "000001.SZ"}, level="weekly")
 
@@ -374,6 +424,39 @@ class SmartPickerServiceTest(unittest.TestCase):
         self.assertEqual(result["status"], "ok")
         self.assertFalse(result["watchlist"]["in_watchlist"])
         self.assertEqual(result["watchlist"]["status"], "error")
+
+    def test_candidate_detail_degrades_when_structure_data_missing(self):
+        service = SmartPickerService(
+            data_client=TokenlessKlineDataClient(),
+            mx_data_provider=None,
+            news_provider=FakeNewsProvider(),
+            screen_provider=FakeScreenProvider(),
+            watchlist_provider=self.watchlist,
+            trading_profile=FakeProfileService(),
+        )
+
+        result = service.candidate_detail(stock={"ts_code": "000001.SZ"}, level="daily")
+
+        self.assertEqual(result["status"], "ok")
+        self.assertTrue(result["analysis"]["unavailable"])
+        self.assertIn("缺少 TUSHARE_TOKEN", result["analysis"]["message"])
+        self.assertEqual(result["execution"]["plan"]["setup"], "数据待补充")
+
+    def test_candidate_detail_degrades_when_stock_lookup_missing(self):
+        service = SmartPickerService(
+            data_client=MissingStockDataClient(),
+            mx_data_provider=None,
+            news_provider=FakeNewsProvider(),
+            screen_provider=FakeScreenProvider(),
+            watchlist_provider=self.watchlist,
+            trading_profile=FakeProfileService(),
+        )
+
+        result = service.candidate_detail(stock={"symbol": "000001", "name": "平安银行"}, level="daily")
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["stock"]["symbol"], "000001")
+        self.assertTrue(result["analysis"]["unavailable"])
 
 
 if __name__ == "__main__":
