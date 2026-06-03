@@ -1,6 +1,6 @@
 import unittest
 
-from chanlun_app.review_service import ReviewService
+from chanlun_app.review_service import ReviewService, _build_emotion_cycle
 from chanlun_app.ai_profile import ClaudeProfileExplainer
 
 
@@ -89,20 +89,20 @@ class FakeReviewDataClient:
 
 class FakeReviewExplainer(ClaudeProfileExplainer):
     def __init__(self):
-        super().__init__(api_key="test-key", model="Claude Sonnet 4.6")
+        super().__init__(api_key="test-key", base_url="https://ark.cn-beijing.volces.com/api/coding/v3", model="doubao-seed-2-0-lite")
 
     def explain_review(self, review_payload):
         self.last_payload = review_payload
         return {
             "status": "ok",
-            "provider": "Claude",
-            "model": "Claude Sonnet 4.6",
+            "provider": "火山方舟",
+            "model": "doubao-seed-2-0-lite",
             "facts": {"trade_date": review_payload.get("trade_date", "")},
             "analysis": {
                 "summary": "指数偏强，情绪修复，主线往金融与互金集中。",
                 "market_stage": "主流试错",
                 "index_review": {"summary": "指数共振修复。", "signals": ["上证与创业板同步翻红"]},
-                "emotion_cycle": {"summary": "赚钱效应回暖。", "signals": ["涨停多于跌停"]},
+                "emotion_cycle": {"phase": "分歧转强（弱转强）", "summary": "赚钱效应回暖。", "signals": ["涨停多于跌停"]},
                 "tape_review": {"summary": "热点集中。", "hot_themes": ["银行概念前排集中"], "fund_flow": ["龙虎榜净买入偏金融"], "limit_watch": ["高标 3 板观察分歧"]},
                 "news_review": {"summary": "催化围绕金融与政策。", "catalysts": ["金融链消息发酵"], "ladder_focus": ["三板高度仍可观察"]},
                 "watch_points": ["先看银行概念能否继续扩散"],
@@ -134,6 +134,7 @@ class ReviewServiceTest(unittest.TestCase):
         self.assertEqual(result["focus_stocks"][0]["name"], "平安银行")
         self.assertEqual(result["ai_review"]["status"], "idle")
         self.assertIn("今天涨停", result["notes"]["summary"])
+        self.assertIn("phase", result["emotion_cycle"])
 
     def test_explain_overview_merges_ai_focus_lists(self):
         base = self.service.overview("20260515")
@@ -142,6 +143,20 @@ class ReviewServiceTest(unittest.TestCase):
         self.assertEqual(result["ai_review"]["analysis"]["market_stage"], "主流试错")
         self.assertEqual(result["focus_boards"][0]["ai_action"], "先看前排封板质量")
         self.assertEqual(result["focus_stocks"][0]["ai_action"], "观察是否继续获得资金共振")
+
+    def test_emotion_cycle_marks_acceleration_when_limit_effect_expands(self):
+        cycle = _build_emotion_cycle(
+            {
+                "up": [{} for _ in range(102)],
+                "down": [{} for _ in range(8)],
+                "burst": [{} for _ in range(21)],
+            },
+            [{"nums": 4}],
+            [{"pct_chg": 0.12}, {"pct_chg": 0.8}, {"pct_chg": 1.96}],
+        )
+
+        self.assertEqual(cycle["phase_key"], "acceleration")
+        self.assertEqual(cycle["phase"], "加速（大阳线）")
 
 
 if __name__ == "__main__":

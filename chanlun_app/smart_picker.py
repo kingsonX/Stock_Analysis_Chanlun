@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+import json
+import re
+import time
 from typing import Any
+import urllib.error
+import urllib.parse
+import urllib.request
 
 from .chanlun import analyze_klines
 from .config import LEVELS, default_date_range
 from .data_provider import DataProviderError, StockRecord, TushareClient
-from .mx_provider import MXDataProvider, MXProviderError
+from .mx_provider import MXDataProvider, MXProviderError, _env_value
 from .trading_profile import (
     MXBaseClient,
     MXNewsProvider,
@@ -107,6 +113,26 @@ class MXWatchlistProvider(MXBaseClient):
         if not cleaned_group:
             raise MXProviderError("缺少自选股组名称。", 400)
 
+        eastmoney_header = _env_value("EASTMONEY_HEADER")
+        eastmoney_appkey = _env_value("EASTMONEY_APPKEY")
+        if eastmoney_header and eastmoney_appkey:
+            return self._manage_group_with_eastmoney_web(
+                action=cleaned_action,
+                target=cleaned_target,
+                group_name=cleaned_group,
+                header_text=eastmoney_header,
+                appkey=eastmoney_appkey,
+            )
+
+        if cleaned_action == "add":
+            create_result = self._post_json(self.MANAGE_URL, {"query": f"创建自选股组{cleaned_group}"})
+            if not _mx_manage_succeeded(create_result):
+                raise MXProviderError(
+                    "mx-zixuan 当前只确认默认自选操作，不支持创建或校验东方财富分组。"
+                    "请配置 EASTMONEY_HEADER 和 EASTMONEY_APPKEY 后再加入“重点监控”，本次未标记为已加入。",
+                    502,
+                )
+
         if cleaned_action == "add":
             queries = [
                 f"把{cleaned_target}添加到{cleaned_group}自选股组",
@@ -142,6 +168,85 @@ class MXWatchlistProvider(MXBaseClient):
             }
 
         raise MXProviderError(last_error or "自选分组操作失败。", 502)
+
+    def _manage_group_with_eastmoney_web(
+        self,
+        action: str,
+        target: str,
+        group_name: str,
+        header_text: str,
+        appkey: str,
+    ) -> dict[str, Any]:
+        if action != "add":
+            raise MXProviderError("东方财富分组直连当前只支持加入操作。", 400)
+        headers = _eastmoney_header_dict(header_text)
+        if not headers:
+            raise MXProviderError("EASTMONEY_HEADER 格式不正确，请从浏览器复制完整请求头。", 500)
+        groups = self._eastmoney_get_groups(headers=headers, appkey=appkey)
+        group_id = _eastmoney_find_group_id(groups, group_name)
+        created = False
+        if not group_id:
+            created_payload = self._eastmoney_web_request(
+                "ag",
+                {"gn": group_name},
+                headers=headers,
+                appkey=appkey,
+            )
+            created = True
+            group_id = str((created_payload.get("data") or {}).get("gid") or "")
+            if not group_id:
+                groups = self._eastmoney_get_groups(headers=headers, appkey=appkey)
+                group_id = _eastmoney_find_group_id(groups, group_name)
+        if not group_id:
+            raise MXProviderError(f"东方财富分组“{group_name}”创建失败，未执行加入。", 502)
+
+        stock_code = _eastmoney_stock_code(target)
+        add_payload = self._eastmoney_web_request(
+            "as",
+            {"g": group_id, "sc": stock_code},
+            headers=headers,
+            appkey=appkey,
+        )
+        return {
+            "status": "ok",
+            "action": action,
+            "target": target,
+            "group_name": group_name,
+            "group_id": group_id,
+            "group_created": created,
+            "message": _flatten((add_payload.get("data") or {}).get("msg") or add_payload.get("message") or "操作成功"),
+            "source": "eastmoney-web",
+        }
+
+    def _eastmoney_get_groups(self, headers: dict[str, str], appkey: str) -> list[dict[str, Any]]:
+        payload = self._eastmoney_web_request("ggdefstkindexinfos", {"g": "1"}, headers=headers, appkey=appkey)
+        data = payload.get("data") or {}
+        groups = data.get("ginfolist") or []
+        return groups if isinstance(groups, list) else []
+
+    def _eastmoney_web_request(
+        self,
+        action: str,
+        params: dict[str, Any],
+        headers: dict[str, str],
+        appkey: str,
+    ) -> dict[str, Any]:
+        timestamp = int(time.time() * 1000)
+        callback = f"jQuery112404771026622113468_{timestamp - 10}"
+        query = {"appkey": appkey, "cb": callback, **params, "_": timestamp}
+        url = f"https://myfavor.eastmoney.com/v4/webouter/{action}?{urllib.parse.urlencode(query)}"
+        request = urllib.request.Request(url, headers=headers, method="GET")
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
+                raw = response.read().decode("utf-8")
+        except urllib.error.HTTPError as exc:
+            raise MXProviderError(f"东方财富分组请求失败：HTTP {exc.code}", 502) from exc
+        except urllib.error.URLError as exc:
+            raise MXProviderError(f"东方财富分组网络访问失败：{exc.reason}", 502) from exc
+        payload = _parse_eastmoney_jsonp(raw)
+        if not payload.get("state"):
+            raise MXProviderError(_flatten(payload.get("message") or payload.get("msg") or "东方财富分组操作失败。"), 502)
+        return payload
 
 
 class SmartPickerService:
@@ -1576,6 +1681,65 @@ def _row_value(row: dict[str, Any], keywords: list[str]) -> str:
         if any(keyword in key_text for keyword in keywords):
             return _flatten(value)
     return ""
+
+
+def _mx_manage_succeeded(result: dict[str, Any]) -> bool:
+    if not isinstance(result, dict):
+        return False
+    return result.get("status") in (0, "0", None) or result.get("code") in (0, "0", None)
+
+
+def _eastmoney_header_dict(raw: str) -> dict[str, str]:
+    text = str(raw or "").strip()
+    if not text:
+        return {}
+    try:
+        parsed = json.loads(text)
+        if isinstance(parsed, dict):
+            return {str(key).strip(): str(value).strip() for key, value in parsed.items() if str(key).strip() and str(value).strip()}
+    except json.JSONDecodeError:
+        pass
+    headers: dict[str, str] = {}
+    for line in text.splitlines():
+        if ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        key = key.strip()
+        value = value.strip()
+        if key and value:
+            headers[key] = value
+    return headers
+
+
+def _parse_eastmoney_jsonp(raw: str) -> dict[str, Any]:
+    text = str(raw or "").strip()
+    match = re.search(r"\((.*)\)\s*;?\s*$", text, flags=re.S)
+    if not match:
+        raise MXProviderError("东方财富分组返回内容不是 JSONP。", 502)
+    try:
+        payload = json.loads(match.group(1))
+    except json.JSONDecodeError as exc:
+        raise MXProviderError("东方财富分组返回内容无法解析。", 502) from exc
+    if not isinstance(payload, dict):
+        raise MXProviderError("东方财富分组返回格式异常。", 502)
+    return payload
+
+
+def _eastmoney_find_group_id(groups: list[dict[str, Any]], group_name: str) -> str:
+    for group in groups or []:
+        name = _flatten(group.get("gname") or group.get("name") or "")
+        if name == group_name:
+            return _flatten(group.get("gid") or group.get("id") or "")
+    return ""
+
+
+def _eastmoney_stock_code(target: str) -> str:
+    text = _flatten(target).strip().upper()
+    symbol = text.split(".", 1)[0]
+    if not re.fullmatch(r"\d{6}", symbol):
+        raise MXProviderError("东方财富分组直连只支持 6 位 A 股代码。", 400)
+    market = "1" if symbol.startswith(("5", "6", "9")) else "0"
+    return f"{market}${symbol}"
 
 
 def _parse_numeric(value: Any) -> float:

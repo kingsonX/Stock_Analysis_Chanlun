@@ -58,6 +58,11 @@ class ReviewService:
             limit_step.get("items", []),
             focus_boards,
         )
+        emotion_cycle = _build_emotion_cycle(
+            limit_groups,
+            limit_step.get("items", []),
+            market_indices.get("items", []),
+        )
 
         result = {
             "status": "ok",
@@ -85,6 +90,7 @@ class ReviewService:
             "ladder": _build_ladder(limit_step.get("items", [])),
             "focus_boards": focus_boards,
             "focus_stocks": focus_stocks,
+            "emotion_cycle": emotion_cycle,
             "notes": _build_review_notes(limit_groups, focus_boards, focus_stocks),
         }
 
@@ -393,6 +399,135 @@ def _build_review_notes(
             "若龙虎榜净买入前排转弱而跌停增多，先把复盘结论切回防守。",
         ],
     }
+
+
+def _build_emotion_cycle(
+    limit_groups: dict[str, list[dict[str, Any]]],
+    ladder_items: list[dict[str, Any]],
+    market_indices: list[dict[str, Any]],
+) -> dict[str, Any]:
+    up_count = len(limit_groups.get("up") or [])
+    down_count = len(limit_groups.get("down") or [])
+    burst_count = len(limit_groups.get("burst") or [])
+    highest_board = _highest_board(ladder_items)
+    positive_indices = sum(1 for item in market_indices[:3] if _num(item, "pct_chg") > 0)
+    avg_index_chg = sum(_num(item, "pct_chg") for item in market_indices[:3]) / max(len(market_indices[:3]), 1)
+    burst_ratio = burst_count / max(up_count + burst_count, 1)
+
+    phase_key = "low_divergence"
+    if up_count <= 20 and down_count >= 40:
+        phase_key = "ice_point"
+    elif down_count >= 35 and up_count < 55:
+        phase_key = "down_acceleration"
+    elif (burst_ratio >= 0.45 and down_count >= 15) or (down_count > up_count and up_count < 70):
+        phase_key = "turn_weak"
+    elif highest_board >= 5 and (burst_ratio >= 0.32 or down_count >= 12):
+        phase_key = "high_divergence"
+    elif up_count >= 120 and down_count <= 10 and highest_board >= 5 and burst_ratio <= 0.18:
+        phase_key = "climax"
+    elif up_count >= 90 and down_count <= 12 and positive_indices >= 2 and burst_ratio <= 0.30:
+        phase_key = "acceleration"
+    elif up_count >= 55 and down_count <= 22 and positive_indices >= 2:
+        phase_key = "turn_strong"
+    elif up_count >= 35 and down_count <= 35:
+        phase_key = "low_divergence"
+
+    phase = _emotion_phase_meta(phase_key)
+    basis = [
+        f"涨停 {up_count} 家，跌停 {down_count} 家",
+        f"炸板 {burst_count} 家，炸板率 {burst_ratio * 100:.0f}%",
+        f"最高连板 {highest_board} 板",
+        f"三大指数翻红 {positive_indices}/3，均涨幅 {avg_index_chg:.2f}%",
+    ]
+    return {
+        "phase_key": phase_key,
+        "phase": phase["phase"],
+        "stage": phase["stage"],
+        "direction": phase["direction"],
+        "summary": phase["summary"],
+        "action": phase["action"],
+        "risk": phase["risk"],
+        "basis": basis,
+        "metrics": {
+            "up_limit_count": up_count,
+            "down_limit_count": down_count,
+            "burst_count": burst_count,
+            "burst_ratio": round(burst_ratio, 4),
+            "highest_board": highest_board,
+            "positive_indices": positive_indices,
+            "avg_index_chg": round(avg_index_chg, 4),
+        },
+    }
+
+
+def _emotion_phase_meta(phase_key: str) -> dict[str, str]:
+    phases = {
+        "low_divergence": {
+            "phase": "低位分歧",
+            "stage": "弱势末期 / 试错前夜",
+            "direction": "turning",
+            "summary": "亏钱效应未完全退去，但分歧开始给新主线试错空间。",
+            "action": "轻仓试错，只看最先主动的题材前排。",
+            "risk": "若跌停和炸板继续扩散，低位分歧会重新滑向冰点。",
+        },
+        "turn_strong": {
+            "phase": "分歧转强（弱转强）",
+            "stage": "修复确认",
+            "direction": "rising",
+            "summary": "涨停开始扩散、指数配合，赚钱效应从分歧里转强。",
+            "action": "试错可提高到普通仓位，但仍只做主流前排。",
+            "risk": "若前排隔日没有溢价，弱转强会变成假修复。",
+        },
+        "acceleration": {
+            "phase": "加速（大阳线）",
+            "stage": "主流推进",
+            "direction": "rising",
+            "summary": "涨停扩散、跌停收敛，指数和题材共振，情绪处于加速段。",
+            "action": "偏进攻，重点看主流核心和前排承接，不追后排。",
+            "risk": "加速之后容易走向一致，次日重点看高位分歧是否放大。",
+        },
+        "climax": {
+            "phase": "一致（高潮）",
+            "stage": "高温一致",
+            "direction": "rising",
+            "summary": "赚钱效应高度一致，市场容易从主动进攻转为兑现博弈。",
+            "action": "不再扩大追高，优先等分歧后的承接确认。",
+            "risk": "高潮日次日若高标开盘缩量冲，容易出现强分歧。",
+        },
+        "high_divergence": {
+            "phase": "高位分歧",
+            "stage": "高位博弈",
+            "direction": "falling",
+            "summary": "高标和前排开始分歧，持筹者兑现意愿上升。",
+            "action": "降仓看承接，只做确认后的核心回封。",
+            "risk": "若炸板和跌停继续增加，会进入分歧转弱。",
+        },
+        "turn_weak": {
+            "phase": "分歧转弱（强转弱）",
+            "stage": "退潮确认",
+            "direction": "falling",
+            "summary": "亏钱效应开始压过赚钱效应，强势股补跌风险抬升。",
+            "action": "防守优先，少做高位接力。",
+            "risk": "若跌停扩散且指数不配合，退潮会加速。",
+        },
+        "down_acceleration": {
+            "phase": "分歧加速",
+            "stage": "杀跌释放",
+            "direction": "falling",
+            "summary": "亏钱效应集中释放，市场进入加速出清。",
+            "action": "控制回撤，只等恐慌充分后的新主线信号。",
+            "risk": "不要把下跌中继当成冰点修复。",
+        },
+        "ice_point": {
+            "phase": "冰点（一致）",
+            "stage": "恐慌一致",
+            "direction": "turning",
+            "summary": "杀跌情绪接近一致，机会来自恐慌后的主动修复。",
+            "action": "不急着抄底，先等最先走强的方向出现。",
+            "risk": "冰点可以再冰点，必须等真实承接。",
+        },
+    }
+    return phases.get(phase_key, phases["low_divergence"])
 
 
 def _merge_ai_focus_boards(

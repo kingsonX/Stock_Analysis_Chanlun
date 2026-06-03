@@ -254,7 +254,7 @@ async function loadAnalysis() {
     state.selectedStock = data.stock;
     resetChartView();
     els.stockInput.value = `${data.stock.name} ${data.stock.symbol}`;
-    els.statusText.textContent = `${data.stock.name} ${data.stock.ts_code} · ${levelLabel(state.level)} · ${formatDate(data.query.start_date)} 至 ${formatDate(data.query.end_date)}`;
+    els.statusText.textContent = `${levelLabel(state.level)} · ${formatDate(data.query.start_date)} 至 ${formatDate(data.query.end_date)}`;
     hideError();
     renderAll();
     loadMxSummary(data.stock);
@@ -869,87 +869,62 @@ function renderAnalysisBasics() {
   const companyRow = mxSummaryRow("company_profile");
   const bakBasic = stock?.bak_basic || {};
   const loading = !!state.analysis && (!state.mxSummary || state.mxSummary.status === "loading");
+  const area = stock.area || bakBasic.area || "待补充";
+  const inCoreRegion = isYangtzeDeltaArea(area);
 
   const compactMetrics = [
-    {
-      label: "换手率",
-      value: metricValue(quoteRow, ["换手率"]) || loadingText(loading),
-      hint: "盘口活跃度",
-    },
-    {
-      label: "总市值",
-      value: metricValue(valuationRow, ["总市值"]) || loadingText(loading),
-      hint: "容量与风格定位",
-    },
-    {
-      label: "PE / PB",
-      value: buildPePbText(bakBasic),
-      hint: "来自 Tushare bak_basic",
-    },
-    {
-      label: "所属地区",
-      value: stock.area || bakBasic.area || "待补充",
-      hint: "",
-    },
-    {
-      label: "股东人数",
-      value: buildHolderText(companyRow, bakBasic, loading),
-      hint: bakBasic.trade_date ? `截至 ${formatDate(bakBasic.trade_date)}` : "",
-    },
-    {
-      label: "总股本",
-      value: buildTotalShareText(bakBasic),
-      hint: "",
-    },
-    {
-      label: "营收 / 利润同比",
-      value: buildGrowthText(bakBasic),
-      hint: "",
-    },
+    ["换手率", metricValue(quoteRow, ["换手率"]) || loadingText(loading)],
+    ["总市值", metricValue(valuationRow, ["总市值"]) || loadingText(loading)],
+    ["PE / PB", buildPePbText(bakBasic)],
+    ["股东人数", buildHolderText(companyRow, bakBasic, loading)],
+    ["总股本", buildTotalShareText(bakBasic)],
+    ["营收 / 利润同比", buildGrowthText(bakBasic)],
   ];
 
-  const highlightMetrics = [
-    {
-      label: "行业 / 题材",
-      value: buildIndustryConceptText(stock, currentProfilePayload(), companyRow),
-      hint: "先看题材归属，再看它是不是主流前排。",
-    },
-    {
-      label: "主营业务",
-      value: buildBusinessText(companyRow, stock),
-      hint: "这里保留事实描述，避免把业务说明挤占主图空间。",
-    },
-  ];
+  const industryText = buildIndustryConceptText(stock, currentProfilePayload(), companyRow);
+  const businessText = buildBusinessText(companyRow, stock);
 
   els.stockBasics.hidden = false;
   els.stockBasics.innerHTML = `
-    <section class="stockCompactGrid">
+    <section class="stockHeaderRibbon">
+      <div class="stockIdentity">
+        <strong>${escapeHtml(stock.name || "")}</strong>
+        <span>${escapeHtml(stock.ts_code || stock.symbol || "")}</span>
+      </div>
+      <div class="stockTagGroup">
+        <span class="stockTag ${inCoreRegion ? "alert" : ""}">${escapeHtml(area)}${inCoreRegion ? " · 江浙沪" : ""}</span>
+        <span class="stockTag">${escapeHtml(stock.market || "市场待补充")}</span>
+        <span class="stockTag">${escapeHtml(industryText)}</span>
+      </div>
+    </section>
+    <section class="stockMetricRibbon">
       ${compactMetrics
         .map(
-          (item) => `
-            <article class="stockCompactMetric">
-              <span>${escapeHtml(item.label)}</span>
-              <strong>${escapeHtml(item.value)}</strong>
-              ${item.hint ? `<small>${escapeHtml(item.hint)}</small>` : ""}
+          ([label, value]) => `
+            <article class="stockMetricChip">
+              <span>${escapeHtml(label)}</span>
+              <strong>${escapeHtml(value)}</strong>
             </article>
           `
         )
         .join("")}
     </section>
-    <section class="stockHighlightGrid">
-      ${highlightMetrics
-        .map(
-          (item) => `
-            <article class="stockHighlightCard">
-              <span>${escapeHtml(item.label)}</span>
-              <strong>${escapeHtml(item.value)}</strong>
-              ${item.hint ? `<em>${escapeHtml(item.hint)}</em>` : ""}
-            </article>
-          `
-        )
-        .join("")}
+    <section class="stockFactRibbon">
+      <article class="stockFactChip">
+        <span>行业 / 题材</span>
+        <strong>${escapeHtml(industryText)}</strong>
+      </article>
+      <article class="stockFactChip wide">
+        <span>主营业务</span>
+        <strong>${escapeHtml(businessText)}</strong>
+      </article>
     </section>
   `;
+}
+
+function isYangtzeDeltaArea(area) {
+  const text = String(area || "").trim();
+  return ["上海", "江苏", "浙江"].some((item) => text.includes(item));
 }
 
 function loadingText(loading) {
@@ -2299,6 +2274,7 @@ function renderReviewFocus() {
               : ""
       }
     </article>
+    ${renderReviewEmotionCycle(review, aiReview)}
     ${
       indices.length
         ? `<section class="reviewIndexStrip">
@@ -2340,6 +2316,70 @@ function renderReviewFocus() {
       </ul>
     </article>
   `;
+}
+
+function renderReviewEmotionCycle(review, aiReview) {
+  const cycle = review?.emotion_cycle || {};
+  const aiCycle = aiReview?.emotion_cycle || {};
+  const activeKey = cycle.phase_key || inferEmotionCycleKey(aiCycle.phase || aiCycle.summary || aiReview?.market_stage || "");
+  const activeLabel = cycle.phase || aiCycle.phase || "低位分歧";
+  const stage = cycle.stage || aiReview?.market_stage || "阶段观察";
+  const summary = aiCycle.summary || cycle.summary || "先看赚钱效应和亏钱效应的相对强弱。";
+  const basis = Array.isArray(cycle.basis) && cycle.basis.length ? cycle.basis : Array.isArray(aiCycle.signals) ? aiCycle.signals : [];
+  const phases = [
+    ["acceleration", "加速", "大阳线", "rise", "acc"],
+    ["climax", "一致", "高潮", "rise", "climax"],
+    ["high_divergence", "高位分歧", "", "fall", "high"],
+    ["turn_strong", "分歧转强", "弱转强", "rise", "turnStrong"],
+    ["turn_weak", "分歧转弱", "强转弱", "fall", "turnWeak"],
+    ["low_divergence", "低位分歧", "", "turn", "low"],
+    ["ice_point", "冰点", "一致", "turn", "ice"],
+    ["down_acceleration", "分歧加速", "", "fall", "down"],
+  ];
+  return `
+    <article class="reviewFocusItem reviewEmotionCycleCard">
+      <div class="reviewFocusHeroHeader">
+        <strong>情绪周期图</strong>
+        <span class="reviewBadge">${escapeHtml(activeLabel)}</span>
+      </div>
+      <div class="reviewEmotionCycleLoop" aria-label="养家情绪周期">
+        <div class="reviewEmotionCycleCore">
+          <span>当前阶段</span>
+          <strong>${escapeHtml(activeLabel)}</strong>
+          <small>${escapeHtml(stage)}</small>
+        </div>
+        ${phases
+          .map(([key, label, sub, tone, area]) => {
+            const isActive = key === activeKey || label === activeLabel;
+            return `
+              <div class="reviewEmotionNode tone-${tone}${isActive ? " active" : ""}" style="grid-area:${area}">
+                <span>${escapeHtml(label)}</span>
+                ${sub ? `<small>${escapeHtml(sub)}</small>` : ""}
+              </div>
+            `;
+          })
+          .join("")}
+      </div>
+      <p>${escapeHtml(summary)}</p>
+      <ul class="reviewBulletList">
+        ${basis.slice(0, 4).map((item) => `<li>${escapeHtml(item)}</li>`).join("") || "<li>暂无情绪样本。</li>"}
+      </ul>
+      ${cycle.action ? `<p class="reviewActionText">${escapeHtml(cycle.action)}</p>` : ""}
+      ${cycle.risk ? `<p class="reviewFocusMeta">${escapeHtml(cycle.risk)}</p>` : ""}
+    </article>
+  `;
+}
+
+function inferEmotionCycleKey(text) {
+  const value = String(text || "");
+  if (value.includes("冰点")) return "ice_point";
+  if (value.includes("分歧加速")) return "down_acceleration";
+  if (value.includes("分歧转弱") || value.includes("强转弱") || value.includes("退潮")) return "turn_weak";
+  if (value.includes("高位分歧")) return "high_divergence";
+  if (value.includes("一致") || value.includes("高潮")) return "climax";
+  if (value.includes("加速")) return "acceleration";
+  if (value.includes("分歧转强") || value.includes("弱转强") || value.includes("修复")) return "turn_strong";
+  return "low_divergence";
 }
 
 function renderReviewBoards() {
@@ -2466,12 +2506,12 @@ function renderReviewInstitutionModal(items, searchTerm = "", page = 1) {
   const filtered = keyword
     ? groups.filter((row) => `${row.name || ""} ${row.org_summary || ""} ${row.stock_names.join(" ")}`.toLowerCase().includes(keyword))
     : groups;
-  const { rows, page: currentPage, totalPages } = paginateRows(filtered, page, 10);
-  state.review.modalPage = currentPage;
-  const tree = filtered.length
+  state.review.modalPage = 1;
+  const sections = buildReviewHotMoneyCategorySections(filtered);
+  const board = filtered.length
     ? `
-      <div class="reviewHotMoneyTree">
-        ${rows.map((group) => renderReviewHotMoneyGroup(group)).join("")}
+      <div class="reviewHotMoneyBoard">
+        ${sections.map((section) => renderReviewHotMoneyCategorySection(section)).join("")}
       </div>
     `
     : `<div class="empty">没有匹配当前游资名称的游资明细。</div>`;
@@ -2489,16 +2529,9 @@ function renderReviewInstitutionModal(items, searchTerm = "", page = 1) {
     </form>
     <div class="reviewPanelStack">
       <div class="reviewPanelMeta">
-        <small>按“游资机构 → 股票 → 买卖金额 / 席位”关系展示，同组内股票可直接跳转到股票分析。</small>
+        <small>按“机构 / 量化 / 游资”合并展示，同一游资下买入过的股票集中列出，点击股票可直接跳转到股票分析。</small>
       </div>
-      ${tree}
-      ${renderReviewPager({
-        page: currentPage,
-        totalPages,
-        totalItems: filtered.length,
-        pageSize: 10,
-        action: "hot-money-modal",
-      })}
+      ${board}
     </div>
   `;
 }
@@ -2586,6 +2619,113 @@ function groupReviewHotMoneyRecords(items) {
       };
     })
     .sort((a, b) => Math.abs(Number(b.net_amount || 0)) - Math.abs(Number(a.net_amount || 0)));
+}
+
+function flattenReviewHotMoneyTableRows(groups) {
+  const rows = [];
+  (groups || []).forEach((group) => {
+    const stocks = Array.isArray(group.stocks) && group.stocks.length ? group.stocks : [null];
+    stocks.forEach((stock) => {
+      rows.push({
+        group_name: group.name || "未识别游资",
+        group_buy_amount: Number(group.buy_amount || 0),
+        group_sell_amount: Number(group.sell_amount || 0),
+        group_net_amount: Number(group.net_amount || 0),
+        group_record_count: Number(group.record_count || 0),
+        group_org_count: Number(group.org_count || 0),
+        group_org_summary: group.org_summary || "",
+        ts_code: stock?.ts_code || "",
+        name: stock?.name || "",
+        buy_amount: Number(stock?.buy_amount ?? group.buy_amount ?? 0),
+        sell_amount: Number(stock?.sell_amount ?? group.sell_amount ?? 0),
+        net_amount: Number(stock?.net_amount ?? group.net_amount ?? 0),
+        record_count: Number(stock?.record_count ?? group.record_count ?? 0),
+        org_count: Number(stock?.org_count ?? group.org_count ?? 0),
+        org_summary: stock?.org_summary || group.org_summary || "",
+        tags: Array.isArray(stock?.tags) ? stock.tags : [],
+      });
+    });
+  });
+  return rows.sort((a, b) => Math.abs(Number(b.net_amount || 0)) - Math.abs(Number(a.net_amount || 0)));
+}
+
+function buildReviewHotMoneyCategorySections(groups) {
+  const ordered = ["机构", "量化", "游资"];
+  const buckets = new Map(ordered.map((label) => [label, { label, groups: [], net_amount: 0, stock_count: 0 }]));
+  (groups || []).forEach((group) => {
+    const category = classifyReviewHotMoneyGroup(group);
+    const bucket = buckets.get(category) || { label: category, groups: [], net_amount: 0, stock_count: 0 };
+    bucket.groups.push(group);
+    bucket.net_amount += Number(group.net_amount || 0);
+    bucket.stock_count += Number(group.stock_count || 0);
+    buckets.set(category, bucket);
+  });
+  return ordered
+    .map((label) => buckets.get(label))
+    .filter((section) => section && section.groups.length)
+    .map((section) => ({
+      ...section,
+      groups: section.groups.sort((a, b) => Math.abs(Number(b.net_amount || 0)) - Math.abs(Number(a.net_amount || 0))),
+    }));
+}
+
+function classifyReviewHotMoneyGroup(group) {
+  const text = `${group?.name || ""} ${group?.org_summary || ""}`.toLowerCase();
+  if (/(量化|程序化|量化基金|量化打板|对冲|高频|机器|算法)/.test(text)) return "量化";
+  if (/(机构|机构专用|深股通|沪股通|港股通|北向|陆股通|基金专用|社保|养老金|券商自营|保险|qfii|公募|私募)/.test(text)) return "机构";
+  return "游资";
+}
+
+function renderReviewHotMoneyCategorySection(section) {
+  return `
+    <section class="reviewHotMoneyCategorySection">
+      <div class="reviewHotMoneyCategoryCell">
+        <strong>${escapeHtml(section.label || "游资")}</strong>
+        <small>${intValue(section.groups.length)} 组 · ${intValue(section.stock_count)} 只股票</small>
+        <span class="reviewHotMoneyCategoryNet ${Number(section.net_amount || 0) >= 0 ? "positive" : "negative"}">${formatSignedAmountShort(section.net_amount)}</span>
+      </div>
+      <div class="reviewHotMoneyCategoryRows">
+        ${section.groups.map((group) => renderReviewHotMoneyBoardRow(group)).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderReviewHotMoneyBoardRow(group) {
+  const positive = Number(group.net_amount || 0) >= 0;
+  const stocks = Array.isArray(group.stocks) ? group.stocks : [];
+  return `
+    <article class="reviewHotMoneyBoardRow ${positive ? "positive" : "negative"}">
+      <div class="reviewHotMoneyBoardLead">
+        <div class="reviewHotMoneyBoardName">
+          <strong>${escapeHtml(group.name || "未识别游资")}</strong>
+          <small>${intValue(group.stock_count)} 只股票 · ${intValue(group.org_count)} 席位 · ${intValue(group.record_count)} 条记录</small>
+        </div>
+        <div class="reviewHotMoneyBoardAmounts">
+          <span>买 ${formatAmountYi(group.buy_amount)}</span>
+          <span>卖 ${formatAmountYi(group.sell_amount)}</span>
+          <strong class="${positive ? "positive" : "negative"}">${formatSignedAmountShort(group.net_amount)}</strong>
+        </div>
+      </div>
+      <div class="reviewHotMoneyBoardStocks">
+        ${stocks.map((stock) => renderReviewHotMoneyStockPill(stock)).join("")}
+      </div>
+    </article>
+  `;
+}
+
+function renderReviewHotMoneyStockPill(stock) {
+  const tags = Array.isArray(stock?.tags) ? stock.tags.filter(Boolean) : [];
+  const positive = Number(stock?.net_amount || 0) >= 0;
+  return `
+    <div class="reviewHotMoneyStockPill ${positive ? "positive" : "negative"}">
+      <div class="reviewHotMoneyStockPillMain">
+        ${renderReviewStockButton(stock?.name || stock?.ts_code || "-", stock, "reviewStockLink board-pill")}
+        <span class="reviewHotMoneyStockPillAmount ${positive ? "positive" : "negative"}">${formatSignedAmountShort(stock?.net_amount || 0)}</span>
+      </div>
+      <small>${escapeHtml(stock?.ts_code || "-")}${tags.length ? ` · ${escapeHtml(tags.join(" / "))}` : ""}</small>
+    </div>
+  `;
 }
 
 function renderReviewHotMoneyGroup(group) {
@@ -2707,7 +2847,7 @@ function openReviewSummaryModal(key) {
         )
       : `<div class="empty">当天没有可用龙虎榜数据。</div>`;
   } else if (key === "hot_money_trades") {
-    title = "游资龙虎榜关系图";
+    title = "游资龙虎榜合并视图";
     meta = `复盘日期 ${formatDate(review.trade_date || "")} · 原始 ${intValue(review.hot_money_stats?.record_count)} 条 · 归并 ${intValue((review.hot_money_trades || []).length)} 只股票`;
     body = (review.hot_money_records || []).length
       ? renderReviewInstitutionModal(review.hot_money_records || [], "", 1)
@@ -3036,6 +3176,9 @@ function renderPickerTable() {
     }
     els.pickerTableBox.innerHTML = `
       <div class="pickerLoadingTable">
+        <div class="mxSkeleton short"></div>
+        <div class="mxSkeleton"></div>
+        <div class="mxSkeleton"></div>
         <div class="mxSkeleton"></div>
         <div class="mxSkeleton"></div>
         <div class="mxSkeleton short"></div>
@@ -3136,7 +3279,6 @@ function renderPickerTable() {
                 </td>
                 <td>
                   <div class="pickerRowActions">
-                    <button type="button" class="miniButton" data-picker-action="detail" data-ts-code="${escapeHtml(item.stock.ts_code)}">详情</button>
                     <button type="button" class="miniButton ghostButton" data-picker-action="analysis" data-ts-code="${escapeHtml(item.stock.ts_code)}">去分析</button>
                   </div>
                 </td>

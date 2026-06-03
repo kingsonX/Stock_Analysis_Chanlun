@@ -19,8 +19,8 @@ class AIProviderError(Exception):
 class ClaudeProfileExplainer:
     BASE_URL = "https://api.anthropic.com"
     API_VERSION = "2023-06-01"
-    OPENAI_BASE_URL = "https://api.moonshot.cn/v1"
-    OPENAI_MODEL = "kimi-k2.6"
+    OPENAI_BASE_URL = "https://ark.cn-beijing.volces.com/api/coding/v3"
+    OPENAI_MODEL = "doubao-seed-2-0-lite"
     OPENAI_THINKING = {"type": "disabled"}
 
     def __init__(
@@ -30,6 +30,10 @@ class ClaudeProfileExplainer:
         model: str | None = None,
         timeout_seconds: int = 120,
     ):
+        ark_key = _env_value("ARK_API_KEY")
+        ark_base_url = _env_value("ARK_BASE_URL")
+        ark_endpoint_id = _env_value("ARK_ENDPOINT_ID")
+        ark_model = _env_value("ARK_MODEL")
         kimi_key = _env_value("KIMI_API_KEY")
         kimi_base_url = _env_value("KIMI_BASE_URL")
         kimi_model = _env_value("KIMI_MODEL")
@@ -37,28 +41,36 @@ class ClaudeProfileExplainer:
         claude_base_url = _env_value("CLAUDE_BASE_URL")
         claude_model = _env_value("CLAUDE_MODEL")
         explicit_provider = _provider_from_model(model) or (_provider_kind(base_url, default="") if base_url else "")
-        default_provider = explicit_provider or ("openai" if kimi_key else "anthropic")
+        default_provider = explicit_provider or ("openai" if (ark_key or kimi_key) else "anthropic")
 
-        self.api_key = api_key or kimi_key or claude_key
+        self.api_key = api_key or ark_key or kimi_key or claude_key
         if base_url:
             self.base_url = base_url
         elif explicit_provider == "anthropic":
             self.base_url = claude_base_url or self.BASE_URL
         elif explicit_provider == "openai":
-            self.base_url = kimi_base_url or self.OPENAI_BASE_URL
+            self.base_url = ark_base_url or kimi_base_url or self.OPENAI_BASE_URL
         else:
-            self.base_url = kimi_base_url or claude_base_url or (self.OPENAI_BASE_URL if kimi_key else self.BASE_URL)
+            self.base_url = ark_base_url or kimi_base_url or claude_base_url or (self.OPENAI_BASE_URL if (ark_key or kimi_key) else self.BASE_URL)
         self.provider = _provider_kind(self.base_url, default=default_provider)
-        self.provider_label = "Kimi" if self.provider == "openai" else "Claude"
-        self.model = model or (kimi_model if self.provider == "openai" else claude_model) or (self.OPENAI_MODEL if self.provider == "openai" else "Claude Sonnet 4.6")
+        self.openai_vendor = _openai_vendor(self.base_url, model or ark_model or kimi_model or "")
+        self.provider_label = _provider_label(self.provider, self.openai_vendor)
+        self.model = (
+            model
+            or (ark_endpoint_id or ark_model or kimi_model if self.provider == "openai" else claude_model)
+            or (self.OPENAI_MODEL if self.provider == "openai" else "Claude Sonnet 4.6")
+        )
         self.api_version = _env_value("CLAUDE_API_VERSION") or self.API_VERSION
-        default_max_tokens = 1400 if self.provider == "openai" else 1800
-        self.max_tokens = _safe_int(_env_value("KIMI_MAX_TOKENS") or _env_value("CLAUDE_MAX_TOKENS"), default_max_tokens)
+        default_max_tokens = 900 if self.openai_vendor == "ark" else (1400 if self.provider == "openai" else 1800)
+        self.max_tokens = _safe_int(
+            _env_value("ARK_MAX_TOKENS") or _env_value("KIMI_MAX_TOKENS") or _env_value("CLAUDE_MAX_TOKENS"),
+            default_max_tokens,
+        )
         self.timeout_seconds = timeout_seconds
 
     def explain(self, stock: dict[str, Any], analysis: dict[str, Any], profile_payload: dict[str, Any]) -> dict[str, Any]:
         if not self.api_key:
-            missing_env = "KIMI_API_KEY" if self.provider == "openai" else "CLAUDE_API_KEY"
+            missing_env = "ARK_API_KEY" if self.provider == "openai" else "CLAUDE_API_KEY"
             raise AIProviderError(f"缺少 {missing_env} 环境变量，暂时无法生成 {self.provider_label} 研究解读。", 500)
 
         facts = _build_fact_packet(stock=stock, analysis=analysis, profile_payload=profile_payload)
@@ -81,7 +93,7 @@ class ClaudeProfileExplainer:
 
     def explain_review(self, review_payload: dict[str, Any]) -> dict[str, Any]:
         if not self.api_key:
-            missing_env = "KIMI_API_KEY" if self.provider == "openai" else "CLAUDE_API_KEY"
+            missing_env = "ARK_API_KEY" if self.provider == "openai" else "CLAUDE_API_KEY"
             raise AIProviderError(f"缺少 {missing_env} 环境变量，暂时无法生成 {self.provider_label} 复盘结论。", 500)
 
         facts = _build_review_fact_packet(review_payload)
@@ -109,16 +121,18 @@ class ClaudeProfileExplainer:
             f"事实数据：{json.dumps(facts, ensure_ascii=False)}"
         )
         if self.provider == "openai":
-            return {
+            payload = {
                 "model": self.model,
                 "max_tokens": self.max_tokens,
                 "temperature": 0.6,
-                "thinking": self.OPENAI_THINKING,
                 "messages": [
                     {"role": "system", "content": _system_prompt()},
                     {"role": "user", "content": user_prompt},
                 ],
             }
+            if self.openai_vendor in {"moonshot", "ark"}:
+                payload["thinking"] = self.OPENAI_THINKING
+            return payload
 
         return {
             "model": self.model,
@@ -132,6 +146,7 @@ class ClaudeProfileExplainer:
             "下面是智能复盘页面的结构化事实，请严格基于这些事实，"
             "从炒股养家公开心法的角度完成盘后复盘。"
             "你必须覆盖四个部分：指数复盘、情绪周期、盘面复盘、消息复盘。"
+            "情绪周期必须参考事实里的 emotion_cycle，不要擅自切换到没有证据的阶段。"
             "同时更新关注板块和关注股票，且只能使用事实里已经给出的候选。"
             "输出务必是合法 JSON，不要加 Markdown 代码块或额外说明。\n"
             "一句话复盘、阶段判断、各分块 summary 保持短句；列表每项尽量不超过 24 个字。\n"
@@ -140,16 +155,18 @@ class ClaudeProfileExplainer:
         )
         system_prompt = _review_system_prompt()
         if self.provider == "openai":
-            return {
+            payload = {
                 "model": self.model,
                 "max_tokens": max(self.max_tokens, 1600),
                 "temperature": 0.6,
-                "thinking": self.OPENAI_THINKING,
                 "messages": [
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
             }
+            if self.openai_vendor in {"moonshot", "ark"}:
+                payload["thinking"] = self.OPENAI_THINKING
+            return payload
 
         return {
             "model": self.model,
@@ -194,8 +211,8 @@ class ClaudeProfileExplainer:
 
     def _extract_content(self, result: dict[str, Any]) -> str:
         if self.provider == "openai":
-            return _extract_openai_json_content(result)
-        return _extract_json_content(result)
+            return _extract_openai_json_content(result, self.provider_label)
+        return _extract_json_content(result, self.provider_label)
 
 
 OpenAIProfileExplainer = ClaudeProfileExplainer
@@ -211,10 +228,18 @@ def _http_error_message(provider_label: str, status_code: int, body: str) -> str
     message = _flatten(error.get("message") or body or f"HTTP {status_code}")
     if status_code == 401:
         return f"{provider_label} 鉴权失败：{message}"
+    if provider_label == "火山方舟" and status_code == 404 and (
+        "does not exist or you do not have access" in message.lower()
+        or "accessing the model via model id is not allowed" in message.lower()
+    ):
+        return (
+            f"{provider_label} 请求失败：{message}。"
+            "请确认 `model` 使用的是已开通的模型或推理接入点 ID（常见为 `ep-` 开头），而不是无权限的模型名。"
+        )
     return f"{provider_label} 请求失败：{message}"
 
 
-def _extract_json_content(result: dict[str, Any]) -> str:
+def _extract_json_content(result: dict[str, Any], provider_label: str = "Claude") -> str:
     texts: list[str] = []
     content = result.get("content") or []
     for item in content:
@@ -224,13 +249,13 @@ def _extract_json_content(result: dict[str, Any]) -> str:
     merged = _strip_json_fence("".join(texts).strip())
     if merged:
         return merged
-    raise AIProviderError("Claude 没有返回可用文本。", 502)
+    raise AIProviderError(f"{provider_label} 没有返回可用文本。", 502)
 
 
-def _extract_openai_json_content(result: dict[str, Any]) -> str:
+def _extract_openai_json_content(result: dict[str, Any], provider_label: str = "OpenAI兼容模型") -> str:
     choices = result.get("choices") or []
     if not choices:
-        raise AIProviderError("Kimi 没有返回可用结果。", 502)
+        raise AIProviderError(f"{provider_label} 没有返回可用结果。", 502)
     message = choices[0].get("message") or {}
     content = message.get("content") or ""
     if isinstance(content, list):
@@ -238,7 +263,7 @@ def _extract_openai_json_content(result: dict[str, Any]) -> str:
     merged = _strip_json_fence(_flatten(content).strip())
     if merged:
         return merged
-    raise AIProviderError("Kimi 没有返回可用文本。", 502)
+    raise AIProviderError(f"{provider_label} 没有返回可用文本。", 502)
 
 
 def _system_prompt() -> str:
@@ -292,6 +317,7 @@ def _review_system_prompt() -> str:
     return (
         "你是A股短线复盘助理，站在炒股养家公开心法的表达框架里做盘后总结。"
         "先判断市场阶段，再判断赚钱效应和亏钱效应，再看主流热点与龙头辨识度，最后给观察重点和风险边界。"
+        "情绪周期阶段以输入事实 emotion_cycle 为锚，允许补充解释，不允许脱离事实改判。"
         "不要编造指数、龙虎榜、游资、政策、资金流、连板或新闻。"
         "不能输出荐股、梭哈、必涨这类措辞。"
         "关注板块和关注股票只能从输入事实已有候选里挑选并排序。"
@@ -309,6 +335,7 @@ def _review_response_contract_text() -> str:
                 "signals": ["string"],
             },
             "emotion_cycle": {
+                "phase": "低位分歧|分歧转强（弱转强）|加速（大阳线）|一致（高潮）|高位分歧|分歧转弱（强转弱）|分歧加速|冰点（一致）",
                 "summary": "string",
                 "signals": ["string"],
             },
@@ -349,14 +376,14 @@ def _chat_completions_url(base_url: str) -> str:
     cleaned = (base_url or ClaudeProfileExplainer.OPENAI_BASE_URL).rstrip("/")
     if cleaned.endswith("/chat/completions"):
         return cleaned
-    if cleaned.endswith("/v1"):
+    if cleaned.endswith("/v1") or cleaned.endswith("/api/v3") or cleaned.endswith("/api/coding/v3"):
         return f"{cleaned}/chat/completions"
     return f"{cleaned}/v1/chat/completions"
 
 
 def _provider_kind(base_url: str | None, default: str = "anthropic") -> str:
     cleaned = (base_url or "").lower()
-    if "moonshot" in cleaned or "openai" in cleaned or "chat/completions" in cleaned:
+    if "moonshot" in cleaned or "openai" in cleaned or "chat/completions" in cleaned or "volces" in cleaned or "ark." in cleaned or "/api/v3" in cleaned:
         return "openai"
     if "anthropic" in cleaned or cleaned.endswith("/messages"):
         return "anthropic"
@@ -365,11 +392,38 @@ def _provider_kind(base_url: str | None, default: str = "anthropic") -> str:
 
 def _provider_from_model(model: str | None) -> str:
     text = _flatten(model or "").lower()
-    if "kimi" in text:
+    if (
+        "kimi" in text
+        or text.startswith("ark-")
+        or "ark-code" in text
+        or text.startswith("doubao-")
+        or text.startswith("deepseek-")
+        or text.startswith("glm-")
+    ):
         return "openai"
     if "claude" in text:
         return "anthropic"
     return ""
+
+
+def _openai_vendor(base_url: str | None, model: str | None) -> str:
+    cleaned_base = (base_url or "").lower()
+    cleaned_model = _flatten(model or "").lower()
+    if "moonshot" in cleaned_base or "kimi" in cleaned_model:
+        return "moonshot"
+    if "volces" in cleaned_base or "ark." in cleaned_base or cleaned_model.startswith("ark-") or "ark-code" in cleaned_model:
+        return "ark"
+    return "generic"
+
+
+def _provider_label(provider: str, openai_vendor: str) -> str:
+    if provider != "openai":
+        return "Claude"
+    if openai_vendor == "moonshot":
+        return "Kimi"
+    if openai_vendor == "ark":
+        return "火山方舟"
+    return "OpenAI兼容模型"
 
 
 def _strip_json_fence(text: str) -> str:
@@ -495,6 +549,7 @@ def _build_review_fact_packet(review_payload: dict[str, Any]) -> dict[str, Any]:
     ladder = review_payload.get("ladder") or []
     focus_boards = review_payload.get("focus_boards") or []
     focus_stocks = review_payload.get("focus_stocks") or []
+    emotion_cycle = review_payload.get("emotion_cycle") or {}
 
     return {
         "trade_date": review_payload.get("trade_date", ""),
@@ -554,6 +609,16 @@ def _build_review_fact_packet(review_payload: dict[str, Any]) -> dict[str, Any]:
                 {"ts_code": item.get("ts_code", ""), "name": item.get("name", ""), "pct_chg": item.get("pct_chg", "")}
                 for item in (limit_lists.get("down") or [])[:6]
             ],
+        },
+        "emotion_cycle": {
+            "phase_key": emotion_cycle.get("phase_key", ""),
+            "phase": emotion_cycle.get("phase", ""),
+            "stage": emotion_cycle.get("stage", ""),
+            "summary": emotion_cycle.get("summary", ""),
+            "basis": emotion_cycle.get("basis", []),
+            "action": emotion_cycle.get("action", ""),
+            "risk": emotion_cycle.get("risk", ""),
+            "metrics": emotion_cycle.get("metrics", {}),
         },
         "ladder": [
             {

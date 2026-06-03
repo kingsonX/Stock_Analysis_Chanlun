@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import patch
 
-from chanlun_app.ai_profile import AIProviderError, ClaudeProfileExplainer
+from chanlun_app.ai_profile import AIProviderError, ClaudeProfileExplainer, _chat_completions_url
 
 
 class FakeExplainer(ClaudeProfileExplainer):
@@ -28,9 +28,9 @@ class FakeExplainer(ClaudeProfileExplainer):
         return self.response_payload
 
 
-class FakeKimiExplainer(ClaudeProfileExplainer):
+class FakeArkExplainer(ClaudeProfileExplainer):
     def __init__(self, response_payload=None, api_key="test-key"):
-        super().__init__(api_key=api_key, base_url="https://api.moonshot.cn/v1", model="kimi-k2.6")
+        super().__init__(api_key=api_key, base_url="https://ark.cn-beijing.volces.com/api/coding/v3", model="doubao-seed-2-0-lite")
         self.response_payload = response_payload or {
             "choices": [
                 {
@@ -63,7 +63,7 @@ class FakeReviewExplainer(ClaudeProfileExplainer):
                     "text": (
                         '{"summary":"指数偏强，情绪回暖，先看金融主线承接。","market_stage":"主流试错",'
                         '"index_review":{"summary":"三大指数共振修复。","signals":["上证翻红","创业板更强"]},'
-                        '"emotion_cycle":{"summary":"赚钱效应回暖。","signals":["涨停家数明显占优"]},'
+                        '"emotion_cycle":{"phase":"分歧转强（弱转强）","summary":"赚钱效应回暖。","signals":["涨停家数明显占优"]},'
                         '"tape_review":{"summary":"热点向金融集中。","hot_themes":["银行概念前排最强"],"fund_flow":["龙虎榜净买入偏金融"],"limit_watch":["三板高度仍可观察"]},'
                         '"news_review":{"summary":"消息催化仍围绕金融。","catalysts":["金融链消息持续发酵"],"ladder_focus":["连板高度暂看3板"]},'
                         '"watch_points":["先看银行概念扩散"],"risk_points":["若炸板抬升先回防守"],'
@@ -109,12 +109,12 @@ class AIProfileTest(unittest.TestCase):
 
     def test_explainer_requires_api_key(self):
         with patch("chanlun_app.ai_profile._env_value", return_value=None):
-            explainer = ClaudeProfileExplainer(api_key="", base_url="https://api.anthropic.com/v1", model="Claude Sonnet 4.6")
+            explainer = ClaudeProfileExplainer(api_key="", base_url="https://ark.cn-beijing.volces.com/api/coding/v3", model="doubao-seed-2-0-lite")
             with self.assertRaises(AIProviderError):
                 explainer.explain(stock={"name": "平安银行"}, analysis={}, profile_payload={"profile": {}})
 
-    def test_kimi_explainer_uses_chat_completions_payload(self):
-        explainer = FakeKimiExplainer()
+    def test_ark_explainer_uses_openai_compatible_payload(self):
+        explainer = FakeArkExplainer()
         result = explainer.explain(
             stock={"name": "平安银行", "symbol": "000001", "ts_code": "000001.SZ", "industry": "银行"},
             analysis={"signals": [], "divergences": []},
@@ -122,12 +122,24 @@ class AIProfileTest(unittest.TestCase):
         )
 
         self.assertEqual(result["status"], "ok")
-        self.assertEqual(result["provider"], "Kimi")
-        self.assertEqual(result["model"], "kimi-k2.6")
+        self.assertEqual(result["provider"], "火山方舟")
+        self.assertEqual(result["model"], "doubao-seed-2-0-lite")
         self.assertEqual(explainer.last_payload["messages"][0]["role"], "system")
         self.assertEqual(explainer.last_payload["temperature"], 0.6)
         self.assertEqual(explainer.last_payload["thinking"], {"type": "disabled"})
         self.assertEqual(result["analysis"]["overall_verdict"], "候选观察")
+
+    def test_chat_completion_url_supports_ark_api_v3(self):
+        self.assertEqual(
+            _chat_completions_url("https://ark.cn-beijing.volces.com/api/v3"),
+            "https://ark.cn-beijing.volces.com/api/v3/chat/completions",
+        )
+
+    def test_chat_completion_url_supports_ark_coding_api_v3(self):
+        self.assertEqual(
+            _chat_completions_url("https://ark.cn-beijing.volces.com/api/coding/v3"),
+            "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+        )
 
     def test_review_explainer_returns_structured_review(self):
         explainer = FakeReviewExplainer()
@@ -139,6 +151,7 @@ class AIProfileTest(unittest.TestCase):
                 "dragon_tiger": [{"ts_code": "000001.SZ", "name": "平安银行", "net_amount": 420000000.0, "reason": "日涨幅偏离值达7%"}],
                 "hot_money_trades": [{"ts_code": "000001.SZ", "name": "平安银行", "hot_money_label": "北京帮", "net_amount": 180000000.0}],
                 "limit_lists": {"up": [], "down": [], "burst": []},
+                "emotion_cycle": {"phase": "分歧转强（弱转强）", "summary": "规则层阶段判断", "basis": ["涨停强于跌停"]},
                 "ladder": [{"ts_code": "000001.SZ", "name": "平安银行", "continue_num": 3, "concept": "银行概念"}],
                 "focus_boards": [{"name": "银行概念", "rank": 1, "watch_reason": "前排最强"}],
                 "focus_stocks": [{"ts_code": "000001.SZ", "name": "平安银行", "score": 26.0, "reason": "资金关注"}],
@@ -148,6 +161,7 @@ class AIProfileTest(unittest.TestCase):
 
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["analysis"]["market_stage"], "主流试错")
+        self.assertEqual(result["analysis"]["emotion_cycle"]["phase"], "分歧转强（弱转强）")
         self.assertEqual(result["analysis"]["focus_boards"][0]["name"], "银行概念")
         self.assertEqual(explainer.last_payload["messages"][0]["role"], "user")
         self.assertIn("指数复盘", explainer.last_payload["messages"][0]["content"])

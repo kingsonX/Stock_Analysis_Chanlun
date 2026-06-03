@@ -286,7 +286,8 @@ class FakeAIClient:
         self.last_call = {"stock": stock, "analysis": analysis, "profile_payload": profile_payload}
         return {
             "status": "ok",
-            "model": "Claude Sonnet 4.6",
+            "provider": "火山方舟",
+            "model": "doubao-seed-2-0-lite",
             "facts": {"stock": stock},
             "analysis": {
                 "summary": "结构有点，但环境和容量还需要确认。",
@@ -382,8 +383,8 @@ class FakeReviewClient:
         payload = dict(review_payload)
         payload["ai_review"] = {
             "status": "ok",
-            "provider": "Claude",
-            "model": "Claude Sonnet 4.6",
+            "provider": "火山方舟",
+            "model": "doubao-seed-2-0-lite",
             "analysis": {
                 "summary": "金融线更强，先看前排承接。",
                 "market_stage": "主流试错",

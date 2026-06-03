@@ -143,20 +143,19 @@
         </section>
 
         <section id="smartPickerPage" class="appPage">
-          <main class="pickerShell">
-            <section class="pickerWorkspace">
-              <header class="topbar pickerTopbar">
-                <div>
-                  <h1>智能选股</h1>
-                  <p id="pickerStatusText">默认从我的自选股生成候选池，再用结构、情绪和容量筛出观察优先级。</p>
-                </div>
-                <div class="pickerActions">
-                  <button id="pickerOverviewBtn" type="button" class="ghostButton">刷新市场</button>
-                  <button id="pickerWatchlistBtn" type="button" class="ghostButton">刷新自选</button>
-                </div>
-              </header>
-
+          <main class="pickerShell smartPickerShell">
+            <section class="pickerWorkspace smartPickerWorkspace">
               <section class="pickerControls" aria-label="智能选股条件">
+                <div class="pickerControlsHead">
+                  <div class="pickerControlsIntro">
+                    <h1>智能选股</h1>
+                    <p id="pickerStatusText">默认从我的自选股生成候选池，再用结构、情绪和容量筛出观察优先级。</p>
+                  </div>
+                  <div class="pickerActions">
+                    <button id="pickerOverviewBtn" type="button" class="ghostButton">刷新市场</button>
+                    <button id="pickerWatchlistBtn" type="button" class="ghostButton">刷新自选</button>
+                  </div>
+                </div>
                 <div class="pickerSourceGrid">
                   <section class="pickerSourceCard">
                     <div class="pickerSourceHeader">
@@ -167,7 +166,7 @@
                       选股条件
                       <input id="pickerQueryInput" type="search" value="" placeholder="例如：A股市场中半导体行业成交额大于10亿且涨幅大于2%的股票">
                     </label>
-                    <p class="pickerControlHint">这里改为非必填。你可以只用条件筛，也可以和板块来源叠加。</p>
+                    <p class="pickerControlHint">可留空，也可与板块条件叠加。</p>
                   </section>
 
                   <section class="pickerSourceCard">
@@ -177,7 +176,7 @@
                     </div>
                     <div class="pickerInlineFields">
                       <label>
-                        东方财富类型
+                        类型
                         <select id="pickerBoardType">
                           <option value="all" selected>全部板块</option>
                           <option value="industry">行业板块</option>
@@ -186,7 +185,7 @@
                         </select>
                       </label>
                       <label class="pickerBoardField">
-                        东方财富板块/概念
+                        板块/概念
                         <input id="pickerBoardInput" type="search" list="pickerBoardOptions" placeholder="例如：小金属、算力概念、西藏板块">
                         <datalist id="pickerBoardOptions"></datalist>
                       </label>
@@ -201,7 +200,7 @@
                     </div>
                     <div class="pickerInlineFields">
                       <label>
-                        通达信类型
+                        类型
                         <select id="pickerTdxType">
                           <option value="all" selected>全部板块</option>
                           <option value="industry">行业板块</option>
@@ -211,7 +210,7 @@
                         </select>
                       </label>
                       <label class="pickerBoardField">
-                        通达信板块/概念
+                        板块/概念
                         <input id="pickerTdxInput" type="search" list="pickerTdxOptions" placeholder="例如：稀土永磁、芯片概念">
                         <datalist id="pickerTdxOptions"></datalist>
                       </label>
@@ -226,7 +225,7 @@
                     </div>
                     <div class="pickerInlineFields">
                       <label>
-                        同花顺类型
+                        类型
                         <select id="pickerThsType">
                           <option value="all" selected>全部板块</option>
                           <option value="concept">概念题材</option>
@@ -239,7 +238,7 @@
                         </select>
                       </label>
                       <label class="pickerBoardField">
-                        同花顺板块/概念
+                        板块/概念
                         <input id="pickerThsInput" type="search" list="pickerThsOptions" placeholder="例如：算力租赁、固态电池、低空经济">
                         <datalist id="pickerThsOptions"></datalist>
                       </label>
@@ -258,12 +257,12 @@
                     </select>
                   </label>
                   <label>
-                    结构扫描数量
+                    扫描数
                     <input id="pickerLimit" type="number" min="1" max="80" value="20">
                   </label>
                   <button id="pickerRunBtn" type="button" class="pickerPrimaryButton">执行组合筛选</button>
                 </div>
-                <p class="pickerControlHint">四类查询都改成选填，可单独执行，也可以叠加成股票池约束。组合筛选会把所有已填写条件一起合成候选池。</p>
+                <p class="pickerControlHint">四类条件均可单独执行，也可组合成候选池约束。</p>
               </section>
 
               <section id="pickerErrorBox" class="errorBox" hidden></section>
@@ -278,7 +277,7 @@
                 </div>
                 <section class="pickerToolbar" aria-label="候选池排序与筛选">
                   <label>
-                    市场筛选
+                    市场
                     <select id="pickerMarketScopeFilter">
                       <option value="all" selected>全部市场</option>
                       <option value="sz">深证</option>
@@ -289,7 +288,7 @@
                     </select>
                   </label>
                   <label>
-                    结构筛选
+                    结构
                     <select id="pickerStructureFilter">
                       <option value="all" selected>全部结构</option>
                       <option value="结构可看">结构可看</option>
@@ -298,7 +297,7 @@
                     </select>
                   </label>
                   <label>
-                    热点筛选
+                    热点
                     <select id="pickerEmotionFilter">
                       <option value="all" selected>全部热点</option>
                       <option value="主流热点">主流热点</option>
@@ -308,7 +307,7 @@
                     </select>
                   </label>
                   <label>
-                    龙头筛选
+                    龙头
                     <select id="pickerLeaderFilter">
                       <option value="all" selected>全部角色</option>
                       <option value="龙头候选">龙头候选</option>
@@ -319,7 +318,7 @@
                     </select>
                   </label>
                   <label>
-                    综合筛选
+                    综合
                     <select id="pickerOverallFilter">
                       <option value="all" selected>全部结论</option>
                       <option value="重点观察">重点观察</option>
@@ -328,7 +327,7 @@
                     </select>
                   </label>
                   <label>
-                    排序方式
+                    排序
                     <select id="pickerSortBy">
                       <option value="overall_score" selected>综合分</option>
                       <option value="structure_score">结构分</option>
@@ -341,15 +340,15 @@
                     </select>
                   </label>
                   <label>
-                    排序方向
+                    方向
                     <select id="pickerSortDirection">
                       <option value="desc" selected>从高到低</option>
                       <option value="asc">从低到高</option>
                     </select>
                   </label>
                   <div class="pickerToolbarActions">
-                    <button id="pickerFocusReadyBtn" type="button" class="ghostButton">聚焦主流强票</button>
-                    <button id="pickerClearFiltersBtn" type="button" class="ghostButton">重置筛选</button>
+                    <button id="pickerFocusReadyBtn" type="button" class="ghostButton">主流强票</button>
+                    <button id="pickerClearFiltersBtn" type="button" class="ghostButton">重置</button>
                   </div>
                   <p class="pickerToolbarHint">龙头角色按同热点样本中的涨幅强度、成交承接与前排位置自动标注：龙头候选看辨识度，容量中军看成交额，前排助攻看前排跟随。</p>
                 </section>
@@ -358,25 +357,6 @@
                 </div>
               </section>
             </section>
-
-            <aside class="pickerSidePanel">
-              <section class="panel pickerDetailPanel">
-                <h2>候选详情</h2>
-                <div id="pickerDetailBox" class="empty">点击候选池中的股票，这里会展开三视角交易画像和自选操作。</div>
-              </section>
-              <nav id="pickerSideTabs" class="sideTabs pickerSideTabs" aria-label="智能选股侧栏切换">
-                <button type="button" class="active" data-picker-side-panel="pickerMarketPanel">市场</button>
-                <button type="button" data-picker-side-panel="pickerNewsPanel">催化</button>
-              </nav>
-              <section id="pickerMarketPanel" class="panel pickerSidePane active">
-                <h2>市场环境</h2>
-                <div id="pickerMarketBox" class="empty">点击“刷新市场”加载赚钱效应、成交活跃度和承压情况。</div>
-              </section>
-              <section id="pickerNewsPanel" class="panel pickerSidePane">
-                <h2>资讯催化</h2>
-                <div id="pickerNewsBox" class="empty">这里会显示主流板块与市场催化摘要。</div>
-              </section>
-            </aside>
           </main>
         </section>
 

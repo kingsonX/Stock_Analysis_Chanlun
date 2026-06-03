@@ -13,7 +13,8 @@ from .trading_profile import TradingProfileService
 from .watchtower_service import WatchtowerService
 
 TRADING_PROFILE_EXTERNAL_TIMEOUT_SECONDS = 3
-TRADING_PROFILE_AI_TIMEOUT_SECONDS = 2
+TRADING_PROFILE_AI_TIMEOUT_SECONDS = 12
+REVIEW_AI_TIMEOUT_SECONDS = 10
 
 
 def create_app(
@@ -41,7 +42,10 @@ def create_app(
         mx_data_provider=mx_provider,
         trading_profile=trading_profile,
     )
-    review_service = review_client or ReviewService(data_client=client, ai_explainer=ClaudeProfileExplainer(timeout_seconds=25))
+    review_service = review_client or ReviewService(
+        data_client=client,
+        ai_explainer=ClaudeProfileExplainer(timeout_seconds=REVIEW_AI_TIMEOUT_SECONDS),
+    )
     watchtower_service = watchtower_client or WatchtowerService(
         data_client=client,
         picker_client=smart_picker,

@@ -518,20 +518,25 @@ class TushareClient:
         if config.get("intraday"):
             return self._get_intraday_klines(pro, ts_code, level, start_date, end_date)
 
-        api_name = config["api"]
-        fields = "ts_code,trade_date,open,high,low,close,vol,amount"
         try:
-            df = getattr(pro, api_name)(
+            import tushare as ts
+        except ImportError as exc:
+            raise DataProviderError("未安装 tushare，请先运行 pip install -r requirements.txt。", 500) from exc
+
+        try:
+            df = ts.pro_bar(
+                api=pro,
                 ts_code=ts_code,
+                adj="qfq",
+                freq=config["freq"],
                 start_date=start_date,
                 end_date=end_date,
-                fields=fields,
             )
         except Exception as exc:
-            raise DataProviderError(f"Tushare K线数据获取失败：{exc}", 502) from exc
+            raise DataProviderError(f"Tushare 前复权K线数据获取失败：{exc}", 502) from exc
 
         if df is None or df.empty:
-            raise DataProviderError("没有获取到 K 线数据，请检查股票代码、日期范围或 Tushare 权限。", 404)
+            raise DataProviderError("没有获取到前复权 K 线数据，请检查股票代码、日期范围或 Tushare 权限。", 404)
 
         return _standardize_kline_rows(df, ts_code, "trade_date")
 

@@ -62,8 +62,8 @@ class FakeAIExplainer:
     def explain(self, stock=None, analysis=None, profile_payload=None):
         return {
             "status": "ok",
-            "provider": "Kimi",
-            "model": "kimi-k2.6",
+            "provider": "火山方舟",
+            "model": "doubao-seed-2-0-lite",
             "analysis": {
                 "summary": "结构、主流和容量可以一起看，但执行仍要等确认。",
                 "overall_verdict": "候选观察",
@@ -142,7 +142,7 @@ class TradingProfileTest(unittest.TestCase):
         self.assertEqual(result["profile"]["headline"], "结构、主流和容量可以一起看，但执行仍要等确认。")
         self.assertEqual(result["profile"]["decision"], "先跟踪，不急着追高。")
         self.assertEqual(result["profile"]["stance_label"], "候选观察")
-        self.assertEqual(result["profile"]["ai_summary"]["provider"], "Kimi")
+        self.assertEqual(result["profile"]["ai_summary"]["provider"], "火山方舟")
         self.assertEqual(len(result["profile"]["ai_sections"]), 4)
         self.assertEqual(result["profile"]["emotion"]["label"], "主流活跃")
         self.assertEqual(result["profile"]["emotion"]["title"], "养家视角")

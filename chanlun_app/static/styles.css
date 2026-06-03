@@ -200,77 +200,111 @@ h2 {
 
 .stockBasics {
   display: grid;
-  gap: 10px;
+  gap: 8px;
 }
 
-.stockCompactGrid {
+.stockHeaderRibbon {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfdff;
+}
+
+.stockIdentity {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+
+.stockIdentity strong {
+  color: var(--ink);
+  font-size: 22px;
+  line-height: 1.1;
+  white-space: nowrap;
+}
+
+.stockIdentity span {
+  color: var(--accent-strong);
+  font-size: 14px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.stockTagGroup {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.stockTag {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: #f3f7fa;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.stockTag.alert {
+  background: rgba(194, 65, 54, 0.12);
+  color: var(--sell);
+}
+
+.stockMetricRibbon {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 8px;
 }
 
-.stockCompactMetric {
+.stockMetricChip,
+.stockFactChip {
   display: grid;
-  gap: 4px;
-  min-height: 66px;
-  padding: 10px 12px;
+  gap: 3px;
+  padding: 8px 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #f8fafb;
-  align-content: start;
 }
 
-.stockCompactMetric span,
-.stockHighlightCard span {
+.stockMetricChip span,
+.stockFactChip span,
+.stockHeroMetric span,
+.stockBasicItem span {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
   line-height: 1.2;
 }
 
-.stockCompactMetric strong {
-  display: block;
-  color: var(--ink);
-  font-size: 14px;
-  line-height: 1.3;
-}
-
-.stockCompactMetric small {
-  color: var(--muted);
-  font-size: 11px;
-  line-height: 1.35;
-}
-
-.stockHighlightGrid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 8px;
-}
-
-.stockHighlightCard {
-  display: grid;
-  gap: 5px;
-  min-height: 78px;
-  padding: 10px 12px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: #f8fafb;
-  align-content: start;
-}
-
-.stockHighlightCard strong {
+.stockMetricChip strong {
   display: block;
   color: var(--ink);
   font-size: 13px;
-  line-height: 1.45;
-  word-break: break-word;
+  line-height: 1.25;
 }
 
-.stockHighlightCard em {
-  color: var(--muted);
-  font-size: 11px;
-  font-style: normal;
-  line-height: 1.45;
+.stockFactRibbon {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.8fr) minmax(0, 1.2fr);
+  gap: 8px;
+}
+
+.stockFactChip strong {
+  display: block;
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.4;
+  word-break: break-word;
 }
 
 .stockHeroMetrics {
@@ -729,9 +763,18 @@ input:focus {
   min-height: calc(100vh - 32px);
 }
 
+.smartPickerShell {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .pickerWorkspace {
   display: grid;
   gap: 16px;
+}
+
+.smartPickerWorkspace {
+  grid-template-rows: auto auto minmax(0, 1fr);
+  min-height: calc(100vh - 32px);
 }
 
 .pickerTopbar {
@@ -744,30 +787,59 @@ input:focus {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
-  gap: 8px;
+  gap: 6px;
 }
 
 .pickerControls {
   display: grid;
-  gap: 14px;
-  padding: 16px 20px;
+  gap: 10px;
+  padding: 12px 14px;
   border: 1px solid var(--line);
   background: var(--surface);
   box-shadow: var(--shadow);
 }
 
+.pickerControlsHead {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+
+.pickerControlsIntro {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: baseline;
+}
+
+.pickerControlsIntro h1 {
+  font-size: 20px;
+  line-height: 1.1;
+}
+
+.pickerControlsIntro p {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .pickerSourceGrid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
+  grid-template-columns: 1.15fr repeat(3, minmax(0, 1fr));
+  gap: 8px;
 }
 
 .pickerSourceCard {
   display: grid;
-  gap: 10px;
-  padding: 12px;
+  gap: 6px;
+  padding: 10px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 6px;
   background: #fbfdff;
 }
 
@@ -775,26 +847,34 @@ input:focus {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 8px;
 }
 
 .pickerSourceHeader strong {
   color: var(--ink);
-  font-size: 14px;
+  font-size: 13px;
 }
 
 .pickerInlineFields {
   display: grid;
-  grid-template-columns: minmax(140px, 0.6fr) minmax(0, 1fr);
-  gap: 10px;
+  grid-template-columns: minmax(96px, 120px) minmax(0, 1fr);
+  gap: 8px;
   align-items: end;
 }
 
 .pickerCommonControls {
   display: grid;
-  grid-template-columns: repeat(2, minmax(120px, 180px)) minmax(170px, 220px);
-  gap: 12px;
+  grid-template-columns: repeat(2, minmax(108px, 140px)) minmax(180px, 220px);
+  gap: 8px;
   align-items: end;
+}
+
+.pickerControls label {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.3;
 }
 
 .pickerQueryField {
@@ -807,20 +887,25 @@ input:focus {
 
 .pickerControls input,
 .pickerControls select {
-  height: 38px;
+  height: 34px;
+  padding-top: 0;
+  padding-bottom: 0;
 }
 
 .pickerControlHint {
   margin: 0;
   color: var(--muted);
-  font-size: 12px;
-  line-height: 1.55;
+  font-size: 11px;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .pickerControls button,
 .ghostButton,
 .miniButton {
-  height: 38px;
+  height: 34px;
   border: 1px solid var(--line);
   border-radius: 6px;
   background: var(--accent);
@@ -829,15 +914,16 @@ input:focus {
 }
 
 .pickerSourceAction {
-  min-width: 96px;
-  height: 34px !important;
-  padding: 0 12px;
+  min-width: 82px;
+  height: 32px !important;
+  padding: 0 10px;
   white-space: nowrap;
+  font-size: 12px;
 }
 
 .pickerPrimaryButton {
   width: 100%;
-  min-width: 170px;
+  min-width: 180px;
   font-weight: 700;
 }
 
@@ -866,9 +952,9 @@ input:focus {
 .pickerToolbar {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
+  gap: 8px;
   align-items: end;
-  padding: 14px 0 0;
+  padding: 10px 0 0;
   border-top: 1px solid var(--line);
 }
 
@@ -893,8 +979,11 @@ input:focus {
   grid-column: 1 / -1;
   margin: 0;
   color: var(--muted);
-  font-size: 12px;
-  line-height: 1.55;
+  font-size: 11px;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .pickerTablePanel,
@@ -959,8 +1048,12 @@ input:focus {
 }
 
 .reviewSidePanel {
-  grid-template-rows: auto minmax(720px, 1fr);
-  max-height: calc(100vh - 16px);
+  grid-template-rows: auto minmax(0, 1fr);
+  height: calc(100vh - 32px);
+  max-height: calc(100vh - 32px);
+  min-height: 0;
+  align-self: start;
+  overflow: hidden;
 }
 
 .reviewSideTabs {
@@ -969,13 +1062,19 @@ input:focus {
 
 .reviewSideTabs button {
   font-size: 12px;
+  min-height: 34px;
+  white-space: nowrap;
 }
 
 .reviewSidePane {
   display: none;
   min-height: 0;
-  max-height: calc(94vh - 64px);
-  overflow: auto;
+  height: 100%;
+  max-height: none;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 .reviewSidePane.active {
@@ -1298,6 +1397,290 @@ body.modalOpen {
   color: var(--sell);
 }
 
+.reviewHotMoneyCompactWrap {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: auto;
+  background: #fff;
+}
+
+.reviewHotMoneyCompactTable {
+  width: 100%;
+  min-width: 760px;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 12px;
+}
+
+.reviewHotMoneyCompactTable th,
+.reviewHotMoneyCompactTable td {
+  padding: 7px 9px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: middle;
+}
+
+.reviewHotMoneyCompactTable th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #f6f9fb;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 750;
+  text-align: left;
+}
+
+.reviewHotMoneyCompactTable th:nth-child(1) {
+  width: 21%;
+}
+
+.reviewHotMoneyCompactTable th:nth-child(2) {
+  width: 20%;
+}
+
+.reviewHotMoneyCompactTable th:nth-child(3),
+.reviewHotMoneyCompactTable th:nth-child(4),
+.reviewHotMoneyCompactTable th:nth-child(5) {
+  width: 12%;
+  text-align: right;
+}
+
+.reviewHotMoneyCompactTable th:nth-child(6) {
+  width: 15%;
+}
+
+.reviewHotMoneyCompactTable td:nth-child(3),
+.reviewHotMoneyCompactTable td:nth-child(4),
+.reviewHotMoneyCompactTable td:nth-child(5) {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.reviewHotMoneyCompactTable tr:hover td {
+  background: #f8fbfc;
+}
+
+.reviewHotMoneyOrgCell,
+.reviewHotMoneyStockCell,
+.reviewHotMoneyMetaCell {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.reviewHotMoneyOrgCell strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reviewHotMoneyOrgCell small,
+.reviewHotMoneyStockCell small,
+.reviewHotMoneyMetaCell span {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reviewHotMoneyAmountCell {
+  color: var(--ink);
+  font-weight: 750;
+}
+
+.reviewHotMoneyAmountCell.positive {
+  color: var(--sell);
+}
+
+.reviewHotMoneyAmountCell.negative {
+  color: var(--buy);
+}
+
+.reviewHotMoneyBoard {
+  display: grid;
+  gap: 12px;
+}
+
+.reviewHotMoneyCategorySection {
+  display: grid;
+  grid-template-columns: 148px minmax(0, 1fr);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.reviewHotMoneyCategoryCell {
+  display: grid;
+  align-content: center;
+  gap: 8px;
+  padding: 16px 14px;
+  background: linear-gradient(180deg, #fffaf0 0%, #fff5dc 100%);
+  border-right: 1px solid rgba(191, 142, 58, 0.18);
+  text-align: center;
+}
+
+.reviewHotMoneyCategoryCell strong {
+  color: #9a5b00;
+  font-size: 24px;
+  line-height: 1.15;
+  letter-spacing: 0;
+}
+
+.reviewHotMoneyCategoryCell small {
+  color: #8c6a33;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.reviewHotMoneyCategoryNet {
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.reviewHotMoneyCategoryNet.positive {
+  color: #d9485f;
+}
+
+.reviewHotMoneyCategoryNet.negative {
+  color: #1f9d55;
+}
+
+.reviewHotMoneyCategoryRows {
+  display: grid;
+}
+
+.reviewHotMoneyBoardRow {
+  display: grid;
+  grid-template-columns: minmax(220px, 260px) minmax(0, 1fr);
+  gap: 18px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.reviewHotMoneyBoardRow:last-child {
+  border-bottom: none;
+}
+
+.reviewHotMoneyBoardLead {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+}
+
+.reviewHotMoneyBoardName {
+  display: grid;
+  gap: 4px;
+}
+
+.reviewHotMoneyBoardName strong {
+  color: var(--ink);
+  font-size: 18px;
+  line-height: 1.2;
+}
+
+.reviewHotMoneyBoardName small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.reviewHotMoneyBoardAmounts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: center;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.reviewHotMoneyBoardAmounts strong {
+  font-size: 20px;
+  font-weight: 800;
+}
+
+.reviewHotMoneyBoardAmounts strong.positive {
+  color: #d9485f;
+}
+
+.reviewHotMoneyBoardAmounts strong.negative {
+  color: #1f9d55;
+}
+
+.reviewHotMoneyBoardStocks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-content: flex-start;
+}
+
+.reviewHotMoneyStockPill {
+  display: grid;
+  gap: 4px;
+  min-width: 156px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #fffaf0;
+  border: 1px solid rgba(191, 142, 58, 0.18);
+}
+
+.reviewHotMoneyStockPill.positive {
+  background: #fff7f7;
+  border-color: rgba(217, 72, 95, 0.18);
+}
+
+.reviewHotMoneyStockPill.negative {
+  background: #f2fbf5;
+  border-color: rgba(31, 157, 85, 0.18);
+}
+
+.reviewHotMoneyStockPillMain {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: baseline;
+}
+
+.reviewHotMoneyStockPillAmount {
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.reviewHotMoneyStockPillAmount.positive {
+  color: #d9485f;
+}
+
+.reviewHotMoneyStockPillAmount.negative {
+  color: #1f9d55;
+}
+
+.reviewHotMoneyStockPill small {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.reviewStockLink.board-pill {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 700;
+  text-align: left;
+}
+
+.reviewStockLink.board-pill:hover {
+  color: var(--brand);
+  background: transparent;
+}
+
 .reviewPanelMeta {
   display: flex;
   justify-content: space-between;
@@ -1359,6 +1742,22 @@ body.modalOpen {
   background: rgba(37, 111, 146, 0.06);
 }
 
+@media (max-width: 920px) {
+  .reviewHotMoneyCategorySection {
+    grid-template-columns: 1fr;
+  }
+
+  .reviewHotMoneyCategoryCell {
+    border-right: 0;
+    border-bottom: 1px solid rgba(191, 142, 58, 0.18);
+    text-align: left;
+  }
+
+  .reviewHotMoneyBoardRow {
+    grid-template-columns: 1fr;
+  }
+}
+
 .reviewStockLink {
   padding: 0;
   border: 0;
@@ -1377,6 +1776,16 @@ body.modalOpen {
 
 .reviewStockLink.inline {
   display: inline;
+}
+
+.reviewStockLink.compact {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .reviewStockLink.light {
@@ -1478,6 +1887,143 @@ body.modalOpen {
   color: var(--muted);
   font-size: 12px;
   line-height: 1.45;
+}
+
+.reviewSidePanel .reviewFocusStack {
+  gap: 12px;
+}
+
+.reviewSidePanel .reviewFocusItem {
+  gap: 8px;
+  padding: 12px;
+  box-shadow: none;
+}
+
+.reviewSidePanel .reviewFocusItem p {
+  margin: 0;
+  line-height: 1.6;
+}
+
+.reviewSidePanel .reviewFocusHeroHeader {
+  align-items: center;
+}
+
+.reviewSidePanel .reviewIndexStrip {
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+.reviewSidePanel .reviewIndexCard {
+  grid-template-columns: minmax(72px, 0.9fr) auto minmax(0, 1.2fr);
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+}
+
+.reviewSidePanel .reviewIndexCard strong {
+  font-size: 18px;
+}
+
+.reviewSidePanel .reviewIndexCard small {
+  text-align: right;
+}
+
+.reviewSidePanel .reviewInsightGrid {
+  gap: 10px;
+}
+
+.reviewSidePanel .reviewBulletList {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.reviewEmotionCycleCard {
+  overflow: hidden;
+}
+
+.reviewEmotionCycleLoop {
+  display: grid;
+  grid-template-areas:
+    "acc climax high"
+    "turnStrong core turnWeak"
+    "low ice down";
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  align-items: stretch;
+}
+
+.reviewEmotionCycleCore {
+  grid-area: core;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 4px;
+  min-height: 88px;
+  padding: 10px;
+  border: 1px solid rgba(37, 111, 146, 0.28);
+  border-radius: 999px;
+  background: #f2fbff;
+  text-align: center;
+}
+
+.reviewEmotionCycleCore span,
+.reviewEmotionCycleCore small {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.25;
+}
+
+.reviewEmotionCycleCore strong {
+  color: var(--accent-strong);
+  font-size: 14px;
+  line-height: 1.2;
+}
+
+.reviewEmotionNode {
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 2px;
+  min-height: 54px;
+  padding: 8px 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fafb;
+  color: var(--ink);
+  text-align: center;
+  line-height: 1.2;
+}
+
+.reviewEmotionNode span {
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.reviewEmotionNode small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.reviewEmotionNode.tone-rise {
+  border-color: rgba(194, 65, 54, 0.18);
+  background: rgba(194, 65, 54, 0.06);
+}
+
+.reviewEmotionNode.tone-fall {
+  border-color: rgba(0, 129, 86, 0.18);
+  background: rgba(0, 129, 86, 0.06);
+}
+
+.reviewEmotionNode.tone-turn {
+  border-color: rgba(168, 111, 0, 0.18);
+  background: rgba(168, 111, 0, 0.07);
+}
+
+.reviewEmotionNode.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(37, 111, 146, 0.15);
+  background: #e9f6fb;
+  color: var(--accent-strong);
 }
 
 .reviewFocusItem strong {
@@ -1920,34 +2466,125 @@ body.modalOpen {
 
 .pickerTablePanel {
   display: grid;
-  gap: 14px;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 10px;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .pickerTableHeader {
   display: flex;
   justify-content: space-between;
-  gap: 10px;
-  align-items: flex-start;
+  gap: 8px;
+  align-items: baseline;
 }
 
 .pickerTableHeader p {
-  margin-top: 6px;
+  margin-top: 4px;
   color: var(--muted);
-  font-size: 13px;
-  line-height: 1.5;
+  font-size: 12px;
+  line-height: 1.35;
 }
 
 .pickerResultMeta {
-  max-width: 300px;
+  max-width: 360px;
   color: var(--muted);
-  font-size: 12px;
-  line-height: 1.5;
+  font-size: 11px;
+  line-height: 1.35;
   text-align: right;
 }
 
 .pickerLoadingTable {
   display: grid;
   gap: 10px;
+  min-height: 100%;
+  align-content: start;
+}
+
+#pickerTableBox {
+  min-height: 0;
+  height: 100%;
+}
+
+.smartPickerWorkspace .pickerTablePanel {
+  min-height: calc(100vh - 420px);
+}
+
+.smartPickerWorkspace #pickerTableBox {
+  display: block;
+  align-content: start;
+  overflow: auto;
+  border-top: 1px solid var(--line);
+}
+
+.smartPickerWorkspace #pickerTableBox > .empty,
+.smartPickerWorkspace #pickerTableBox > .mxError,
+.smartPickerWorkspace .pickerLoadingTable {
+  min-height: 100%;
+  padding: 8px 0;
+}
+
+.smartPickerWorkspace .pickerLoadingTable .mxSkeleton {
+  min-height: 112px;
+}
+
+.smartPickerWorkspace .pickerLoadingTable .mxSkeleton.short {
+  min-height: 72px;
+}
+
+.pickerToolbar {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(96px, 1fr)) auto;
+  gap: 8px;
+  align-items: end;
+  padding: 8px 0 0;
+  border-top: 1px solid var(--line);
+}
+
+.pickerToolbar > label {
+  min-width: 0;
+  gap: 2px;
+  font-size: 11px;
+}
+
+.pickerToolbar select {
+  height: 32px;
+}
+
+.pickerToolbarActions {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 6px;
+  justify-content: flex-end;
+  align-items: end;
+  grid-column: auto;
+}
+
+.pickerToolbarActions .ghostButton {
+  min-width: 72px;
+  height: 32px;
+  padding: 0 10px;
+  white-space: nowrap;
+}
+
+.pickerToolbarHint {
+  display: none;
+}
+
+.smartPickerWorkspace #pickerTableBox .pickerTable {
+  min-width: 1240px;
+}
+
+.smartPickerWorkspace #pickerTableBox .pickerTable thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--surface);
+  box-shadow: inset 0 -1px 0 var(--line);
+}
+
+.smartPickerWorkspace #pickerTableBox .pickerHint {
+  padding: 8px 0 0;
 }
 
 .pickerTable tbody tr.is-selected {
@@ -2767,6 +3404,17 @@ th {
     grid-template-columns: 1fr;
   }
 
+  .pickerControlsHead {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .pickerControlsIntro p,
+  .pickerControlHint,
+  .pickerToolbarHint {
+    white-space: normal;
+  }
+
   .pickerCommonControls {
     grid-template-columns: 1fr 1fr;
   }
@@ -2807,9 +3455,19 @@ th {
 
   .stockHeroMetrics,
   .stockFactsGrid,
-  .stockCompactGrid,
-  .stockHighlightGrid {
+  .stockMetricRibbon,
+  .stockFactRibbon {
     grid-template-columns: 1fr;
+  }
+
+  .stockHeaderRibbon,
+  .stockIdentity {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .stockTagGroup {
+    justify-content: flex-start;
   }
 
   .stockBasicItem.wide {
@@ -2841,10 +3499,20 @@ th {
     max-height: none;
   }
 
+  .reviewSidePanel {
+    height: auto;
+    overflow: visible;
+  }
+
   .sidePane,
   .pickerDetailPanel,
   .pickerSidePane {
     max-height: none;
+  }
+
+  .reviewSidePane {
+    height: auto;
+    overflow: visible;
   }
 }
 
@@ -2873,6 +3541,14 @@ th {
   .pickerTopbar,
   .pickerControls {
     padding: 14px;
+  }
+
+  .smartPickerWorkspace {
+    min-height: auto;
+  }
+
+  .smartPickerWorkspace .pickerTablePanel {
+    min-height: 480px;
   }
 
   .pickerToolbar {
