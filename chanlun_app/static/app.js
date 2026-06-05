@@ -1212,7 +1212,6 @@ function ensureSmartPickerLoaded() {
   syncPickerFiltersFromControls();
   renderAllBoardSelections();
   loadPickerOverview();
-  loadPickerWatchlist();
 }
 
 function ensureReviewLoaded() {
@@ -1267,7 +1266,7 @@ async function loadPickerWatchlist() {
   renderPickerTable();
   renderPickerDetail();
   hidePickerError();
-  setPickerStatus("正在同步我的自选股，并逐只生成结构候选池...");
+  setPickerStatus("正在查询东财自选，并逐只生成结构候选池...");
 
   try {
     const data = await fetchJson("/api/smart-picker/screen", {
@@ -1286,8 +1285,8 @@ async function loadPickerWatchlist() {
     const total = data.total || data.source_total || count;
     setPickerStatus(
       count
-        ? `已把 ${total} 只自选股同步到候选池，当前生成 ${count} 只结构分析。`
-        : "自选股已同步，但当前没有生成可用候选。"
+        ? `已把 ${total} 只东财自选同步到候选池，当前生成 ${count} 只结构分析。`
+        : "东财自选已同步，但当前没有生成可用候选。"
     );
   } catch (err) {
     if (requestId !== state.smartPicker.screenRequestId) return;
@@ -1548,21 +1547,18 @@ function openPickerEastmoneyModal() {
   if (els.pickerEastmoneyTargetsInput) {
     els.pickerEastmoneyTargetsInput.value = targetsText;
   }
-  if (els.pickerEastmoneyGroupInput && !els.pickerEastmoneyGroupInput.value.trim()) {
-    els.pickerEastmoneyGroupInput.value = "重点监控";
-  }
   if (els.pickerEastmoneyModalMeta) {
     els.pickerEastmoneyModalMeta.textContent = candidates.length
-      ? `已按当前候选池筛选结果预填 ${candidates.length} 只股票；可直接批量加入分组或删除默认自选。`
+      ? `已按当前候选池筛选结果预填 ${candidates.length} 只股票；可直接批量加入东财自选或删除默认自选。`
       : "当前候选池暂无可批量处理的股票，你也可以手动输入名称或代码。";
   }
   setPickerEastmoneyFeedback(candidates.length ? "已预填当前筛选后的股票列表。" : "当前没有筛选结果，等你手动输入。");
   els.pickerEastmoneyModal.hidden = false;
   document.body.classList.add("modalOpen");
   window.setTimeout(() => {
-    if (els.pickerEastmoneyGroupInput) {
-      els.pickerEastmoneyGroupInput.focus();
-      els.pickerEastmoneyGroupInput.select();
+    if (els.pickerEastmoneyTargetsInput) {
+      els.pickerEastmoneyTargetsInput.focus();
+      els.pickerEastmoneyTargetsInput.select();
     }
   }, 0);
 }
@@ -1575,13 +1571,8 @@ function closePickerEastmoneyModal() {
 
 async function submitPickerEastmoneyBatch(action) {
   const targetsText = els.pickerEastmoneyTargetsInput?.value || "";
-  const groupName = els.pickerEastmoneyGroupInput?.value || "";
   if (!String(targetsText).trim()) {
     setPickerEastmoneyFeedback("先填股票名称或代码，再执行批量操作。", "caution");
-    return;
-  }
-  if (action === "add_group" && !String(groupName).trim()) {
-    setPickerEastmoneyFeedback("加入组选前，先填分组名称。", "caution");
     return;
   }
 
@@ -1589,7 +1580,9 @@ async function submitPickerEastmoneyBatch(action) {
   buttons.forEach((button) => {
     button.disabled = true;
   });
-  setPickerEastmoneyFeedback(action === "add_group" ? "正在批量加入东方财富分组..." : "正在批量删除东方财富自选...");
+  setPickerEastmoneyFeedback(
+    action === "add_group" ? "正在批量加入东方财富自选..." : "正在批量删除东方财富自选..."
+  );
   hidePickerError();
   try {
     const data = await fetchJson("/api/smart-picker/eastmoney-batch", {
@@ -1597,7 +1590,7 @@ async function submitPickerEastmoneyBatch(action) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         action,
-        group_name: groupName,
+        group_name: "",
         targets_text: targetsText,
       }),
     });
@@ -1607,7 +1600,7 @@ async function submitPickerEastmoneyBatch(action) {
       .map((item) => `${item.target}：${item.message}`)
       .slice(0, 6);
     setPickerEastmoneyFeedback(
-      failed.length ? `${data.message} 失败明细：${failed.join("；")}` : data.message || "操作完成。",
+      failed.length ? `${data.message}\n失败明细：\n${failed.join("\n")}` : data.message || "操作完成。",
       tone
     );
   } catch (err) {
@@ -3321,11 +3314,20 @@ function renderPickerTable() {
   const screen = state.smartPicker.screen;
   if (!els.pickerTableBox) return;
 
-  if (!screen || screen.status === "loading") {
+  if (!screen) {
+    els.pickerTableStatus.textContent = "候选池以手动同步东财自选或条件筛选结果为准。";
+    if (els.pickerResultMeta) {
+      els.pickerResultMeta.textContent = "默认不自动同步东财自选，点击“查询东财自选”后再生成候选池。";
+    }
+    els.pickerTableBox.innerHTML = `<div class="empty">默认不自动查询东财自选；点击“查询东财自选”或执行条件筛选后，这里再展示候选池。</div>`;
+    return;
+  }
+
+  if (screen.status === "loading") {
     const isWatchlist = screen?.source_type === "watchlist";
     els.pickerTableStatus.textContent = isWatchlist ? "正在同步自选股并生成候选池..." : "正在生成候选池...";
     if (els.pickerResultMeta) {
-      els.pickerResultMeta.textContent = isWatchlist ? "我的自选股会作为默认候选池。" : "默认从全 A 股范围执行条件筛选。";
+      els.pickerResultMeta.textContent = isWatchlist ? "正在手动同步东财自选并生成候选池。" : "默认从全 A 股范围执行条件筛选。";
     }
     els.pickerTableBox.innerHTML = `
       <div class="pickerLoadingTable">

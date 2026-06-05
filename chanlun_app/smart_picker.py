@@ -127,11 +127,7 @@ class MXWatchlistProvider(MXBaseClient):
         if cleaned_action == "add":
             create_result = self._post_json(self.MANAGE_URL, {"query": f"创建自选股组{cleaned_group}"})
             if not _mx_manage_succeeded(create_result):
-                raise MXProviderError(
-                    "mx-zixuan 当前只确认默认自选操作，不支持创建或校验东方财富分组。"
-                    "请配置 EASTMONEY_HEADER 和 EASTMONEY_APPKEY 后再加入“重点监控”，本次未标记为已加入。",
-                    502,
-                )
+                raise MXProviderError(f"创建东方财富分组失败：{_mx_manage_result_text(create_result)}", 502)
 
         if cleaned_action == "add":
             queries = [
@@ -157,14 +153,19 @@ class MXWatchlistProvider(MXBaseClient):
             status = result.get("status")
             code = result.get("code")
             if status not in (0, "0", None) and code not in (0, "0", None):
-                last_error = f"自选分组操作失败：{result.get('message') or status or code}"
+                last_error = f"自选分组操作失败：{_mx_manage_result_text(result)}"
                 continue
+            if cleaned_action == "add" and not _mx_manage_group_confirmed(result, cleaned_group):
+                raise MXProviderError(
+                    f"接口已返回成功，但未确认写入分组“{cleaned_group}”：{_mx_manage_result_text(result)}",
+                    502,
+                )
             return {
                 "status": "ok",
                 "action": cleaned_action,
                 "target": cleaned_target,
                 "group_name": cleaned_group,
-                "message": _flatten(result.get("message") or "操作成功"),
+                "message": _mx_manage_success_text(result),
             }
 
         raise MXProviderError(last_error or "自选分组操作失败。", 502)
@@ -514,8 +515,6 @@ class SmartPickerService:
             raise MXProviderError("批量自选操作只支持 add_group 或 delete。", 400)
         if not targets:
             raise MXProviderError("缺少股票名称或代码。", 400)
-        if cleaned_action == "add_group" and not cleaned_group:
-            raise MXProviderError("缺少分组名称。", 400)
 
         results = []
         success_count = 0
@@ -523,7 +522,10 @@ class SmartPickerService:
         for target in targets:
             try:
                 if cleaned_action == "add_group":
-                    payload = self.manage_watchlist_group("add", target, cleaned_group)
+                    if cleaned_group:
+                        payload = self.manage_watchlist_group("add", target, cleaned_group)
+                    else:
+                        payload = self.manage_watchlist("add", target)
                 else:
                     payload = self.manage_watchlist("delete", target)
                 success_count += 1
@@ -533,7 +535,10 @@ class SmartPickerService:
                 results.append({"target": target, "status": "error", "message": getattr(exc, "message", str(exc))})
 
         status = "ok" if fail_count == 0 else "partial" if success_count > 0 else "error"
-        action_label = f"加入东方财富自选组“{cleaned_group}”" if cleaned_action == "add_group" else "删除东方财富自选"
+        if cleaned_action == "add_group":
+            action_label = f"加入东方财富自选组“{cleaned_group}”" if cleaned_group else "加入东方财富自选"
+        else:
+            action_label = "删除东方财富自选"
         if status == "ok":
             message = f"{action_label}完成：共处理 {success_count} 只。"
         elif status == "partial":
@@ -1762,6 +1767,36 @@ def _mx_manage_succeeded(result: dict[str, Any]) -> bool:
     if not isinstance(result, dict):
         return False
     return result.get("status") in (0, "0", None) or result.get("code") in (0, "0", None)
+
+
+def _mx_manage_success_text(result: dict[str, Any]) -> str:
+    if not isinstance(result, dict):
+        return "操作成功"
+    return _flatten(result.get("data") or result.get("message") or "操作成功")
+
+
+def _mx_manage_result_text(result: dict[str, Any]) -> str:
+    if not isinstance(result, dict):
+        return "返回格式异常"
+    parts = [
+        f"message={_flatten(result.get('message') or '') or '-'}",
+        f"status={_flatten(result.get('status') or '') or '-'}",
+        f"code={_flatten(result.get('code') or '') or '-'}",
+    ]
+    data_text = _flatten(result.get("data") or "")
+    if data_text:
+        parts.append(f"data={data_text}")
+    return "，".join(parts)
+
+
+def _mx_manage_group_confirmed(result: dict[str, Any], group_name: str) -> bool:
+    text = " ".join(
+        [
+            _flatten((result or {}).get("message") or ""),
+            _flatten((result or {}).get("data") or ""),
+        ]
+    )
+    return bool(group_name and group_name in text) or "分组" in text or "自选股组" in text
 
 
 def _eastmoney_header_dict(raw: str) -> dict[str, str]:

@@ -2,8 +2,9 @@ import unittest
 
 import pandas as pd
 
-from chanlun_app.smart_picker import SmartPickerService
+from chanlun_app.smart_picker import MXWatchlistProvider, SmartPickerService
 from chanlun_app.data_provider import DataProviderError
+from chanlun_app.mx_provider import MXProviderError
 
 
 def sample_klines():
@@ -284,6 +285,22 @@ class FakeWatchlistProvider:
         return {"status": "ok", "action": action, "target": target, "message": "操作成功"}
 
 
+class ScriptedGroupWatchlistProvider(MXWatchlistProvider):
+    def __init__(self, scripted_results):
+        super().__init__(api_key="fake")
+        self.scripted_results = list(scripted_results)
+        self.queries = []
+
+    def _post_json(self, url, payload):
+        self.queries.append(payload.get("query", ""))
+        if not self.scripted_results:
+            raise AssertionError("缺少脚本化返回结果。")
+        result = self.scripted_results.pop(0)
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+
 class BrokenWatchlistProvider:
     def query(self):
         raise RuntimeError("watchlist boom")
@@ -408,6 +425,40 @@ class SmartPickerServiceTest(unittest.TestCase):
 
         self.assertEqual(result["status"], "ok")
         self.assertEqual(self.watchlist.last_manage["action"], "add")
+
+    def test_manage_group_surfaces_real_create_error(self):
+        provider = ScriptedGroupWatchlistProvider(
+            [{"requestId": None, "message": "Failure", "status": -1, "code": -1, "data": None}]
+        )
+
+        with self.assertRaises(MXProviderError) as ctx:
+            provider.manage_group("add", "平安银行", "重点监控")
+
+        self.assertEqual(provider.queries, ["创建自选股组重点监控"])
+        self.assertIn("创建东方财富分组失败", ctx.exception.message)
+        self.assertIn("message=Failure", ctx.exception.message)
+        self.assertIn("status=-1", ctx.exception.message)
+
+    def test_manage_group_reports_unverified_group_write(self):
+        provider = ScriptedGroupWatchlistProvider(
+            [
+                {"requestId": None, "message": "OK", "status": 0, "code": 0, "data": "已创建分组重点监控"},
+                {
+                    "requestId": None,
+                    "message": "OK",
+                    "status": 0,
+                    "code": 0,
+                    "data": "好的，已为您将1个标的（平安银行）添加自选。",
+                },
+            ]
+        )
+
+        with self.assertRaises(MXProviderError) as ctx:
+            provider.manage_group("add", "平安银行", "重点监控")
+
+        self.assertEqual(provider.queries, ["创建自选股组重点监控", "把平安银行添加到重点监控自选股组"])
+        self.assertIn("未确认写入分组", ctx.exception.message)
+        self.assertIn("添加自选", ctx.exception.message)
 
     def test_candidate_detail_degrades_when_watchlist_fails(self):
         service = SmartPickerService(

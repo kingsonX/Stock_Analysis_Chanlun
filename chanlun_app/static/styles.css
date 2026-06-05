@@ -864,9 +864,17 @@ input:focus {
 
 .pickerCommonControls {
   display: grid;
-  grid-template-columns: repeat(2, minmax(108px, 136px)) minmax(180px, 220px) minmax(160px, 188px);
+  grid-template-columns: repeat(2, minmax(108px, 136px)) minmax(0, 1fr);
   gap: 8px;
   align-items: end;
+}
+
+.pickerCommonActions {
+  display: grid;
+  grid-template-columns: minmax(180px, 220px) minmax(156px, 176px) minmax(156px, 176px);
+  gap: 8px;
+  align-items: end;
+  min-width: 0;
 }
 
 .pickerControls label {
@@ -923,13 +931,13 @@ input:focus {
 
 .pickerPrimaryButton {
   width: 100%;
-  min-width: 180px;
+  min-width: 0;
   font-weight: 700;
 }
 
 .pickerBatchButton {
   width: 100%;
-  min-width: 160px;
+  min-width: 0;
   white-space: nowrap;
 }
 
@@ -1197,6 +1205,7 @@ body.modalOpen {
   color: var(--ink);
   font-size: 13px;
   line-height: 1.6;
+  white-space: pre-wrap;
 }
 
 .pickerEastmoneyFeedback.tone-positive {
@@ -3635,6 +3644,11 @@ th {
     grid-template-columns: 1fr 1fr;
   }
 
+  .pickerCommonActions {
+    grid-column: 1 / -1;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
   .reviewSummaryGrid,
   .reviewGrid,
   .reviewIndexStrip {
@@ -3795,6 +3809,10 @@ th {
   .pickerInlineFields,
   .pickerCommonControls,
   .pickerSourceGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .pickerCommonActions {
     grid-template-columns: 1fr;
   }
 
