@@ -432,7 +432,67 @@ def _build_emotion_cycle(
     elif up_count >= 35 and down_count <= 35:
         phase_key = "low_divergence"
 
+    phase_order = [
+        "low_divergence",
+        "turn_strong",
+        "acceleration",
+        "climax",
+        "high_divergence",
+        "turn_weak",
+        "down_acceleration",
+        "ice_point",
+    ]
+    phase_index = phase_order.index(phase_key)
+    previous_phase_key = phase_order[phase_index - 1]
+    next_phase_key = phase_order[(phase_index + 1) % len(phase_order)]
     phase = _emotion_phase_meta(phase_key)
+    previous_phase = _emotion_phase_meta(previous_phase_key)
+    next_phase = _emotion_phase_meta(next_phase_key)
+    attack_score = max(
+        0,
+        min(
+            100,
+            round(
+                up_count * 0.72
+                + positive_indices * 9
+                + min(highest_board, 8) * 4
+                - down_count * 0.35
+                - burst_ratio * 26
+            ),
+        ),
+    )
+    pressure_score = max(
+        0,
+        min(
+            100,
+            round(
+                down_count * 1.35
+                + burst_ratio * 55
+                + max(highest_board - 4, 0) * 6
+                + max(0, 40 - up_count) * 0.32
+            ),
+        ),
+    )
+    carry_score = max(
+        0,
+        min(
+            100,
+            round(
+                highest_board * 10
+                + up_count * 0.28
+                - down_count * 0.5
+                - burst_ratio * 42
+            ),
+        ),
+    )
+    bias_gap = attack_score - pressure_score
+    if bias_gap >= 18:
+        bias_label = "偏进攻"
+    elif bias_gap <= -18:
+        bias_label = "偏防守"
+    else:
+        bias_label = "均衡观察"
+    confidence = max(42, min(95, 58 + round(abs(bias_gap) * 0.6) + (8 if phase_key in {"acceleration", "high_divergence", "turn_weak"} else 0)))
     basis = [
         f"涨停 {up_count} 家，跌停 {down_count} 家",
         f"炸板 {burst_count} 家，炸板率 {burst_ratio * 100:.0f}%",
@@ -447,6 +507,14 @@ def _build_emotion_cycle(
         "summary": phase["summary"],
         "action": phase["action"],
         "risk": phase["risk"],
+        "focus": phase["focus"],
+        "tone": phase["tone"],
+        "bias_label": bias_label,
+        "confidence": confidence,
+        "previous_phase_key": previous_phase_key,
+        "previous_phase": previous_phase["phase"],
+        "next_phase_key": next_phase_key,
+        "next_phase": next_phase["phase"],
         "basis": basis,
         "metrics": {
             "up_limit_count": up_count,
@@ -456,6 +524,9 @@ def _build_emotion_cycle(
             "highest_board": highest_board,
             "positive_indices": positive_indices,
             "avg_index_chg": round(avg_index_chg, 4),
+            "attack_score": attack_score,
+            "pressure_score": pressure_score,
+            "carry_score": carry_score,
         },
     }
 
@@ -469,6 +540,8 @@ def _emotion_phase_meta(phase_key: str) -> dict[str, str]:
             "summary": "亏钱效应未完全退去，但分歧开始给新主线试错空间。",
             "action": "轻仓试错，只看最先主动的题材前排。",
             "risk": "若跌停和炸板继续扩散，低位分歧会重新滑向冰点。",
+            "focus": "先盯最早回流的板块和前排首板，别急着满仓。",
+            "tone": "turn",
         },
         "turn_strong": {
             "phase": "分歧转强（弱转强）",
@@ -477,6 +550,8 @@ def _emotion_phase_meta(phase_key: str) -> dict[str, str]:
             "summary": "涨停开始扩散、指数配合，赚钱效应从分歧里转强。",
             "action": "试错可提高到普通仓位，但仍只做主流前排。",
             "risk": "若前排隔日没有溢价，弱转强会变成假修复。",
+            "focus": "看回封质量、次日溢价和板块是否同步放大。",
+            "tone": "rise",
         },
         "acceleration": {
             "phase": "加速（大阳线）",
@@ -485,6 +560,8 @@ def _emotion_phase_meta(phase_key: str) -> dict[str, str]:
             "summary": "涨停扩散、跌停收敛，指数和题材共振，情绪处于加速段。",
             "action": "偏进攻，重点看主流核心和前排承接，不追后排。",
             "risk": "加速之后容易走向一致，次日重点看高位分歧是否放大。",
+            "focus": "只做最强主流核心，不要把后排跟风当成强度延续。",
+            "tone": "rise",
         },
         "climax": {
             "phase": "一致（高潮）",
@@ -493,6 +570,8 @@ def _emotion_phase_meta(phase_key: str) -> dict[str, str]:
             "summary": "赚钱效应高度一致，市场容易从主动进攻转为兑现博弈。",
             "action": "不再扩大追高，优先等分歧后的承接确认。",
             "risk": "高潮日次日若高标开盘缩量冲，容易出现强分歧。",
+            "focus": "高潮看兑现，不看想象，重点盯高标缩量冲板后的承接。",
+            "tone": "rise",
         },
         "high_divergence": {
             "phase": "高位分歧",
@@ -501,6 +580,8 @@ def _emotion_phase_meta(phase_key: str) -> dict[str, str]:
             "summary": "高标和前排开始分歧，持筹者兑现意愿上升。",
             "action": "降仓看承接，只做确认后的核心回封。",
             "risk": "若炸板和跌停继续增加，会进入分歧转弱。",
+            "focus": "核心看承接与回封，后排一旦掉队就不再硬接。",
+            "tone": "fall",
         },
         "turn_weak": {
             "phase": "分歧转弱（强转弱）",
@@ -509,6 +590,8 @@ def _emotion_phase_meta(phase_key: str) -> dict[str, str]:
             "summary": "亏钱效应开始压过赚钱效应，强势股补跌风险抬升。",
             "action": "防守优先，少做高位接力。",
             "risk": "若跌停扩散且指数不配合，退潮会加速。",
+            "focus": "先保回撤，等亏钱效应释放完再找下一轮主动修复。",
+            "tone": "fall",
         },
         "down_acceleration": {
             "phase": "分歧加速",
@@ -517,6 +600,8 @@ def _emotion_phase_meta(phase_key: str) -> dict[str, str]:
             "summary": "亏钱效应集中释放，市场进入加速出清。",
             "action": "控制回撤，只等恐慌充分后的新主线信号。",
             "risk": "不要把下跌中继当成冰点修复。",
+            "focus": "先等恐慌宣泄充分，再找最先逆势走强的方向。",
+            "tone": "fall",
         },
         "ice_point": {
             "phase": "冰点（一致）",
@@ -525,6 +610,8 @@ def _emotion_phase_meta(phase_key: str) -> dict[str, str]:
             "summary": "杀跌情绪接近一致，机会来自恐慌后的主动修复。",
             "action": "不急着抄底，先等最先走强的方向出现。",
             "risk": "冰点可以再冰点，必须等真实承接。",
+            "focus": "等第一批主动转强的票和板块，不做情绪化抄底。",
+            "tone": "turn",
         },
     }
     return phases.get(phase_key, phases["low_divergence"])

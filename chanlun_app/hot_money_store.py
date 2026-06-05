@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from datetime import date, datetime
 from typing import Any
 
@@ -19,12 +20,17 @@ class HotMoneyDailyTradeStore:
         min_size: int = 1,
         max_size: int = 4,
         latest_window_days: int = 10,
+        connection_timeout_seconds: float = 2.0,
+        failure_cooldown_seconds: float = 90.0,
     ):
         self.dsn = (dsn or "").strip()
         self.min_size = max(1, int(min_size))
         self.max_size = max(self.min_size, int(max_size))
         self.latest_window_days = max(1, int(latest_window_days))
+        self.connection_timeout_seconds = max(0.2, float(connection_timeout_seconds))
+        self.failure_cooldown_seconds = max(1.0, float(failure_cooldown_seconds))
         self._pool = None
+        self._disabled_until = 0.0
 
     @property
     def enabled(self) -> bool:
@@ -35,47 +41,53 @@ class HotMoneyDailyTradeStore:
             return None
 
         target_date = _normalize_trade_date_text(trade_date)
-        with self._connection() as conn, conn.cursor() as cur:
-            if target_date:
-                cur.execute(
-                    """
-                    select trade_date, status, record_count
-                    from app_private.hot_money_daily_fetches
-                    where trade_date = %s
-                    """,
-                    (target_date,),
-                )
-            else:
-                cur.execute(
-                    """
-                    select trade_date, status, record_count
-                    from app_private.hot_money_daily_fetches
-                    where trade_date >= current_date - %s::int
-                    order by trade_date desc
-                    limit 1
-                    """,
-                    (self.latest_window_days,),
-                )
-            summary = cur.fetchone()
-            if not summary:
-                return None
+        try:
+            with self._connection() as conn, conn.cursor() as cur:
+                if target_date:
+                    cur.execute(
+                        """
+                        select trade_date, status, record_count
+                        from app_private.hot_money_daily_fetches
+                        where trade_date = %s
+                        """,
+                        (target_date,),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        select trade_date, status, record_count
+                        from app_private.hot_money_daily_fetches
+                        where trade_date >= current_date - %s::int
+                        order by trade_date desc
+                        limit 1
+                        """,
+                        (self.latest_window_days,),
+                    )
+                summary = cur.fetchone()
+                if not summary:
+                    return None
 
-            cur.execute(
-                """
-                select raw_payload
-                from app_private.hot_money_daily_trades
-                where trade_date = %s
-                order by abs(coalesce(net_amount, 0)) desc, coalesce(buy_amount, 0) desc, id asc
-                """,
-                (summary["trade_date"],),
-            )
-            items = [_coerce_payload(row.get("raw_payload")) for row in cur.fetchall()]
-            return {
-                "trade_date": summary["trade_date"].strftime("%Y%m%d"),
-                "items": items,
-                "status": summary.get("status", "success"),
-                "record_count": int(summary.get("record_count") or len(items)),
-            }
+                cur.execute(
+                    """
+                    select raw_payload
+                    from app_private.hot_money_daily_trades
+                    where trade_date = %s
+                    order by abs(coalesce(net_amount, 0)) desc, coalesce(buy_amount, 0) desc, id asc
+                    """,
+                    (summary["trade_date"],),
+                )
+                items = [_coerce_payload(row.get("raw_payload")) for row in cur.fetchall()]
+                return {
+                    "trade_date": summary["trade_date"].strftime("%Y%m%d"),
+                    "items": items,
+                    "status": summary.get("status", "success"),
+                    "record_count": int(summary.get("record_count") or len(items)),
+                }
+        except HotMoneyStoreError:
+            raise
+        except Exception as exc:
+            self._trip_circuit()
+            raise HotMoneyStoreError(f"读取 Supabase 游资缓存失败：{exc}") from exc
 
     def save_payload(self, payload: dict[str, Any]) -> None:
         if not self.enabled:
@@ -88,39 +100,45 @@ class HotMoneyDailyTradeStore:
         items = list(payload.get("items") or [])
         rows = [_serialize_item(trade_date, item) for item in items]
 
-        with self._connection() as conn:
-            with conn.transaction():
-                with conn.cursor() as cur:
-                    cur.execute(
-                        """
-                        insert into app_private.hot_money_daily_fetches (
-                          trade_date, source_api, status, record_count, fetched_at, updated_at
-                        )
-                        values (%s, 'hm_detail', %s, %s, timezone('utc', now()), timezone('utc', now()))
-                        on conflict (trade_date) do update set
-                          source_api = excluded.source_api,
-                          status = excluded.status,
-                          record_count = excluded.record_count,
-                          fetched_at = excluded.fetched_at,
-                          updated_at = excluded.updated_at
-                        """,
-                        (trade_date, "success" if rows else "empty", len(rows)),
-                    )
-                    cur.execute(
-                        "delete from app_private.hot_money_daily_trades where trade_date = %s",
-                        (trade_date,),
-                    )
-                    if rows:
-                        cur.executemany(
+        try:
+            with self._connection() as conn:
+                with conn.transaction():
+                    with conn.cursor() as cur:
+                        cur.execute(
                             """
-                            insert into app_private.hot_money_daily_trades (
-                              trade_date, ts_code, ts_name, buy_amount, sell_amount, net_amount,
-                              hm_name, hm_orgs, tag, raw_payload, fetched_at
+                            insert into app_private.hot_money_daily_fetches (
+                              trade_date, source_api, status, record_count, fetched_at, updated_at
                             )
-                            values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, timezone('utc', now()))
+                            values (%s, 'hm_detail', %s, %s, timezone('utc', now()), timezone('utc', now()))
+                            on conflict (trade_date) do update set
+                              source_api = excluded.source_api,
+                              status = excluded.status,
+                              record_count = excluded.record_count,
+                              fetched_at = excluded.fetched_at,
+                              updated_at = excluded.updated_at
                             """,
-                            rows,
+                            (trade_date, "success" if rows else "empty", len(rows)),
                         )
+                        cur.execute(
+                            "delete from app_private.hot_money_daily_trades where trade_date = %s",
+                            (trade_date,),
+                        )
+                        if rows:
+                            cur.executemany(
+                                """
+                                insert into app_private.hot_money_daily_trades (
+                                  trade_date, ts_code, ts_name, buy_amount, sell_amount, net_amount,
+                                  hm_name, hm_orgs, tag, raw_payload, fetched_at
+                                )
+                                values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, timezone('utc', now()))
+                                """,
+                                rows,
+                            )
+        except HotMoneyStoreError:
+            raise
+        except Exception as exc:
+            self._trip_circuit()
+            raise HotMoneyStoreError(f"写入 Supabase 游资缓存失败：{exc}") from exc
 
     def close(self) -> None:
         if self._pool is not None:
@@ -128,8 +146,10 @@ class HotMoneyDailyTradeStore:
             self._pool = None
 
     def _connection(self):
+        if self._disabled_until > time.time():
+            raise HotMoneyStoreError("Supabase 游资缓存连接暂时熔断，等待冷却后再试。")
         pool = self._get_pool()
-        return pool.connection()
+        return pool.connection(timeout=self.connection_timeout_seconds)
 
     def _get_pool(self):
         if self._pool is not None:
@@ -153,6 +173,10 @@ class HotMoneyDailyTradeStore:
             return self._pool
         except Exception as exc:
             raise HotMoneyStoreError(f"Supabase PostgreSQL session pool 初始化失败：{exc}") from exc
+
+    def _trip_circuit(self) -> None:
+        self.close()
+        self._disabled_until = time.time() + self.failure_cooldown_seconds
 
 
 def _normalize_trade_date_text(value: Any) -> date | None:

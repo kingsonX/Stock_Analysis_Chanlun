@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from datetime import date, datetime
 from typing import Any
 
@@ -18,12 +19,17 @@ class StockBasicCacheStore:
         dsn: str | None = None,
         min_size: int = 1,
         max_size: int = 4,
+        connection_timeout_seconds: float = 2.0,
+        failure_cooldown_seconds: float = 90.0,
     ):
         self.dsn = (dsn or "").strip()
         self.min_size = max(1, int(min_size))
         self.max_size = max(self.min_size, int(max_size))
+        self.connection_timeout_seconds = max(0.2, float(connection_timeout_seconds))
+        self.failure_cooldown_seconds = max(1.0, float(failure_cooldown_seconds))
         self._pool = None
         self._schema_ready = False
+        self._disabled_until = 0.0
 
     @property
     def enabled(self) -> bool:
@@ -37,26 +43,32 @@ class StockBasicCacheStore:
             return None
 
         target_day = _normalize_trade_date_text(trade_date)
-        with self._connection() as conn, conn.cursor() as cur:
-            self._ensure_schema(cur)
-            cur.execute(
-                """
-                select trade_date, raw_payload
-                from app_private.stock_basic_snapshots
-                where ts_code = %s
-                """,
-                (cleaned_code,),
-            )
-            row = cur.fetchone()
-            if not row:
-                return None
-
-            payload = _coerce_payload(row.get("raw_payload"))
-            if target_day:
-                payload_day = _normalize_trade_date_text((payload.get("bak_basic") or {}).get("trade_date"))
-                if payload_day and payload_day != target_day:
+        try:
+            with self._connection() as conn, conn.cursor() as cur:
+                self._ensure_schema(cur)
+                cur.execute(
+                    """
+                    select trade_date, raw_payload
+                    from app_private.stock_basic_snapshots
+                    where ts_code = %s
+                    """,
+                    (cleaned_code,),
+                )
+                row = cur.fetchone()
+                if not row:
                     return None
-            return payload
+
+                payload = _coerce_payload(row.get("raw_payload"))
+                if target_day:
+                    payload_day = _normalize_trade_date_text((payload.get("bak_basic") or {}).get("trade_date"))
+                    if payload_day and payload_day != target_day:
+                        return None
+                return payload
+        except StockBasicStoreError:
+            raise
+        except Exception as exc:
+            self._trip_circuit()
+            raise StockBasicStoreError(f"读取股票基础资料缓存失败：{exc}") from exc
 
     def save_payload(self, stock: dict[str, Any], bak_basic: dict[str, Any]) -> None:
         if not self.enabled:
@@ -84,31 +96,37 @@ class StockBasicCacheStore:
             json.dumps(payload, ensure_ascii=False),
         )
 
-        with self._connection() as conn:
-            with conn.transaction():
-                with conn.cursor() as cur:
-                    self._ensure_schema(cur)
-                    cur.execute(
-                        """
-                        insert into app_private.stock_basic_snapshots (
-                          ts_code, symbol, name, area, industry, market, exchange, list_date,
-                          trade_date, raw_payload, updated_at
+        try:
+            with self._connection() as conn:
+                with conn.transaction():
+                    with conn.cursor() as cur:
+                        self._ensure_schema(cur)
+                        cur.execute(
+                            """
+                            insert into app_private.stock_basic_snapshots (
+                              ts_code, symbol, name, area, industry, market, exchange, list_date,
+                              trade_date, raw_payload, updated_at
+                            )
+                            values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, timezone('utc', now()))
+                            on conflict (ts_code) do update set
+                              symbol = excluded.symbol,
+                              name = excluded.name,
+                              area = excluded.area,
+                              industry = excluded.industry,
+                              market = excluded.market,
+                              exchange = excluded.exchange,
+                              list_date = excluded.list_date,
+                              trade_date = excluded.trade_date,
+                              raw_payload = excluded.raw_payload,
+                              updated_at = excluded.updated_at
+                            """,
+                            row,
                         )
-                        values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, timezone('utc', now()))
-                        on conflict (ts_code) do update set
-                          symbol = excluded.symbol,
-                          name = excluded.name,
-                          area = excluded.area,
-                          industry = excluded.industry,
-                          market = excluded.market,
-                          exchange = excluded.exchange,
-                          list_date = excluded.list_date,
-                          trade_date = excluded.trade_date,
-                          raw_payload = excluded.raw_payload,
-                          updated_at = excluded.updated_at
-                        """,
-                        row,
-                    )
+        except StockBasicStoreError:
+            raise
+        except Exception as exc:
+            self._trip_circuit()
+            raise StockBasicStoreError(f"写入股票基础资料缓存失败：{exc}") from exc
 
     def close(self) -> None:
         if self._pool is not None:
@@ -117,8 +135,10 @@ class StockBasicCacheStore:
             self._schema_ready = False
 
     def _connection(self):
+        if self._disabled_until > time.time():
+            raise StockBasicStoreError("股票基础资料缓存连接暂时熔断，等待冷却后再试。")
         pool = self._get_pool()
-        return pool.connection()
+        return pool.connection(timeout=self.connection_timeout_seconds)
 
     def _get_pool(self):
         if self._pool is not None:
@@ -142,6 +162,10 @@ class StockBasicCacheStore:
             return self._pool
         except Exception as exc:
             raise StockBasicStoreError(f"股票基础资料 PostgreSQL session pool 初始化失败：{exc}") from exc
+
+    def _trip_circuit(self) -> None:
+        self.close()
+        self._disabled_until = time.time() + self.failure_cooldown_seconds
 
     def _ensure_schema(self, cur) -> None:
         if self._schema_ready:

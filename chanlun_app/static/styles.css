@@ -864,7 +864,7 @@ input:focus {
 
 .pickerCommonControls {
   display: grid;
-  grid-template-columns: repeat(2, minmax(108px, 140px)) minmax(180px, 220px);
+  grid-template-columns: repeat(2, minmax(108px, 136px)) minmax(180px, 220px) minmax(160px, 188px);
   gap: 8px;
   align-items: end;
 }
@@ -925,6 +925,12 @@ input:focus {
   width: 100%;
   min-width: 180px;
   font-weight: 700;
+}
+
+.pickerBatchButton {
+  width: 100%;
+  min-width: 160px;
+  white-space: nowrap;
 }
 
 .ghostButton {
@@ -1140,6 +1146,67 @@ body.modalOpen {
 .reviewModalBody {
   padding: 18px 20px 20px;
   overflow: auto;
+}
+
+.pickerEastmoneyModalDialog {
+  width: min(860px, calc(100vw - 48px));
+}
+
+.pickerEastmoneyForm {
+  display: grid;
+  gap: 14px;
+}
+
+.pickerEastmoneyForm label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.pickerEastmoneyForm textarea {
+  min-height: 260px;
+  resize: vertical;
+}
+
+.pickerEastmoneyHint {
+  margin: -4px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.pickerEastmoneyActions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.pickerEastmoneyActions .pickerPrimaryButton,
+.pickerEastmoneyActions .ghostButton {
+  width: auto;
+  min-width: 132px;
+  padding: 0 16px;
+}
+
+.pickerEastmoneyFeedback {
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(37, 111, 146, 0.06);
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.pickerEastmoneyFeedback.tone-positive {
+  border-color: rgba(17, 128, 94, 0.26);
+  background: rgba(17, 128, 94, 0.08);
+}
+
+.pickerEastmoneyFeedback.tone-caution {
+  border-color: rgba(199, 78, 44, 0.26);
+  background: rgba(199, 78, 44, 0.08);
 }
 
 .reviewModalSearchBar {
@@ -1941,67 +2008,158 @@ body.modalOpen {
   overflow: hidden;
 }
 
-.reviewEmotionCycleLoop {
+.reviewEmotionCycleSummary {
   display: grid;
-  grid-template-areas:
-    "acc climax high"
-    "turnStrong core turnWeak"
-    "low ice down";
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
   align-items: stretch;
+  padding: 12px;
+  border: 1px solid rgba(37, 111, 146, 0.16);
+  border-radius: 10px;
+  background: linear-gradient(135deg, rgba(37, 111, 146, 0.08), rgba(37, 111, 146, 0.02));
 }
 
-.reviewEmotionCycleCore {
-  grid-area: core;
+.reviewEmotionCycleSummary.tone-rise {
+  border-color: rgba(194, 65, 54, 0.18);
+  background: linear-gradient(135deg, rgba(194, 65, 54, 0.1), rgba(194, 65, 54, 0.03));
+}
+
+.reviewEmotionCycleSummary.tone-fall {
+  border-color: rgba(0, 129, 86, 0.18);
+  background: linear-gradient(135deg, rgba(0, 129, 86, 0.1), rgba(0, 129, 86, 0.03));
+}
+
+.reviewEmotionCycleSummary.tone-turn {
+  border-color: rgba(168, 111, 0, 0.18);
+  background: linear-gradient(135deg, rgba(168, 111, 0, 0.12), rgba(168, 111, 0, 0.03));
+}
+
+.reviewEmotionCycleSummaryMain {
   display: grid;
-  align-content: center;
-  justify-items: center;
   gap: 4px;
-  min-height: 88px;
-  padding: 10px;
-  border: 1px solid rgba(37, 111, 146, 0.28);
-  border-radius: 999px;
-  background: #f2fbff;
-  text-align: center;
 }
 
-.reviewEmotionCycleCore span,
-.reviewEmotionCycleCore small {
+.reviewEmotionCycleSummaryMain small,
+.reviewEmotionCycleSummaryAside small {
   color: var(--muted);
   font-size: 11px;
-  line-height: 1.25;
+  line-height: 1.2;
 }
 
-.reviewEmotionCycleCore strong {
+.reviewEmotionCycleSummaryMain strong {
+  font-size: 22px;
+  line-height: 1.1;
   color: var(--accent-strong);
-  font-size: 14px;
-  line-height: 1.2;
+}
+
+.reviewEmotionCycleSummaryMain p {
+  margin: 0;
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.reviewEmotionCycleSummaryAside {
+  display: grid;
+  justify-items: end;
+  align-content: center;
+  min-width: 88px;
+  gap: 2px;
+  text-align: right;
+}
+
+.reviewEmotionCycleSummaryAside span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.reviewEmotionCycleSummaryAside strong {
+  font-size: 24px;
+  line-height: 1;
+  color: var(--accent-strong);
+}
+
+.reviewEmotionMetricStrip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.reviewEmotionMetricCard {
+  display: grid;
+  gap: 2px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fafb;
+}
+
+.reviewEmotionMetricCard span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.reviewEmotionMetricCard strong {
+  font-size: 20px;
+  line-height: 1;
+}
+
+.reviewEmotionMetricCard small {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.reviewEmotionCycleLoop {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
 }
 
 .reviewEmotionNode {
   display: grid;
-  align-content: center;
-  justify-items: center;
-  gap: 2px;
-  min-height: 54px;
-  padding: 8px 6px;
+  justify-items: start;
+  align-content: space-between;
+  gap: 4px;
+  min-height: 74px;
+  padding: 10px 10px 8px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #f8fafb;
   color: var(--ink);
-  text-align: center;
+  text-align: left;
   line-height: 1.2;
+  position: relative;
+}
+
+.reviewEmotionNode b {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.08);
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
 }
 
 .reviewEmotionNode span {
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 750;
 }
 
-.reviewEmotionNode small {
+.reviewEmotionNode small,
+.reviewEmotionNode em {
   color: var(--muted);
   font-size: 11px;
+}
+
+.reviewEmotionNode em {
+  font-style: normal;
 }
 
 .reviewEmotionNode.tone-rise {
@@ -2021,9 +2179,60 @@ body.modalOpen {
 
 .reviewEmotionNode.active {
   border-color: var(--accent);
-  box-shadow: 0 0 0 2px rgba(37, 111, 146, 0.15);
+  box-shadow: 0 12px 24px rgba(37, 111, 146, 0.14), 0 0 0 2px rgba(37, 111, 146, 0.18);
   background: #e9f6fb;
   color: var(--accent-strong);
+  transform: translateY(-1px);
+}
+
+.reviewEmotionNode.active b {
+  background: var(--accent);
+  color: #fff;
+}
+
+.reviewEmotionNode.active em {
+  color: var(--accent-strong);
+  font-weight: 700;
+}
+
+.reviewEmotionNode.previous,
+.reviewEmotionNode.next {
+  border-style: dashed;
+}
+
+.reviewEmotionNode.next::after {
+  content: "";
+  position: absolute;
+  inset: auto 10px 8px auto;
+  width: 16px;
+  height: 2px;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.28;
+}
+
+.reviewEmotionCycleFlow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.reviewEmotionCycleFlow strong {
+  display: inline-flex;
+  justify-content: center;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(37, 111, 146, 0.1);
+  color: var(--accent-strong);
+  font-size: 12px;
+}
+
+.reviewEmotionCycleFlow span:last-child {
+  text-align: right;
 }
 
 .reviewFocusItem strong {
@@ -2088,6 +2297,13 @@ body.modalOpen {
 
 .reviewBulletList li + li {
   margin-top: 6px;
+}
+
+@media (max-width: 1180px) {
+  .reviewEmotionMetricStrip,
+  .reviewEmotionCycleLoop {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .textSell {

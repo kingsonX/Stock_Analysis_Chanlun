@@ -157,6 +157,9 @@ class ReviewServiceTest(unittest.TestCase):
 
         self.assertEqual(cycle["phase_key"], "acceleration")
         self.assertEqual(cycle["phase"], "加速（大阳线）")
+        self.assertEqual(cycle["previous_phase_key"], "turn_strong")
+        self.assertEqual(cycle["next_phase_key"], "climax")
+        self.assertGreater(cycle["metrics"]["attack_score"], cycle["metrics"]["pressure_score"])
 
 
 if __name__ == "__main__":

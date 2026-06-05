@@ -184,6 +184,8 @@ class FakePickerClient:
         self.last_watchlist_screen = None
         self.last_candidate = None
         self.last_watchlist_action = None
+        self.last_watchlist_group_action = None
+        self.last_batch_watchlist = None
 
     def overview(self):
         return {
@@ -276,6 +278,26 @@ class FakePickerClient:
     def manage_watchlist(self, action="", target=""):
         self.last_watchlist_action = {"action": action, "target": target}
         return {"status": "ok", "action": action, "target": target, "message": "操作成功"}
+
+    def manage_watchlist_group(self, action="", target="", group_name=""):
+        self.last_watchlist_group_action = {"action": action, "target": target, "group_name": group_name}
+        return {"status": "ok", "action": action, "target": target, "group_name": group_name, "message": "分组操作成功"}
+
+    def batch_manage_watchlist(self, action="", targets_text="", group_name=""):
+        self.last_batch_watchlist = {"action": action, "targets_text": targets_text, "group_name": group_name}
+        return {
+            "status": "ok",
+            "action": action,
+            "group_name": group_name,
+            "total": 2,
+            "success_count": 2,
+            "fail_count": 0,
+            "results": [
+                {"target": "平安银行", "status": "ok", "message": "操作成功"},
+                {"target": "京东方A", "status": "ok", "message": "操作成功"},
+            ],
+            "message": "批量操作完成。",
+        }
 
 
 class FakeAIClient:
@@ -715,6 +737,29 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         data = response.get_json()
         self.assertEqual(self.fake_picker.last_watchlist_action["action"], "add")
+        self.assertEqual(data["status"], "ok")
+
+    def test_smart_picker_eastmoney_batch_add_group(self):
+        response = self.app.post(
+            "/api/smart-picker/eastmoney-batch",
+            json={"action": "add_group", "group_name": "重点监控", "targets_text": "平安银行\n京东方A"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertEqual(self.fake_picker.last_batch_watchlist["action"], "add_group")
+        self.assertEqual(self.fake_picker.last_batch_watchlist["group_name"], "重点监控")
+        self.assertEqual(data["success_count"], 2)
+
+    def test_smart_picker_eastmoney_batch_delete(self):
+        response = self.app.post(
+            "/api/smart-picker/eastmoney-batch",
+            json={"action": "delete", "targets_text": "平安银行\n京东方A"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertEqual(self.fake_picker.last_batch_watchlist["action"], "delete")
         self.assertEqual(data["status"], "ok")
 
     def test_analysis_watchlist_manage_and_cache(self):

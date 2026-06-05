@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from datetime import date, datetime
 from typing import Any
 
@@ -18,12 +19,17 @@ class AnalysisWatchlistStore:
         dsn: str | None = None,
         min_size: int = 1,
         max_size: int = 4,
+        connection_timeout_seconds: float = 2.0,
+        failure_cooldown_seconds: float = 90.0,
     ):
         self.dsn = (dsn or "").strip()
         self.min_size = max(1, int(min_size))
         self.max_size = max(self.min_size, int(max_size))
+        self.connection_timeout_seconds = max(0.2, float(connection_timeout_seconds))
+        self.failure_cooldown_seconds = max(1.0, float(failure_cooldown_seconds))
         self._pool = None
         self._schema_ready = False
+        self._disabled_until = 0.0
 
     @property
     def enabled(self) -> bool:
@@ -34,34 +40,40 @@ class AnalysisWatchlistStore:
             return []
 
         cleaned_query = str(query or "").strip()
-        with self._connection() as conn, conn.cursor() as cur:
-            self._ensure_schema(cur)
-            if cleaned_query:
-                like = f"%{cleaned_query}%"
-                cur.execute(
-                    """
-                    select ts_code, symbol, name, area, industry, market, exchange, list_date,
-                           bak_trade_date, raw_payload, created_at, updated_at
-                    from app_private.analysis_watchlist_entries
-                    where ts_code ilike %s
-                       or symbol ilike %s
-                       or name ilike %s
-                       or area ilike %s
-                       or industry ilike %s
-                    order by updated_at desc, ts_code asc
-                    """,
-                    (like, like, like, like, like),
-                )
-            else:
-                cur.execute(
-                    """
-                    select ts_code, symbol, name, area, industry, market, exchange, list_date,
-                           bak_trade_date, raw_payload, created_at, updated_at
-                    from app_private.analysis_watchlist_entries
-                    order by updated_at desc, ts_code asc
-                    """
-                )
-            return [_serialize_entry_row(row) for row in cur.fetchall()]
+        try:
+            with self._connection() as conn, conn.cursor() as cur:
+                self._ensure_schema(cur)
+                if cleaned_query:
+                    like = f"%{cleaned_query}%"
+                    cur.execute(
+                        """
+                        select ts_code, symbol, name, area, industry, market, exchange, list_date,
+                               bak_trade_date, raw_payload, created_at, updated_at
+                        from app_private.analysis_watchlist_entries
+                        where ts_code ilike %s
+                           or symbol ilike %s
+                           or name ilike %s
+                           or area ilike %s
+                           or industry ilike %s
+                        order by updated_at desc, ts_code asc
+                        """,
+                        (like, like, like, like, like),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        select ts_code, symbol, name, area, industry, market, exchange, list_date,
+                               bak_trade_date, raw_payload, created_at, updated_at
+                        from app_private.analysis_watchlist_entries
+                        order by updated_at desc, ts_code asc
+                        """
+                    )
+                return [_serialize_entry_row(row) for row in cur.fetchall()]
+        except WatchlistStoreError:
+            raise
+        except Exception as exc:
+            self._trip_circuit()
+            raise WatchlistStoreError(f"读取智能盯盘数据库失败：{exc}") from exc
 
     def get_entry(self, ts_code: str) -> dict[str, Any] | None:
         if not self.enabled:
@@ -70,19 +82,25 @@ class AnalysisWatchlistStore:
         if not cleaned_code:
             return None
 
-        with self._connection() as conn, conn.cursor() as cur:
-            self._ensure_schema(cur)
-            cur.execute(
-                """
-                select ts_code, symbol, name, area, industry, market, exchange, list_date,
-                       bak_trade_date, raw_payload, created_at, updated_at
-                from app_private.analysis_watchlist_entries
-                where ts_code = %s
-                """,
-                (cleaned_code,),
-            )
-            row = cur.fetchone()
-            return _serialize_entry_row(row) if row else None
+        try:
+            with self._connection() as conn, conn.cursor() as cur:
+                self._ensure_schema(cur)
+                cur.execute(
+                    """
+                    select ts_code, symbol, name, area, industry, market, exchange, list_date,
+                           bak_trade_date, raw_payload, created_at, updated_at
+                    from app_private.analysis_watchlist_entries
+                    where ts_code = %s
+                    """,
+                    (cleaned_code,),
+                )
+                row = cur.fetchone()
+                return _serialize_entry_row(row) if row else None
+        except WatchlistStoreError:
+            raise
+        except Exception as exc:
+            self._trip_circuit()
+            raise WatchlistStoreError(f"读取智能盯盘单股缓存失败：{exc}") from exc
 
     def save_entry(self, stock: dict[str, Any], bak_basic: dict[str, Any] | None = None) -> None:
         if not self.enabled:
@@ -109,31 +127,37 @@ class AnalysisWatchlistStore:
             json.dumps(payload, ensure_ascii=False),
         )
 
-        with self._connection() as conn:
-            with conn.transaction():
-                with conn.cursor() as cur:
-                    self._ensure_schema(cur)
-                    cur.execute(
-                        """
-                        insert into app_private.analysis_watchlist_entries (
-                          ts_code, symbol, name, area, industry, market, exchange, list_date,
-                          bak_trade_date, raw_payload, created_at, updated_at
+        try:
+            with self._connection() as conn:
+                with conn.transaction():
+                    with conn.cursor() as cur:
+                        self._ensure_schema(cur)
+                        cur.execute(
+                            """
+                            insert into app_private.analysis_watchlist_entries (
+                              ts_code, symbol, name, area, industry, market, exchange, list_date,
+                              bak_trade_date, raw_payload, created_at, updated_at
+                            )
+                            values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, timezone('utc', now()), timezone('utc', now()))
+                            on conflict (ts_code) do update set
+                              symbol = excluded.symbol,
+                              name = excluded.name,
+                              area = excluded.area,
+                              industry = excluded.industry,
+                              market = excluded.market,
+                              exchange = excluded.exchange,
+                              list_date = excluded.list_date,
+                              bak_trade_date = excluded.bak_trade_date,
+                              raw_payload = excluded.raw_payload,
+                              updated_at = excluded.updated_at
+                            """,
+                            row,
                         )
-                        values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, timezone('utc', now()), timezone('utc', now()))
-                        on conflict (ts_code) do update set
-                          symbol = excluded.symbol,
-                          name = excluded.name,
-                          area = excluded.area,
-                          industry = excluded.industry,
-                          market = excluded.market,
-                          exchange = excluded.exchange,
-                          list_date = excluded.list_date,
-                          bak_trade_date = excluded.bak_trade_date,
-                          raw_payload = excluded.raw_payload,
-                          updated_at = excluded.updated_at
-                        """,
-                        row,
-                    )
+        except WatchlistStoreError:
+            raise
+        except Exception as exc:
+            self._trip_circuit()
+            raise WatchlistStoreError(f"写入智能盯盘数据库失败：{exc}") from exc
 
     def delete_entry(self, ts_code: str) -> bool:
         if not self.enabled:
@@ -142,12 +166,18 @@ class AnalysisWatchlistStore:
         if not cleaned_code:
             return False
 
-        with self._connection() as conn:
-            with conn.transaction():
-                with conn.cursor() as cur:
-                    self._ensure_schema(cur)
-                    cur.execute("delete from app_private.analysis_watchlist_entries where ts_code = %s", (cleaned_code,))
-                    return cur.rowcount > 0
+        try:
+            with self._connection() as conn:
+                with conn.transaction():
+                    with conn.cursor() as cur:
+                        self._ensure_schema(cur)
+                        cur.execute("delete from app_private.analysis_watchlist_entries where ts_code = %s", (cleaned_code,))
+                        return cur.rowcount > 0
+        except WatchlistStoreError:
+            raise
+        except Exception as exc:
+            self._trip_circuit()
+            raise WatchlistStoreError(f"删除智能盯盘数据库记录失败：{exc}") from exc
 
     def close(self) -> None:
         if self._pool is not None:
@@ -156,8 +186,10 @@ class AnalysisWatchlistStore:
             self._schema_ready = False
 
     def _connection(self):
+        if self._disabled_until > time.time():
+            raise WatchlistStoreError("智能盯盘数据库连接暂时熔断，等待冷却后再试。")
         pool = self._get_pool()
-        return pool.connection()
+        return pool.connection(timeout=self.connection_timeout_seconds)
 
     def _get_pool(self):
         if self._pool is not None:
@@ -181,6 +213,10 @@ class AnalysisWatchlistStore:
             return self._pool
         except Exception as exc:
             raise WatchlistStoreError(f"智能盯盘 PostgreSQL session pool 初始化失败：{exc}") from exc
+
+    def _trip_circuit(self) -> None:
+        self.close()
+        self._disabled_until = time.time() + self.failure_cooldown_seconds
 
     def _ensure_schema(self, cur) -> None:
         if self._schema_ready:

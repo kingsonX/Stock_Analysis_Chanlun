@@ -289,6 +289,23 @@ def create_app(
         except (DataProviderError, MXProviderError) as exc:
             return json_error(exc.message, exc.status_code)
 
+    @app.post("/api/smart-picker/eastmoney-batch")
+    def smart_picker_eastmoney_batch():
+        payload = request.get_json(silent=True) or {}
+        action = payload.get("action", "")
+        group_name = payload.get("group_name", "")
+        targets_text = payload.get("targets_text", "")
+        try:
+            return jsonify(
+                smart_picker.batch_manage_watchlist(
+                    action=action,
+                    group_name=group_name,
+                    targets_text=targets_text,
+                )
+            )
+        except (DataProviderError, MXProviderError) as exc:
+            return json_error(exc.message, exc.status_code)
+
     @app.post("/api/smart-picker/ai-brief")
     def smart_picker_ai_brief():
         payload = request.get_json(silent=True) or {}

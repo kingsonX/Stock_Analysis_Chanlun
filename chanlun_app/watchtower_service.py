@@ -4,7 +4,7 @@ from typing import Any
 
 from .data_provider import DataProviderError, TushareClient
 from .smart_picker import SmartPickerService
-from .watchlist_store import AnalysisWatchlistStore
+from .watchlist_store import AnalysisWatchlistStore, WatchlistStoreError
 
 
 class WatchtowerService:
@@ -25,7 +25,12 @@ class WatchtowerService:
         )
 
     def overview(self, query: str = "", page: int = 1, page_size: int = 12) -> dict[str, Any]:
-        entries = self.store.list_entries(query=query)
+        store_error = ""
+        try:
+            entries = self.store.list_entries(query=query)
+        except WatchlistStoreError as exc:
+            entries = []
+            store_error = str(exc)
         realtime_error = ""
         realtime_map: dict[str, dict[str, Any]] = {}
         if entries:
@@ -45,26 +50,36 @@ class WatchtowerService:
             "page_size": pager["page_size"],
             "total": pager["total"],
             "total_pages": pager["total_pages"],
-            "summary": self._build_summary(items, realtime_error),
+            "summary": self._build_summary(items, realtime_error, store_error),
             "items": pager["items"],
             "realtime_error": realtime_error,
+            "store_error": store_error,
         }
 
     def track_stock(self, stock: dict[str, Any], bak_basic: dict[str, Any] | None = None) -> dict[str, Any]:
         if not self.store.enabled:
             return {"status": "disabled", "message": "未配置 PostgreSQL 智能盯盘数据库。"}
-        self.store.save_entry(stock=stock, bak_basic=bak_basic)
+        try:
+            self.store.save_entry(stock=stock, bak_basic=bak_basic)
+        except WatchlistStoreError as exc:
+            return {"status": "error", "message": str(exc)}
         return {"status": "ok", "message": "智能盯盘数据库已更新。"}
 
     def delete_stock(self, ts_code: str) -> dict[str, Any]:
         if not self.store.enabled:
             raise DataProviderError("未配置 PostgreSQL 智能盯盘数据库。", 500)
-        entry = self.store.get_entry(ts_code)
+        try:
+            entry = self.store.get_entry(ts_code)
+        except WatchlistStoreError as exc:
+            raise DataProviderError(str(exc), 503) from exc
         if not entry:
             raise DataProviderError("数据库里没有找到这只自选股。", 404)
         target = entry.get("ts_code") or entry.get("symbol") or entry.get("name") or ts_code
         self.picker_client.manage_watchlist(action="delete", target=target)
-        deleted = self.store.delete_entry(entry.get("ts_code", ""))
+        try:
+            deleted = self.store.delete_entry(entry.get("ts_code", ""))
+        except WatchlistStoreError as exc:
+            raise DataProviderError(str(exc), 503) from exc
         return {
             "status": "ok",
             "deleted": deleted,
@@ -82,7 +97,10 @@ class WatchtowerService:
         cleaned_code = str(ts_code or "").strip().upper()
         if not cleaned_code:
             raise DataProviderError("缺少股票代码。", 400)
-        entry = self.store.get_entry(cleaned_code)
+        try:
+            entry = self.store.get_entry(cleaned_code)
+        except WatchlistStoreError as exc:
+            raise DataProviderError(str(exc), 503) from exc
         if not entry:
             raise DataProviderError("数据库里没有找到这只股票。", 404)
 
@@ -110,7 +128,10 @@ class WatchtowerService:
         cleaned_code = str(ts_code or "").strip().upper()
         if not cleaned_code:
             raise DataProviderError("缺少股票代码。", 400)
-        entry = self.store.get_entry(cleaned_code)
+        try:
+            entry = self.store.get_entry(cleaned_code)
+        except WatchlistStoreError as exc:
+            raise DataProviderError(str(exc), 503) from exc
         if not entry:
             raise DataProviderError("数据库里没有找到这只股票。", 404)
 
@@ -130,12 +151,15 @@ class WatchtowerService:
             "eastmoney": result,
         }
 
-    def _build_summary(self, items: list[dict[str, Any]], realtime_error: str = "") -> dict[str, Any]:
+    def _build_summary(self, items: list[dict[str, Any]], realtime_error: str = "", store_error: str = "") -> dict[str, Any]:
         strong_count = sum(1 for item in items if item.get("yangjia", {}).get("label") == "主流先手")
         absorb_count = sum(1 for item in items if item.get("yangjia", {}).get("label") == "分歧承接")
         risk_count = sum(1 for item in items if item.get("yangjia", {}).get("label") == "兑现回避")
         total = len(items)
-        if realtime_error:
+        if store_error:
+            headline = "智能盯盘数据库暂时不可用，先别急着操作。"
+            action = "等数据库缓存恢复后，再看自选与实时日线。"
+        elif realtime_error:
             headline = "实时日线暂时没拉回来，先看数据库里的自选底仓。"
             action = "先排查 `rt_k` 权限，再看盘。"
         elif strong_count + absorb_count >= max(1, risk_count):
@@ -152,6 +176,7 @@ class WatchtowerService:
             "headline": headline,
             "action": action,
             "realtime_error": realtime_error,
+            "store_error": store_error,
         }
 
     def _build_watch_item(self, entry: dict[str, Any], realtime_row: dict[str, Any] | None) -> dict[str, Any]:

@@ -126,6 +126,7 @@ const els = {
   pickerLevel: document.querySelector("#pickerLevel"),
   pickerLimit: document.querySelector("#pickerLimit"),
   pickerRunBtn: document.querySelector("#pickerRunBtn"),
+  pickerEastmoneyBatchBtn: document.querySelector("#pickerEastmoneyBatchBtn"),
   pickerMarketScopeFilter: document.querySelector("#pickerMarketScopeFilter"),
   pickerStructureFilter: document.querySelector("#pickerStructureFilter"),
   pickerEmotionFilter: document.querySelector("#pickerEmotionFilter"),
@@ -176,6 +177,13 @@ const els = {
   watchtowerModalMeta: document.querySelector("#watchtowerModalMeta"),
   watchtowerModalBody: document.querySelector("#watchtowerModalBody"),
   watchtowerModalCloseBtn: document.querySelector("#watchtowerModalCloseBtn"),
+  pickerEastmoneyModal: document.querySelector("#pickerEastmoneyModal"),
+  pickerEastmoneyModalTitle: document.querySelector("#pickerEastmoneyModalTitle"),
+  pickerEastmoneyModalMeta: document.querySelector("#pickerEastmoneyModalMeta"),
+  pickerEastmoneyForm: document.querySelector("#pickerEastmoneyForm"),
+  pickerEastmoneyGroupInput: document.querySelector("#pickerEastmoneyGroupInput"),
+  pickerEastmoneyTargetsInput: document.querySelector("#pickerEastmoneyTargetsInput"),
+  pickerEastmoneyFeedback: document.querySelector("#pickerEastmoneyFeedback"),
 };
 
 let searchTimer = null;
@@ -1516,6 +1524,102 @@ async function managePickerWatchlist(action, target) {
   }
 }
 
+function visiblePickerCandidates() {
+  return filterAndSortPickerCandidates(state.smartPicker.screen?.candidates || []);
+}
+
+function buildPickerEastmoneyTargetsText() {
+  const names = visiblePickerCandidates()
+    .map((item) => String(item.stock?.name || "").trim())
+    .filter(Boolean);
+  return Array.from(new Set(names)).join("\n");
+}
+
+function setPickerEastmoneyFeedback(message, tone = "neutral") {
+  if (!els.pickerEastmoneyFeedback) return;
+  els.pickerEastmoneyFeedback.className = `pickerEastmoneyFeedback tone-${tone}`;
+  els.pickerEastmoneyFeedback.textContent = message || "还没执行操作。";
+}
+
+function openPickerEastmoneyModal() {
+  if (!els.pickerEastmoneyModal) return;
+  const candidates = visiblePickerCandidates();
+  const targetsText = buildPickerEastmoneyTargetsText();
+  if (els.pickerEastmoneyTargetsInput) {
+    els.pickerEastmoneyTargetsInput.value = targetsText;
+  }
+  if (els.pickerEastmoneyGroupInput && !els.pickerEastmoneyGroupInput.value.trim()) {
+    els.pickerEastmoneyGroupInput.value = "重点监控";
+  }
+  if (els.pickerEastmoneyModalMeta) {
+    els.pickerEastmoneyModalMeta.textContent = candidates.length
+      ? `已按当前候选池筛选结果预填 ${candidates.length} 只股票；可直接批量加入分组或删除默认自选。`
+      : "当前候选池暂无可批量处理的股票，你也可以手动输入名称或代码。";
+  }
+  setPickerEastmoneyFeedback(candidates.length ? "已预填当前筛选后的股票列表。" : "当前没有筛选结果，等你手动输入。");
+  els.pickerEastmoneyModal.hidden = false;
+  document.body.classList.add("modalOpen");
+  window.setTimeout(() => {
+    if (els.pickerEastmoneyGroupInput) {
+      els.pickerEastmoneyGroupInput.focus();
+      els.pickerEastmoneyGroupInput.select();
+    }
+  }, 0);
+}
+
+function closePickerEastmoneyModal() {
+  if (!els.pickerEastmoneyModal) return;
+  els.pickerEastmoneyModal.hidden = true;
+  document.body.classList.remove("modalOpen");
+}
+
+async function submitPickerEastmoneyBatch(action) {
+  const targetsText = els.pickerEastmoneyTargetsInput?.value || "";
+  const groupName = els.pickerEastmoneyGroupInput?.value || "";
+  if (!String(targetsText).trim()) {
+    setPickerEastmoneyFeedback("先填股票名称或代码，再执行批量操作。", "caution");
+    return;
+  }
+  if (action === "add_group" && !String(groupName).trim()) {
+    setPickerEastmoneyFeedback("加入组选前，先填分组名称。", "caution");
+    return;
+  }
+
+  const buttons = els.pickerEastmoneyForm?.querySelectorAll("button") || [];
+  buttons.forEach((button) => {
+    button.disabled = true;
+  });
+  setPickerEastmoneyFeedback(action === "add_group" ? "正在批量加入东方财富分组..." : "正在批量删除东方财富自选...");
+  hidePickerError();
+  try {
+    const data = await fetchJson("/api/smart-picker/eastmoney-batch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action,
+        group_name: groupName,
+        targets_text: targetsText,
+      }),
+    });
+    const tone = data.status === "ok" ? "positive" : data.status === "partial" ? "neutral" : "caution";
+    const failed = (data.results || [])
+      .filter((item) => item.status !== "ok")
+      .map((item) => `${item.target}：${item.message}`)
+      .slice(0, 6);
+    setPickerEastmoneyFeedback(
+      failed.length ? `${data.message} 失败明细：${failed.join("；")}` : data.message || "操作完成。",
+      tone
+    );
+  } catch (err) {
+    setPickerEastmoneyFeedback(err.message || "东方财富批量自选操作失败。", "caution");
+    showPickerError(err.message);
+  } finally {
+    buttons.forEach((button) => {
+      button.disabled = false;
+    });
+  }
+}
+
 function openCandidateInAnalysis(stock) {
   if (!stock) return;
   state.selectedStock = { ts_code: stock.ts_code };
@@ -2326,45 +2430,94 @@ function renderReviewEmotionCycle(review, aiReview) {
   const stage = cycle.stage || aiReview?.market_stage || "阶段观察";
   const summary = aiCycle.summary || cycle.summary || "先看赚钱效应和亏钱效应的相对强弱。";
   const basis = Array.isArray(cycle.basis) && cycle.basis.length ? cycle.basis : Array.isArray(aiCycle.signals) ? aiCycle.signals : [];
+  const metrics = cycle.metrics || {};
   const phases = [
-    ["acceleration", "加速", "大阳线", "rise", "acc"],
-    ["climax", "一致", "高潮", "rise", "climax"],
-    ["high_divergence", "高位分歧", "", "fall", "high"],
-    ["turn_strong", "分歧转强", "弱转强", "rise", "turnStrong"],
-    ["turn_weak", "分歧转弱", "强转弱", "fall", "turnWeak"],
-    ["low_divergence", "低位分歧", "", "turn", "low"],
-    ["ice_point", "冰点", "一致", "turn", "ice"],
-    ["down_acceleration", "分歧加速", "", "fall", "down"],
+    ["low_divergence", "低位分歧", "试错前夜", "turn"],
+    ["turn_strong", "分歧转强", "弱转强", "rise"],
+    ["acceleration", "加速", "大阳线", "rise"],
+    ["climax", "一致", "高潮", "rise"],
+    ["ice_point", "冰点", "一致恐慌", "turn"],
+    ["down_acceleration", "分歧加速", "杀跌释放", "fall"],
+    ["turn_weak", "分歧转弱", "强转弱", "fall"],
+    ["high_divergence", "高位分歧", "高位博弈", "fall"],
   ];
+  const phaseMap = new Map(phases.map(([key, label, sub, tone]) => [key, { key, label, sub, tone }]));
+  const activeIndex = Math.max(
+    0,
+    phases.findIndex(([key, label]) => key === activeKey || label === activeLabel)
+  );
+  const activeTone = cycle.tone || phaseMap.get(activeKey)?.tone || "turn";
+  const previousKey = cycle.previous_phase_key || phases[(activeIndex - 1 + phases.length) % phases.length][0];
+  const nextKey = cycle.next_phase_key || phases[(activeIndex + 1) % phases.length][0];
+  const previousPhase = phaseMap.get(previousKey) || phaseMap.get(phases[(activeIndex - 1 + phases.length) % phases.length][0]);
+  const nextPhase = phaseMap.get(nextKey) || phaseMap.get(phases[(activeIndex + 1) % phases.length][0]);
+  const badgeClass = activeTone === "fall" ? "danger" : activeTone === "turn" ? "warn" : "";
+  const metricCards = [
+    ["进攻温度", metrics.attack_score, "涨停扩散 + 指数配合"],
+    ["分歧压力", metrics.pressure_score, "炸板 / 跌停 / 高标兑现"],
+    ["高标承接", metrics.carry_score, `最高 ${intValue(metrics.highest_board)} 板`],
+  ];
+  const biasLabel = cycle.bias_label || "阶段观察";
+  const confidence = intValue(cycle.confidence);
   return `
     <article class="reviewFocusItem reviewEmotionCycleCard">
       <div class="reviewFocusHeroHeader">
         <strong>情绪周期图</strong>
-        <span class="reviewBadge">${escapeHtml(activeLabel)}</span>
+        <span class="reviewBadge ${badgeClass}">${escapeHtml(activeLabel)}</span>
+      </div>
+      <section class="reviewEmotionCycleSummary tone-${escapeHtml(activeTone)}">
+        <div class="reviewEmotionCycleSummaryMain">
+          <small>当前阶段</small>
+          <strong>${escapeHtml(activeLabel)}</strong>
+          <p>${escapeHtml(stage)}</p>
+        </div>
+        <div class="reviewEmotionCycleSummaryAside">
+          <span>${escapeHtml(biasLabel)}</span>
+          <strong>${confidence}</strong>
+          <small>阶段置信</small>
+        </div>
+      </section>
+      <div class="reviewEmotionMetricStrip">
+        ${metricCards
+          .map(
+            ([label, value, hint]) => `
+              <article class="reviewEmotionMetricCard">
+                <span>${escapeHtml(label)}</span>
+                <strong>${intValue(value)}</strong>
+                <small>${escapeHtml(hint)}</small>
+              </article>
+            `
+          )
+          .join("")}
       </div>
       <div class="reviewEmotionCycleLoop" aria-label="养家情绪周期">
-        <div class="reviewEmotionCycleCore">
-          <span>当前阶段</span>
-          <strong>${escapeHtml(activeLabel)}</strong>
-          <small>${escapeHtml(stage)}</small>
-        </div>
         ${phases
-          .map(([key, label, sub, tone, area]) => {
+          .map(([key, label, sub, tone], index) => {
             const isActive = key === activeKey || label === activeLabel;
+            const isPrevious = key === previousKey;
+            const isNext = key === nextKey;
             return `
-              <div class="reviewEmotionNode tone-${tone}${isActive ? " active" : ""}" style="grid-area:${area}">
+              <div class="reviewEmotionNode tone-${tone}${isActive ? " active" : ""}${isPrevious ? " previous" : ""}${isNext ? " next" : ""}">
+                <b>${index + 1}</b>
                 <span>${escapeHtml(label)}</span>
                 ${sub ? `<small>${escapeHtml(sub)}</small>` : ""}
+                ${isActive ? `<em>当前阶段</em>` : isPrevious ? `<em>上一段</em>` : isNext ? `<em>下一段</em>` : ""}
               </div>
             `;
           })
           .join("")}
       </div>
+      <div class="reviewEmotionCycleFlow">
+        <span>上一段：${escapeHtml(cycle.previous_phase || previousPhase?.label || "—")}</span>
+        <strong>${escapeHtml(activeLabel)}</strong>
+        <span>下一段：${escapeHtml(cycle.next_phase || nextPhase?.label || "—")}</span>
+      </div>
       <p>${escapeHtml(summary)}</p>
       <ul class="reviewBulletList">
-        ${basis.slice(0, 4).map((item) => `<li>${escapeHtml(item)}</li>`).join("") || "<li>暂无情绪样本。</li>"}
+        ${basis.slice(0, 3).map((item) => `<li>${escapeHtml(item)}</li>`).join("") || "<li>暂无情绪样本。</li>"}
       </ul>
       ${cycle.action ? `<p class="reviewActionText">${escapeHtml(cycle.action)}</p>` : ""}
+      ${cycle.focus ? `<p class="reviewFocusMeta">盯盘重点：${escapeHtml(cycle.focus)}</p>` : ""}
       ${cycle.risk ? `<p class="reviewFocusMeta">${escapeHtml(cycle.risk)}</p>` : ""}
     </article>
   `;
@@ -5221,6 +5374,7 @@ function bindEvents() {
   });
   els.reviewRefreshBtn?.addEventListener("click", loadReviewOverview);
   els.pickerRunBtn?.addEventListener("click", () => runSmartPicker("combined"));
+  els.pickerEastmoneyBatchBtn?.addEventListener("click", openPickerEastmoneyModal);
   els.pickerRunConditionBtn?.addEventListener("click", () => runSmartPicker("condition"));
   els.pickerRunDcBtn?.addEventListener("click", () => runSmartPicker("dc"));
   els.pickerRunTdxBtn?.addEventListener("click", () => runSmartPicker("tdx"));
@@ -5423,7 +5577,25 @@ function bindEvents() {
       closeWatchtowerModal();
     }
   });
+  els.pickerEastmoneyModal?.addEventListener("click", (event) => {
+    if (event.target.closest("[data-picker-eastmoney-close]")) {
+      closePickerEastmoneyModal();
+      return;
+    }
+    const deleteTrigger = event.target.closest("[data-picker-eastmoney-submit='delete']");
+    if (deleteTrigger) {
+      submitPickerEastmoneyBatch("delete");
+    }
+  });
+  els.pickerEastmoneyForm?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    submitPickerEastmoneyBatch("add_group");
+  });
   document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && els.pickerEastmoneyModal && !els.pickerEastmoneyModal.hidden) {
+      closePickerEastmoneyModal();
+      return;
+    }
     if (event.key === "Escape" && els.reviewModal && !els.reviewModal.hidden) {
       closeReviewModal();
       return;

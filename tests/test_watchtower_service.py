@@ -2,6 +2,7 @@ import unittest
 
 from chanlun_app.data_provider import DataProviderError
 from chanlun_app.watchtower_service import WatchtowerService
+from chanlun_app.watchlist_store import WatchlistStoreError
 
 
 class FakeWatchtowerStore:
@@ -56,6 +57,11 @@ class FakeWatchtowerStore:
         self.deleted.append(ts_code)
         self.rows = [row for row in self.rows if row["ts_code"] != ts_code]
         return True
+
+
+class BrokenWatchtowerStore(FakeWatchtowerStore):
+    def list_entries(self, query=""):
+        raise WatchlistStoreError("读取智能盯盘数据库失败：pool timeout")
 
 
 class FakeWatchtowerDataClient:
@@ -126,6 +132,19 @@ class WatchtowerServiceTest(unittest.TestCase):
     def test_realtime_detail_requires_existing_stock(self):
         with self.assertRaises(DataProviderError):
             self.service.realtime_detail("000002.SZ")
+
+    def test_overview_degrades_when_store_fails(self):
+        service = WatchtowerService(
+            data_client=FakeWatchtowerDataClient(),
+            picker_client=self.picker,
+            store=BrokenWatchtowerStore(),
+        )
+
+        result = service.overview(query="", page=1, page_size=10)
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["items"], [])
+        self.assertIn("数据库暂时不可用", result["summary"]["headline"])
 
 
 if __name__ == "__main__":

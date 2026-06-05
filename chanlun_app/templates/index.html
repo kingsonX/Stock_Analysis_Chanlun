@@ -261,6 +261,7 @@
                     <input id="pickerLimit" type="number" min="1" max="80" value="20">
                   </label>
                   <button id="pickerRunBtn" type="button" class="pickerPrimaryButton">执行组合筛选</button>
+                  <button id="pickerEastmoneyBatchBtn" type="button" class="ghostButton pickerBatchButton">加入东方财富自选</button>
                 </div>
                 <p class="pickerControlHint">四类条件均可单独执行，也可组合成候选池约束。</p>
               </section>
@@ -505,6 +506,37 @@
         </header>
         <div id="watchtowerModalBody" class="reviewModalBody">
           <div class="empty">等待实时日线数据。</div>
+        </div>
+      </section>
+    </div>
+
+    <div id="pickerEastmoneyModal" class="reviewModal" hidden>
+      <div class="reviewModalBackdrop" data-picker-eastmoney-close="1"></div>
+      <section class="reviewModalDialog pickerEastmoneyModalDialog" role="dialog" aria-modal="true" aria-labelledby="pickerEastmoneyModalTitle">
+        <header class="reviewModalHeader">
+          <div>
+            <h2 id="pickerEastmoneyModalTitle">东方财富批量自选</h2>
+            <p id="pickerEastmoneyModalMeta">按当前候选池过滤结果批量加入分组，或批量删除默认自选。</p>
+          </div>
+          <button id="pickerEastmoneyModalCloseBtn" type="button" class="ghostButton" data-picker-eastmoney-close="1">关闭</button>
+        </header>
+        <div class="reviewModalBody">
+          <form id="pickerEastmoneyForm" class="pickerEastmoneyForm">
+            <label>
+              <span>分组名称</span>
+              <input id="pickerEastmoneyGroupInput" type="text" placeholder="例如：重点监控">
+            </label>
+            <label>
+              <span>股票名称</span>
+              <textarea id="pickerEastmoneyTargetsInput" rows="12" placeholder="每行一只，支持股票名称、代码或 ts_code。"></textarea>
+            </label>
+            <p class="pickerEastmoneyHint">默认会填充当前候选池筛选后的股票；“加入组选”会走东方财富分组自选，“删除自选”会批量从默认自选中移除。</p>
+            <div class="pickerEastmoneyActions">
+              <button type="submit" class="pickerPrimaryButton" data-picker-eastmoney-submit="add_group">加入组选</button>
+              <button type="button" class="ghostButton" data-picker-eastmoney-submit="delete">删除自选</button>
+            </div>
+            <div id="pickerEastmoneyFeedback" class="pickerEastmoneyFeedback empty">还没执行操作。</div>
+          </form>
         </div>
       </section>
     </div>

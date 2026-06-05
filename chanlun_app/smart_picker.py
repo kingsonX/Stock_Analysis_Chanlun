@@ -506,6 +506,52 @@ class SmartPickerService:
     def manage_watchlist_group(self, action: str, target: str, group_name: str) -> dict[str, Any]:
         return self.watchlist_provider.manage_group(action=action, target=target, group_name=group_name)
 
+    def batch_manage_watchlist(self, action: str, targets_text: str, group_name: str = "") -> dict[str, Any]:
+        cleaned_action = (action or "").strip().lower()
+        cleaned_group = (group_name or "").strip()
+        targets = _parse_watchlist_targets(targets_text)
+        if cleaned_action not in {"add_group", "delete"}:
+            raise MXProviderError("批量自选操作只支持 add_group 或 delete。", 400)
+        if not targets:
+            raise MXProviderError("缺少股票名称或代码。", 400)
+        if cleaned_action == "add_group" and not cleaned_group:
+            raise MXProviderError("缺少分组名称。", 400)
+
+        results = []
+        success_count = 0
+        fail_count = 0
+        for target in targets:
+            try:
+                if cleaned_action == "add_group":
+                    payload = self.manage_watchlist_group("add", target, cleaned_group)
+                else:
+                    payload = self.manage_watchlist("delete", target)
+                success_count += 1
+                results.append({"target": target, "status": "ok", "message": payload.get("message", "操作成功")})
+            except (DataProviderError, MXProviderError) as exc:
+                fail_count += 1
+                results.append({"target": target, "status": "error", "message": getattr(exc, "message", str(exc))})
+
+        status = "ok" if fail_count == 0 else "partial" if success_count > 0 else "error"
+        action_label = f"加入东方财富自选组“{cleaned_group}”" if cleaned_action == "add_group" else "删除东方财富自选"
+        if status == "ok":
+            message = f"{action_label}完成：共处理 {success_count} 只。"
+        elif status == "partial":
+            message = f"{action_label}部分完成：成功 {success_count} 只，失败 {fail_count} 只。"
+        else:
+            message = f"{action_label}失败：共 {fail_count} 只未处理成功。"
+
+        return {
+            "status": status,
+            "action": cleaned_action,
+            "group_name": cleaned_group,
+            "total": len(targets),
+            "success_count": success_count,
+            "fail_count": fail_count,
+            "results": results,
+            "message": message,
+        }
+
     def _universe(self) -> dict[str, Any]:
         load_stocks = getattr(self.data_client, "load_stocks", None)
         if not callable(load_stocks):
@@ -1681,6 +1727,35 @@ def _row_value(row: dict[str, Any], keywords: list[str]) -> str:
         if any(keyword in key_text for keyword in keywords):
             return _flatten(value)
     return ""
+
+
+def _parse_watchlist_targets(text: str) -> list[str]:
+    parts = re.split(r"[\n\r,，;；]+", str(text or ""))
+    targets: list[str] = []
+    seen: set[str] = set()
+    for part in parts:
+        target = _normalize_watchlist_target(part)
+        if not target:
+            continue
+        key = target.upper()
+        if key in seen:
+            continue
+        seen.add(key)
+        targets.append(target)
+    return targets
+
+
+def _normalize_watchlist_target(text: str) -> str:
+    cleaned = re.sub(r"\s+", " ", str(text or "")).strip(" -\t")
+    if not cleaned:
+        return ""
+    ts_code_match = re.search(r"\b(\d{6}\.(?:SH|SZ|BJ))\b", cleaned, re.IGNORECASE)
+    if ts_code_match:
+        return ts_code_match.group(1).upper()
+    symbol_match = re.search(r"\b(\d{6})\b", cleaned)
+    if symbol_match:
+        return symbol_match.group(1)
+    return cleaned
 
 
 def _mx_manage_succeeded(result: dict[str, Any]) -> bool:
