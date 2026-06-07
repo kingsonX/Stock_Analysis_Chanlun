@@ -1062,16 +1062,18 @@ input:focus {
 }
 
 .reviewSidePanel {
+  position: sticky;
+  top: 16px;
   grid-template-rows: auto minmax(0, 1fr);
-  height: calc(100vh - 32px);
-  max-height: calc(100vh - 32px);
-  min-height: 0;
+  height: auto;
+  max-height: none;
+  min-height: auto;
   align-self: start;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .reviewSideTabs {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .reviewSideTabs button {
@@ -1082,17 +1084,17 @@ input:focus {
 
 .reviewSidePane {
   display: none;
-  min-height: 0;
-  height: 100%;
+  min-height: auto;
+  height: auto;
   max-height: none;
   overflow-x: hidden;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scrollbar-gutter: stable;
+  overflow-y: visible;
 }
 
 .reviewSidePane.active {
-  display: block;
+  display: grid;
+  align-content: start;
+  min-height: calc(100vh - 120px);
 }
 
 .reviewModal {
@@ -1971,7 +1973,8 @@ body.modalOpen {
 
 .reviewSidePanel .reviewFocusItem {
   gap: 8px;
-  padding: 12px;
+  padding: 14px;
+  min-height: auto;
   box-shadow: none;
 }
 
@@ -2280,6 +2283,7 @@ body.modalOpen {
 .reviewFocusMeta {
   color: var(--muted);
   font-size: 12px;
+  line-height: 1.6;
 }
 
 .reviewModalSection {

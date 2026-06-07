@@ -75,8 +75,8 @@ class FakeReviewDataClient:
         return {
             "trade_date": trade_date or "20260515",
             "items": [
-                {"name": "银行概念", "rank": 1, "pct_chg": 6.1, "limit_count": 6, "open_num": 1, "count": 18},
-                {"name": "互联网金融", "rank": 2, "pct_chg": 4.9, "limit_count": 4, "open_num": 2, "count": 26},
+                {"ts_code": "885001.TI", "name": "银行概念", "rank": 1, "pct_chg": 6.1, "up_nums": 6, "cons_nums": 2, "up_stat": "3天2板", "days": 3, "count": 18},
+                {"ts_code": "885002.TI", "name": "互联网金融", "rank": 2, "pct_chg": 4.9, "up_nums": 4, "cons_nums": 1, "up_stat": "2天2板", "days": 2, "count": 26},
             ],
         }
 
@@ -131,6 +131,9 @@ class ReviewServiceTest(unittest.TestCase):
         self.assertEqual(result["hot_money_trades"][0]["record_count"], 1)
         self.assertEqual(result["hot_money_stats"]["merged_count"], 2)
         self.assertEqual(result["focus_boards"][0]["name"], "银行概念")
+        self.assertEqual(result["focus_boards"][0]["limit_count"], 6)
+        self.assertEqual(result["focus_boards"][0]["chain_count"], 2)
+        self.assertIn("高标 3天2板", result["focus_boards"][0]["watch_reason"])
         self.assertEqual(result["focus_stocks"][0]["name"], "平安银行")
         self.assertEqual(result["ai_review"]["status"], "idle")
         self.assertIn("今天涨停", result["notes"]["summary"])

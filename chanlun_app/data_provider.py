@@ -719,13 +719,13 @@ class TushareClient:
             api_name="limit_cpt_list",
             label="涨停板块",
             trade_date=trade_date,
-            fields="trade_date,name,pct_chg,open_num,count,limit_count,turnover_rate,up_stat,cmc,rank",
+            fields="trade_date,ts_code,name,days,up_stat,cons_nums,up_nums,pct_chg,rank,open_num,count,limit_count,turnover_rate,cmc",
         )
         return {
             "trade_date": actual_trade_date,
             "items": _standardize_market_rows(
                 df,
-                numeric_fields=("pct_chg", "open_num", "count", "limit_count", "turnover_rate", "cmc", "rank"),
+                numeric_fields=("days", "cons_nums", "up_nums", "pct_chg", "rank", "open_num", "count", "limit_count", "turnover_rate", "cmc"),
             ),
         }
 

@@ -103,7 +103,7 @@
                 <button type="button" data-side-panel="trendPanel">走势</button>
                 <button type="button" data-side-panel="riskPanel">风控</button>
                 <button type="button" data-side-panel="reviewPanel">复盘</button>
-                <button type="button" data-side-panel="statsPanel">统计</button>
+                <button type="button" data-side-panel="eventPanel">事件催化</button>
                 <button type="button" data-side-panel="centerPanel">中枢</button>
               </nav>
               <section id="levelPanel" class="panel sidePane active">
@@ -130,9 +130,9 @@
                 <h2>信号复盘</h2>
                 <div id="backtestBox" class="empty">暂无复盘统计</div>
               </section>
-              <section id="statsPanel" class="panel sidePane">
-                <h2>结构统计</h2>
-                <dl id="metaStats" class="stats"></dl>
+              <section id="eventPanel" class="panel sidePane">
+                <h2>事件催化</h2>
+                <div id="eventNewsBox" class="empty">分析完成后通过妙想检索这只股票的公告、研报和机构观点。</div>
               </section>
               <section id="centerPanel" class="panel sidePane">
                 <h2>最近中枢</h2>
@@ -412,11 +412,15 @@
             <aside class="pickerSidePanel reviewSidePanel">
               <nav id="reviewSideTabs" class="sideTabs reviewSideTabs" aria-label="智能复盘侧栏切换">
                 <button type="button" class="active" data-review-side-panel="reviewFocusPanel">复盘要点</button>
+                <button type="button" data-review-side-panel="reviewEmotionCyclePanel">情绪周期</button>
                 <button type="button" data-review-side-panel="reviewBoardsPanel">关注板块</button>
                 <button type="button" data-review-side-panel="reviewStocksPanel">关注股票</button>
               </nav>
               <section id="reviewFocusPanel" class="panel reviewSidePane active">
                 <div id="reviewFocusBox" class="empty">点击“刷新复盘”后，这里会给出今天最值得看的主线、风险和观察点。</div>
+              </section>
+              <section id="reviewEmotionCyclePanel" class="panel reviewSidePane">
+                <div id="reviewEmotionCycleBox" class="empty">等待生成情绪周期图。</div>
               </section>
               <section id="reviewBoardsPanel" class="panel reviewSidePane">
                 <div id="reviewBoardsBox" class="empty">等待生成板块关注列表。</div>

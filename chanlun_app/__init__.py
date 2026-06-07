@@ -151,17 +151,47 @@ def create_app(
         except MXProviderError as exc:
             return json_error(exc.message, exc.status_code)
 
+    @app.get("/api/mx/news")
+    def mx_news():
+        ts_code = (request.args.get("ts_code") or "").strip()
+        name = (request.args.get("name") or "").strip()
+        target = name or ts_code
+        if not target:
+            return json_error("请输入股票名称或代码。", 400)
+
+        try:
+            return jsonify(trading_profile.news_provider.digest(target=target))
+        except MXProviderError as exc:
+            return json_error(exc.message, exc.status_code)
+
     @app.post("/api/trading-profile")
     def profile_summary():
         payload = request.get_json(silent=True) or {}
         stock = payload.get("stock") or {}
         analysis = payload.get("analysis") or {}
         include_mx_summary = payload.get("include_mx_summary", True)
+        include_ai_summary = payload.get("include_ai_summary", True)
         if not stock:
             return json_error("缺少股票信息，无法生成交易画像。", 400)
 
         try:
-            return jsonify(trading_profile.build(stock=stock, analysis=analysis, include_mx_summary=bool(include_mx_summary)))
+            build_with_options = getattr(trading_profile, "build_with_options", None)
+            if callable(build_with_options):
+                payload = build_with_options(
+                    stock=stock,
+                    analysis=analysis,
+                    include_mx_summary=bool(include_mx_summary),
+                    include_ai_summary=bool(include_ai_summary),
+                )
+            else:
+                payload = trading_profile.build(
+                    stock=stock,
+                    analysis=analysis,
+                    include_mx_summary=bool(include_mx_summary),
+                )
+            return jsonify(
+                payload
+            )
         except MXProviderError as exc:
             return json_error(exc.message, exc.status_code)
 

@@ -191,6 +191,15 @@ class TradingProfileService:
         self.ai_explainer = ai_explainer
 
     def build(self, stock: dict[str, Any], analysis: dict[str, Any], include_mx_summary: bool = True) -> dict[str, Any]:
+        return self.build_with_options(stock=stock, analysis=analysis, include_mx_summary=include_mx_summary, include_ai_summary=True)
+
+    def build_with_options(
+        self,
+        stock: dict[str, Any],
+        analysis: dict[str, Any],
+        include_mx_summary: bool = True,
+        include_ai_summary: bool = True,
+    ) -> dict[str, Any]:
         stock = stock or {}
         analysis = analysis or {}
         name = _flatten(stock.get("name") or "")
@@ -213,7 +222,11 @@ class TradingProfileService:
         market_scan = self._safe_external_call(self.screen_provider.scan, stock_name=target, industry=industry, symbol=symbol)
 
         profile = _compose_profile(stock, analysis, mx_summary, news, market_scan)
-        ai_summary = self._safe_ai_summary(stock, analysis, profile, mx_summary, news, market_scan)
+        ai_summary = (
+            self._safe_ai_summary(stock, analysis, profile, mx_summary, news, market_scan)
+            if include_ai_summary
+            else {"status": "empty", "message": "当前调用未启用 AI 解释层。"}
+        )
         if ai_summary.get("status") == "ok":
             profile = _merge_ai_profile(profile, ai_summary)
         leader_profile = _leader_profile(stock, analysis, mx_summary, news, market_scan, profile, ai_summary)

@@ -288,15 +288,19 @@ def _build_ladder(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def _build_focus_boards(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     boards = []
-    for rank, item in enumerate(sorted(items or [], key=lambda row: (_num(row, "rank"), -_num(row, "limit_count"), -_num(row, "pct_chg"))), start=1):
+    for rank, item in enumerate(sorted(items or [], key=lambda row: (_num(row, "rank"), -_board_limit_count(row), -_num(row, "pct_chg"))), start=1):
         boards.append(
             {
+                "ts_code": str(item.get("ts_code", "") or "").strip(),
                 "name": item.get("name", ""),
                 "rank": int(_num(item, "rank")) or rank,
                 "pct_chg": _num(item, "pct_chg"),
-                "limit_count": int(_num(item, "limit_count")),
+                "limit_count": _board_limit_count(item),
+                "chain_count": _board_chain_count(item),
                 "open_num": int(_num(item, "open_num")),
                 "count": int(_num(item, "count")),
+                "days": int(_num(item, "days")),
+                "up_stat": str(item.get("up_stat", "") or "").strip(),
                 "turnover_rate": _num(item, "turnover_rate"),
                 "watch_reason": _board_watch_reason(item),
             }
@@ -671,10 +675,29 @@ def _highest_board(items: list[dict[str, Any]]) -> int:
 
 
 def _board_watch_reason(item: dict[str, Any]) -> str:
-    return (
-        f"涨停家数 {int(_num(item, 'limit_count'))}，板块内样本 {int(_num(item, 'count'))}，"
-        f"涨幅 {(_num(item, 'pct_chg')):.2f}% 。"
-    )
+    parts = [f"涨停家数 {_board_limit_count(item)}"]
+    chain_count = _board_chain_count(item)
+    if chain_count > 0:
+        parts.append(f"连板家数 {chain_count}")
+    sample_count = int(_num(item, "count"))
+    if sample_count > 0:
+        parts.append(f"板块样本 {sample_count}")
+    up_stat = str(item.get("up_stat", "") or "").strip()
+    if up_stat:
+        parts.append(f"高标 {up_stat}")
+    days = int(_num(item, "days"))
+    if days > 0:
+        parts.append(f"连续上榜 {days} 天")
+    parts.append(f"涨幅 {(_num(item, 'pct_chg')):.2f}%")
+    return "，".join(parts) + "。"
+
+
+def _board_limit_count(item: dict[str, Any]) -> int:
+    return int(_num(item, "up_nums")) or int(_num(item, "limit_count"))
+
+
+def _board_chain_count(item: dict[str, Any]) -> int:
+    return int(_num(item, "cons_nums")) or int(_num(item, "open_num"))
 
 
 def _stock_verdict(score: float) -> str:

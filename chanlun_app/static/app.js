@@ -4,7 +4,10 @@ const state = {
   currentPage: "analysisPage",
   analysis: null,
   mxSummary: null,
+  profileSummary: null,
   mxRequestId: 0,
+  eventNews: null,
+  eventNewsRequestId: 0,
   analysisWatchlist: { status: "idle", message: "" },
   hoverIndex: null,
   viewStart: 0,
@@ -98,7 +101,7 @@ const els = {
   structureDetail: document.querySelector("#structureDetail"),
   riskList: document.querySelector("#riskList"),
   backtestBox: document.querySelector("#backtestBox"),
-  metaStats: document.querySelector("#metaStats"),
+  eventNewsBox: document.querySelector("#eventNewsBox"),
   centerList: document.querySelector("#centerList"),
   mxDataBox: document.querySelector("#mxDataBox"),
   leaderAnalysisBox: document.querySelector("#leaderAnalysisBox"),
@@ -155,6 +158,7 @@ const els = {
   reviewLadderBox: document.querySelector("#reviewLadderBox"),
   reviewSideTabs: document.querySelector("#reviewSideTabs"),
   reviewFocusBox: document.querySelector("#reviewFocusBox"),
+  reviewEmotionCycleBox: document.querySelector("#reviewEmotionCycleBox"),
   reviewBoardsBox: document.querySelector("#reviewBoardsBox"),
   reviewStocksBox: document.querySelector("#reviewStocksBox"),
   reviewModal: document.querySelector("#reviewModal"),
@@ -255,6 +259,9 @@ async function loadAnalysis() {
   setLoading(true);
   state.mxRequestId += 1;
   state.mxSummary = null;
+  state.profileSummary = null;
+  state.eventNewsRequestId += 1;
+  state.eventNews = null;
   state.analysisWatchlist = { status: "idle", message: "" };
   try {
     const data = await fetchJson(`/api/analysis?${params.toString()}`);
@@ -266,6 +273,7 @@ async function loadAnalysis() {
     hideError();
     renderAll();
     loadMxSummary(data.stock);
+    loadEventNews(data.stock);
   } catch (err) {
     showError(err.message);
   } finally {
@@ -306,47 +314,63 @@ async function loadMxSummary(stock) {
   if (!stock) return;
   const requestId = ++state.mxRequestId;
   state.mxSummary = { status: "loading" };
+  state.profileSummary = { status: "loading" };
   renderMxData();
+  renderLeaderAnalysis();
 
-  try {
-    const profilePromise = fetchJson("/api/trading-profile", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      timeoutMs: 8000,
-      timeoutMessage: "龙头分析加载超时，请稍后重试。",
-      body: JSON.stringify({
-        stock,
-        analysis: state.analysis,
-        include_mx_summary: false,
-      }),
-    });
-    const mxCardsPromise = fetchJson(`/api/mx/summary?ts_code=${encodeURIComponent(stock.ts_code || "")}&name=${encodeURIComponent(stock.name || "")}`, {
-      timeoutMs: 8000,
-      timeoutMessage: "妙想数据加载超时，请稍后重试。",
-    });
+  const profilePromise = fetchJson("/api/trading-profile", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    timeoutMs: 12000,
+    timeoutMessage: "龙头分析加载超时，请稍后重试。",
+    body: JSON.stringify({
+      stock,
+      analysis: state.analysis,
+      include_mx_summary: false,
+      include_ai_summary: false,
+    }),
+  });
+  const mxCardsPromise = fetchJson(`/api/mx/summary?ts_code=${encodeURIComponent(stock.ts_code || "")}&name=${encodeURIComponent(stock.name || "")}`, {
+    timeoutMs: 18000,
+    timeoutMessage: "妙想数据加载超时，请稍后重试。",
+  });
 
-    const data = await profilePromise;
-    if (requestId !== state.mxRequestId) return;
-    state.mxSummary = { status: "ok", data };
-    renderMxData();
+  const [profileResult, mxCardsResult] = await Promise.allSettled([profilePromise, mxCardsPromise]);
+  if (requestId !== state.mxRequestId) return;
 
-    try {
-      const mxCards = await mxCardsPromise;
-      if (requestId !== state.mxRequestId || state.mxSummary?.status !== "ok") return;
-      state.mxSummary.data.mx_summary = { status: "ok", data: mxCards };
-    } catch (err) {
-      if (requestId !== state.mxRequestId || state.mxSummary?.status !== "ok") return;
-      state.mxSummary.data.mx_summary = {
-        status: "error",
-        message: err.message,
-        data: { cards: [] },
-      };
-    }
-  } catch (err) {
-    if (requestId !== state.mxRequestId) return;
-    state.mxSummary = { status: "error", message: err.message };
+  if (profileResult.status === "fulfilled") {
+    state.profileSummary = { status: "ok", data: profileResult.value };
+  } else {
+    state.profileSummary = { status: "error", message: profileResult.reason?.message || "龙头分析加载失败。" };
   }
+
+  if (mxCardsResult.status === "fulfilled") {
+    state.mxSummary = { status: "ok", data: mxCardsResult.value };
+  } else {
+    state.mxSummary = { status: "error", message: mxCardsResult.reason?.message || "妙想数据加载失败。" };
+  }
+
   renderMxData();
+  renderLeaderAnalysis();
+}
+
+async function loadEventNews(stock) {
+  if (!stock) return;
+  const requestId = ++state.eventNewsRequestId;
+  state.eventNews = { status: "loading" };
+  renderEventCatalyst();
+  try {
+    const data = await fetchJson(`/api/mx/news?ts_code=${encodeURIComponent(stock.ts_code || "")}&name=${encodeURIComponent(stock.name || "")}`, {
+      timeoutMs: 8000,
+      timeoutMessage: "妙想事件催化加载超时，请稍后重试。",
+    });
+    if (requestId !== state.eventNewsRequestId) return;
+    state.eventNews = data;
+  } catch (err) {
+    if (requestId !== state.eventNewsRequestId) return;
+    state.eventNews = { status: "error", message: err.message };
+  }
+  renderEventCatalyst();
 }
 
 function setLoading(isLoading) {
@@ -402,7 +426,7 @@ function renderAll() {
   renderStructureDetail();
   renderRiskCards();
   renderBacktest();
-  renderStats();
+  renderEventCatalyst();
   renderCenters();
   renderMxData();
   renderLeaderAnalysis();
@@ -620,25 +644,38 @@ function renderBacktest() {
   `;
 }
 
-function renderStats() {
-  const meta = state.analysis?.meta;
-  if (!meta) {
-    els.metaStats.innerHTML = "";
+function renderEventCatalyst() {
+  if (!els.eventNewsBox) return;
+  if (!state.analysis) {
+    els.eventNewsBox.className = "empty";
+    els.eventNewsBox.textContent = "分析完成后通过妙想检索这只股票的公告、研报和机构观点。";
     return;
   }
-  const counts = meta.counts || {};
-  const rows = [
-    ["原始K线", meta.raw_count],
-    ["包含处理后", meta.merged_count],
-    ["分型", counts.fractals || 0],
-    ["笔", counts.strokes || 0],
-    ["线段", counts.segments || 0],
-    ["中枢", counts.centers || 0],
-    ["背驰", counts.divergences || 0],
-    ["买卖点", counts.signals || 0],
-    ["成笔规则", "新笔延伸/结束"],
-  ];
-  els.metaStats.innerHTML = rows.map(([key, value]) => `<dt>${key}</dt><dd>${value}</dd>`).join("");
+
+  const news = state.eventNews;
+  if (!news || news.status === "loading") {
+    els.eventNewsBox.className = "mxStack";
+    els.eventNewsBox.innerHTML = `
+      <article class="mxCard loading">
+        <div class="mxCardHeader">
+          <strong>事件催化</strong>
+          <small>加载中</small>
+        </div>
+        <div class="mxSkeleton"></div>
+        <div class="mxSkeleton short"></div>
+      </article>
+    `;
+    return;
+  }
+
+  if (news.status === "error") {
+    els.eventNewsBox.className = "mxError";
+    els.eventNewsBox.textContent = news.message || "妙想事件催化加载失败。";
+    return;
+  }
+
+  els.eventNewsBox.className = "mxStack";
+  els.eventNewsBox.innerHTML = renderNewsDigest(news) || `<div class="empty">未检索到相关事件催化。</div>`;
 }
 
 function renderCenters() {
@@ -671,16 +708,19 @@ function renderCenters() {
 function renderMxData() {
   renderAnalysisBasics();
   if (!els.mxDataBox) return;
-  const summary = state.mxSummary;
+  const profileSummary = state.profileSummary;
+  const mxSummary = state.mxSummary;
   if (!state.analysis) {
     els.mxDataBox.className = "empty";
     els.mxDataBox.textContent = "分析完成后加载行情、资金、估值、财务和公司资料。";
     return;
   }
 
-  if (!summary || summary.status === "loading") {
+  const profileLoading = !profileSummary || profileSummary.status === "loading";
+  const mxLoading = !mxSummary || mxSummary.status === "loading";
+  if (profileLoading && mxLoading) {
     els.mxDataBox.className = "mxStack";
-    els.mxDataBox.innerHTML = ["综合画像", "市场扫描", "资讯催化", "行情", "资金", "估值"]
+    els.mxDataBox.innerHTML = ["综合画像", "市场扫描", "行情", "资金", "估值", "财务"]
       .map(
         (label) => `
           <article class="mxCard loading">
@@ -697,21 +737,25 @@ function renderMxData() {
     return;
   }
 
-  if (summary.status === "error") {
-    els.mxDataBox.className = "mxError";
-    els.mxDataBox.textContent = summary.message || "妙想数据加载失败。";
-    return;
+  const blocks = [];
+  if (profileSummary?.status === "ok") {
+    blocks.push(renderProfileCard(profileSummary.data?.profile));
+    blocks.push(renderMarketScan(profileSummary.data?.market_scan));
+  } else if (profileSummary?.status === "error") {
+    blocks.push(renderInlineMxErrorCard("综合画像", profileSummary.message || "综合画像加载失败。"));
+    blocks.push(renderInlineMxErrorCard("市场扫描", profileSummary.message || "市场扫描加载失败。"));
+  }
+
+  if (mxSummary?.status === "ok") {
+    blocks.push(...((mxSummary.data?.cards || []).map(renderMxCard)));
+  } else if (mxSummary?.status === "error") {
+    blocks.push(renderInlineMxErrorCard("妙想数据", mxSummary.message || "妙想数据加载失败。"));
   }
 
   els.mxDataBox.className = "mxStack";
-  els.mxDataBox.innerHTML = [
-    renderProfileCard(summary.data?.profile),
-    renderMarketScan(summary.data?.market_scan),
-    renderNewsDigest(summary.data?.news),
-    ...((summary.data?.mx_summary?.data?.cards || []).map(renderMxCard)),
-  ]
+  els.mxDataBox.innerHTML = blocks
     .filter(Boolean)
-    .join("");
+    .join("") || `<div class="empty">当前没有可展示的妙想数据。</div>`;
 }
 
 function renderLeaderAnalysis() {
@@ -722,7 +766,7 @@ function renderLeaderAnalysis() {
     return;
   }
 
-  const summary = state.mxSummary;
+  const summary = state.profileSummary;
   if (!summary || summary.status === "loading") {
     els.leaderAnalysisBox.className = "mxStack";
     els.leaderAnalysisBox.innerHTML = `
@@ -863,6 +907,18 @@ function toneFromRetreatLabel(label) {
   return "positive";
 }
 
+function renderInlineMxErrorCard(title, message) {
+  return `
+    <article class="mxCard status-error">
+      <div class="mxCardHeader">
+        <strong>${escapeHtml(title || "数据异常")}</strong>
+        <small>加载失败</small>
+      </div>
+      <p class="mxCardMessage">${escapeHtml(message || "请求失败，请稍后重试。")}</p>
+    </article>
+  `;
+}
+
 function renderAnalysisBasics() {
   if (!els.stockBasics) return;
   const stock = state.analysis?.stock;
@@ -876,7 +932,12 @@ function renderAnalysisBasics() {
   const valuationRow = mxSummaryRow("valuation");
   const companyRow = mxSummaryRow("company_profile");
   const bakBasic = stock?.bak_basic || {};
-  const loading = !!state.analysis && (!state.mxSummary || state.mxSummary.status === "loading");
+  const loading = !!state.analysis && (
+    !state.mxSummary
+    || state.mxSummary.status === "loading"
+    || !state.profileSummary
+    || state.profileSummary.status === "loading"
+  );
   const area = stock.area || bakBasic.area || "待补充";
   const inCoreRegion = isYangtzeDeltaArea(area);
 
@@ -940,11 +1001,11 @@ function loadingText(loading) {
 }
 
 function currentProfilePayload() {
-  return state.mxSummary?.status === "ok" ? state.mxSummary.data : null;
+  return state.profileSummary?.status === "ok" ? state.profileSummary.data : null;
 }
 
 function mxSummaryRow(cardKey) {
-  const cards = currentProfilePayload()?.mx_summary?.data?.cards || [];
+  const cards = state.mxSummary?.status === "ok" ? (state.mxSummary.data?.cards || []) : [];
   const card = cards.find((item) => item.key === cardKey);
   return card?.rows?.[0] || null;
 }
@@ -2146,6 +2207,7 @@ function renderReview() {
   renderReviewLimitLists();
   renderReviewLadder();
   renderReviewFocus();
+  renderReviewEmotionCyclePanel();
   renderReviewBoards();
   renderReviewStocks();
 }
@@ -2371,7 +2433,6 @@ function renderReviewFocus() {
               : ""
       }
     </article>
-    ${renderReviewEmotionCycle(review, aiReview)}
     ${
       indices.length
         ? `<section class="reviewIndexStrip">
@@ -2413,6 +2474,24 @@ function renderReviewFocus() {
       </ul>
     </article>
   `;
+}
+
+function renderReviewEmotionCyclePanel() {
+  const review = state.review.overview;
+  if (!els.reviewEmotionCycleBox) return;
+  if (!review || review.status === "loading") {
+    els.reviewEmotionCycleBox.className = "reviewFocusStack";
+    els.reviewEmotionCycleBox.innerHTML = `<div class="empty">正在生成情绪周期图...</div>`;
+    return;
+  }
+  if (review.status === "error") {
+    els.reviewEmotionCycleBox.className = "reviewFocusStack";
+    els.reviewEmotionCycleBox.innerHTML = `<div class="mxError">${escapeHtml(review.message || "情绪周期图加载失败。")}</div>`;
+    return;
+  }
+  const aiReview = review.ai_review?.status === "ok" ? review.ai_review.analysis || {} : null;
+  els.reviewEmotionCycleBox.className = "reviewFocusStack";
+  els.reviewEmotionCycleBox.innerHTML = renderReviewEmotionCycle(review, aiReview);
 }
 
 function renderReviewEmotionCycle(review, aiReview) {
@@ -2547,15 +2626,26 @@ function renderReviewBoards() {
   els.reviewBoardsBox.className = "reviewList";
   els.reviewBoardsBox.innerHTML = items
     .map(
-      (item) => `
+      (item) => {
+        const metaParts = [
+          `涨停 ${intValue(item.limit_count)} 家`,
+          intValue(item.count) > 0
+            ? `板块样本 ${intValue(item.count)} 家`
+            : intValue(item.chain_count) > 0
+            ? `连板 ${intValue(item.chain_count)} 家`
+            : (item.up_stat ? `高标 ${escapeHtml(item.up_stat)}` : ""),
+          `涨幅 ${formatSignedPercentValue(item.pct_chg)}`,
+        ].filter(Boolean);
+        return `
         <article class="reviewFocusItem">
           <strong>${escapeHtml(item.name || "")} <span class="reviewBadge">第 ${intValue(item.rank)} 名</span></strong>
-          <div class="reviewFocusMeta">涨停 ${intValue(item.limit_count)} 家 · 板块样本 ${intValue(item.count)} 家 · 涨幅 ${formatSignedPercentValue(item.pct_chg)}</div>
+          <div class="reviewFocusMeta">${metaParts.join(" · ")}</div>
           <p>${escapeHtml(item.watch_reason || "")}</p>
           ${item.ai_action ? `<p class="reviewActionText">${escapeHtml(item.ai_action)}</p>` : ""}
           ${item.ai_reason ? `<p>${escapeHtml(item.ai_reason)}</p>` : ""}
         </article>
-      `
+      `;
+      }
     )
     .join("");
 }
