@@ -97,16 +97,20 @@
 
             <aside class="sidePanel">
               <nav id="sideTabs" class="sideTabs" aria-label="右侧信息切换">
-                <button type="button" class="active" data-side-panel="levelPanel">联动</button>
+                <button type="button" class="active" data-side-panel="eventPanel">事件</button>
+                <button type="button" data-side-panel="levelPanel">联动</button>
                 <button type="button" data-side-panel="dataPanel">数据</button>
                 <button type="button" data-side-panel="leaderPanel">龙头</button>
                 <button type="button" data-side-panel="trendPanel">走势</button>
                 <button type="button" data-side-panel="riskPanel">风控</button>
                 <button type="button" data-side-panel="reviewPanel">复盘</button>
-                <button type="button" data-side-panel="eventPanel">事件催化</button>
                 <button type="button" data-side-panel="centerPanel">中枢</button>
               </nav>
-              <section id="levelPanel" class="panel sidePane active">
+              <section id="eventPanel" class="panel sidePane active">
+                <h2>事件</h2>
+                <div id="eventNewsBox" class="empty">分析完成后通过妙想检索这只股票的公告、研报和机构观点。</div>
+              </section>
+              <section id="levelPanel" class="panel sidePane">
                 <h2>级别联动</h2>
                 <div id="levelContext" class="empty">暂无级别结构</div>
               </section>
@@ -129,10 +133,6 @@
               <section id="reviewPanel" class="panel sidePane">
                 <h2>信号复盘</h2>
                 <div id="backtestBox" class="empty">暂无复盘统计</div>
-              </section>
-              <section id="eventPanel" class="panel sidePane">
-                <h2>事件催化</h2>
-                <div id="eventNewsBox" class="empty">分析完成后通过妙想检索这只股票的公告、研报和机构观点。</div>
               </section>
               <section id="centerPanel" class="panel sidePane">
                 <h2>最近中枢</h2>
@@ -541,6 +541,14 @@
           </form>
         </div>
       </section>
+    </div>
+
+    <div id="analysisJumpLoading" class="analysisJumpLoading" hidden aria-live="polite" aria-busy="true">
+      <div class="analysisJumpLoadingCard">
+        <div class="analysisJumpSpinner" aria-hidden="true"></div>
+        <strong id="analysisJumpLoadingText">智能分析中</strong>
+        <p>正在切换到股票分析并拉取结构数据，请稍候。</p>
+      </div>
     </div>
 
     <script src="{{ url_for('static', filename='app.js', v=static_version) }}"></script>

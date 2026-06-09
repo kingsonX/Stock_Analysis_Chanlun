@@ -3575,6 +3575,71 @@ body.modalOpen {
   width: 62%;
 }
 
+body.hasAnalysisJumpLoading {
+  overflow: hidden;
+}
+
+.analysisJumpLoading {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(8, 16, 24, 0.32);
+  backdrop-filter: blur(3px);
+}
+
+.analysisJumpLoading[hidden] {
+  display: none !important;
+}
+
+.analysisJumpLoadingCard {
+  min-width: 240px;
+  max-width: 320px;
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  padding: 24px 22px;
+  border: 1px solid rgba(25, 118, 164, 0.18);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 18px 44px rgba(15, 23, 42, 0.18);
+  text-align: center;
+}
+
+.analysisJumpLoadingCard strong {
+  font-size: 18px;
+  color: var(--ink);
+}
+
+.analysisJumpLoadingCard p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+.analysisJumpSpinner {
+  width: 42px;
+  height: 42px;
+  border-radius: 999px;
+  border: 3px solid rgba(25, 118, 164, 0.16);
+  border-top-color: var(--accent);
+  animation: analysisJumpSpin 0.9s linear infinite;
+}
+
+@keyframes analysisJumpSpin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 table {
   width: 100%;
   border-collapse: collapse;

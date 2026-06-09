@@ -831,14 +831,41 @@ class SmartPickerService:
 
             roles: dict[str, dict[str, Any]] = {}
             dragon_key = dragon["ts_code"] or dragon["symbol"] or dragon["name"]
-            roles[dragon_key] = {
-                "label": "龙头候选",
-                "tone": "positive" if tier_label == "主流热点" else "neutral",
-                "score": 84 if tier_label == "主流热点" else 70,
-                "summary": f"{industry}样本中强度居前，辨识度最高，适合作为板块风向标观察。",
-            }
+            dragon_is_limit = dragon["change_pct_value"] >= 9.5
+            dragon_is_front = dragon["change_pct_value"] >= 7
+            dragon_has_takeover = dragon["amount_value"] >= 1_000_000_000 or dragon["turnover_value"] >= 5
+            dragon_has_theme_depth = group["strong_count"] >= 2 and group["active_count"] >= 2
+            dragon_has_mainstream_heat = group["limit_up_count"] >= 1 or avg_change >= 7.5
+            dragon_has_clear_lead = dragon_is_limit or dragon["change_pct_value"] >= max(7.0, avg_change + 1.2)
+            if (
+                tier_label == "主流热点"
+                and dragon_has_theme_depth
+                and dragon_has_mainstream_heat
+                and dragon_has_takeover
+                and dragon_has_clear_lead
+            ):
+                roles[dragon_key] = {
+                    "label": "龙头候选",
+                    "tone": "positive",
+                    "score": 86,
+                    "summary": f"{industry}具备主流合力、前排辨识度和承接容量，先按龙头候选跟踪。",
+                }
+            elif tier_label == "主流热点" and dragon_has_takeover and (dragon_is_front or group["strong_count"] >= 2):
+                roles[dragon_key] = {
+                    "label": "前排助攻",
+                    "tone": "neutral",
+                    "score": 68,
+                    "summary": f"{industry}强度在前，但主流合力或承接确认还不够，先按前排助攻观察。",
+                }
+            elif tier_label == "次主流" and dragon_has_takeover and dragon_is_front:
+                roles[dragon_key] = {
+                    "label": "前排助攻",
+                    "tone": "neutral",
+                    "score": 62,
+                    "summary": f"{industry}有一定辨识度，但题材还没走成主流，先当次主流前排看待。",
+                }
             capacity_key = capacity_core["ts_code"] or capacity_core["symbol"] or capacity_core["name"]
-            if capacity_key not in roles:
+            if capacity_key not in roles and capacity_core["amount_value"] >= 1_000_000_000 and group["active_count"] >= 1:
                 roles[capacity_key] = {
                     "label": "容量中军",
                     "tone": "positive" if capacity_core["amount_value"] >= 1_000_000_000 else "neutral",
@@ -848,6 +875,8 @@ class SmartPickerService:
             for front in front_runners[1:3]:
                 front_key = front["ts_code"] or front["symbol"] or front["name"]
                 if front_key in roles:
+                    continue
+                if tier_label not in {"主流热点", "次主流"} or front["change_pct_value"] < 5:
                     continue
                 roles[front_key] = {
                     "label": "前排助攻",
@@ -883,25 +912,40 @@ class SmartPickerService:
         groups_by_industry = {item["industry"]: item for item in prepared}
         leaders = []
         for item in prepared[:6]:
+            dragon_key = item["dragon"]["ts_code"] or item["dragon"]["symbol"] or item["dragon"]["name"]
+            dragon_role = (item.get("roles") or {}).get(dragon_key) or {
+                "label": "跟风观察",
+                "tone": "neutral",
+                "summary": item["summary"],
+            }
             leaders.append(
                 {
                     "industry": item["industry"],
                     "tier_label": item["tier_label"],
-                    "tone": item["tone"],
-                    "role": "龙头候选",
+                    "tone": dragon_role.get("tone", item["tone"]),
+                    "role": dragon_role.get("label", "跟风观察"),
                     "stock": item["dragon"],
-                    "summary": item["summary"],
+                    "summary": dragon_role.get("summary", item["summary"]),
                 }
             )
-            if item["capacity_core"]["symbol"] != item["dragon"]["symbol"]:
+            capacity_key = item["capacity_core"]["ts_code"] or item["capacity_core"]["symbol"] or item["capacity_core"]["name"]
+            capacity_role = (item.get("roles") or {}).get(capacity_key)
+            if (
+                capacity_role
+                and capacity_role.get("label") == "容量中军"
+                and item["capacity_core"]["symbol"] != item["dragon"]["symbol"]
+            ):
                 leaders.append(
                     {
                         "industry": item["industry"],
                         "tier_label": item["tier_label"],
-                        "tone": item["tone"],
+                        "tone": capacity_role.get("tone", item["tone"]),
                         "role": "容量中军",
                         "stock": item["capacity_core"],
-                        "summary": f"{item['industry']}里的容量承接代表，适合观察分歧后的承接力度。",
+                        "summary": capacity_role.get(
+                            "summary",
+                            f"{item['industry']}里的容量承接代表，适合观察分歧后的承接力度。",
+                        ),
                     }
                 )
 
@@ -1394,7 +1438,7 @@ def _candidate_leader(stock: dict[str, Any], row: dict[str, Any], theme_context:
     if not group:
         return {
             "score": 28,
-            "label": "非核心观察",
+            "label": "跟风观察",
             "tone": "caution",
             "summary": f"{industry}当前不在热点前排，先别把它当成龙头或核心容量来处理。",
         }
@@ -1409,10 +1453,10 @@ def _candidate_leader(stock: dict[str, Any], row: dict[str, Any], theme_context:
         return role
 
     return {
-        "score": 48 if group.get("tier_label") != "非主流" else 30,
+        "score": 44 if group.get("tier_label") in {"主流热点", "次主流"} else 30,
         "label": "跟风观察",
-        "tone": "neutral" if group.get("tier_label") != "非主流" else "caution",
-        "summary": f"{industry}有热点样本，但这只票更像跟随股，适合看承接，不适合先给龙头溢价。",
+        "tone": "neutral" if group.get("tier_label") in {"主流热点", "次主流"} else "caution",
+        "summary": f"{industry}有热点样本，但这只票缺少前排辨识度或承接确认，先按跟风观察处理。",
     }
 
 

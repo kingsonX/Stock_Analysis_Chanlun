@@ -2,7 +2,7 @@ import unittest
 
 import pandas as pd
 
-from chanlun_app.smart_picker import MXWatchlistProvider, SmartPickerService
+from chanlun_app.smart_picker import MXWatchlistProvider, SmartPickerService, _candidate_leader
 from chanlun_app.data_provider import DataProviderError
 from chanlun_app.mx_provider import MXProviderError
 
@@ -164,6 +164,21 @@ class TokenlessKlineDataClient(FakeDataClient):
 class MissingStockDataClient(TokenlessKlineDataClient):
     def resolve_stock(self, query):
         raise DataProviderError("缺少 TUSHARE_TOKEN 环境变量，请先配置 Tushare Pro Token。", 500)
+
+
+class SparseThemeDataClient(FakeDataClient):
+    def __init__(self):
+        super().__init__()
+        extra_records = [
+            FakeStock(symbol="300001", name="易事特", ts_code="300001.SZ", industry="电气设备"),
+            FakeStock(symbol="300002", name="节能铁汉", ts_code="300002.SZ", industry="电气设备"),
+            FakeStock(symbol="300003", name="丰光精密", ts_code="300003.SZ", industry="电气设备"),
+            FakeStock(symbol="300004", name="金雷股份", ts_code="300004.SZ", industry="电气设备"),
+        ]
+        for stock in extra_records:
+            self.records[stock.symbol] = stock
+            self.records[stock.ts_code] = stock
+            self.records[stock.name] = stock
 
 
 class FakeScreenProvider:
@@ -357,6 +372,32 @@ class SmartPickerServiceTest(unittest.TestCase):
         self.assertEqual(result["candidates"][0]["quote"]["amount_value"], 1600000000.0)
         self.assertEqual(result["candidates"][0]["emotion"]["label"], "主流热点")
         self.assertEqual(result["candidates"][0]["leader"]["label"], "龙头候选")
+        self.assertEqual(result["leader_board"][0]["role"], "龙头候选")
+
+    def test_leader_label_requires_theme_depth_and_takeover(self):
+        service = SmartPickerService(
+            data_client=SparseThemeDataClient(),
+            mx_data_provider=None,
+            news_provider=FakeNewsProvider(),
+            screen_provider=FakeScreenProvider(),
+            watchlist_provider=self.watchlist,
+            trading_profile=FakeProfileService(),
+        )
+        rows = [
+            {"股票代码": "300001", "股票简称": "易事特", "涨跌幅": "20.0%", "成交额": "9.2亿", "换手率": "19.0%"},
+            {"股票代码": "300002", "股票简称": "节能铁汉", "涨跌幅": "19.8%", "成交额": "0.8亿", "换手率": "22.6%"},
+            {"股票代码": "300003", "股票简称": "丰光精密", "涨跌幅": "29.9%", "成交额": "0.4亿", "换手率": "19.2%"},
+            {"股票代码": "300004", "股票简称": "金雷股份", "涨跌幅": "11.0%", "成交额": "0.7亿", "换手率": "8.5%"},
+        ]
+
+        theme_context = service._build_theme_context(rows)
+        stock = service.data_client.resolve_stock("300003.SZ").as_dict()
+        leader = _candidate_leader(stock, rows[2], theme_context)
+
+        self.assertEqual(theme_context["groups"][0]["active_count"], 0)
+        self.assertEqual(leader["label"], "前排助攻")
+        self.assertIn("主流合力或承接确认还不够", leader["summary"])
+        self.assertEqual(theme_context["leaders"][0]["role"], "前排助攻")
 
     def test_screen_supports_board_scope(self):
         result = self.service.screen_with_board(

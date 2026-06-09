@@ -188,6 +188,8 @@ const els = {
   pickerEastmoneyGroupInput: document.querySelector("#pickerEastmoneyGroupInput"),
   pickerEastmoneyTargetsInput: document.querySelector("#pickerEastmoneyTargetsInput"),
   pickerEastmoneyFeedback: document.querySelector("#pickerEastmoneyFeedback"),
+  analysisJumpLoading: document.querySelector("#analysisJumpLoading"),
+  analysisJumpLoadingText: document.querySelector("#analysisJumpLoadingText"),
 };
 
 let searchTimer = null;
@@ -242,7 +244,9 @@ function hideSuggestions() {
   els.suggestions.innerHTML = "";
 }
 
-async function loadAnalysis() {
+async function loadAnalysis(options = {}) {
+  const showJumpLoading = options.showJumpLoading === true;
+  const jumpLoadingText = options.jumpLoadingText || "智能分析中";
   const query = state.selectedStock?.ts_code || els.stockInput.value.trim();
   if (!query) {
     showError("请输入股票名称或代码。");
@@ -256,6 +260,9 @@ async function loadAnalysis() {
   if (els.startDate.value) params.set("start_date", els.startDate.value);
   if (els.endDate.value) params.set("end_date", els.endDate.value);
 
+  if (showJumpLoading) {
+    setAnalysisJumpLoading(true, jumpLoadingText);
+  }
   setLoading(true);
   state.mxRequestId += 1;
   state.mxSummary = null;
@@ -271,13 +278,16 @@ async function loadAnalysis() {
     els.stockInput.value = `${data.stock.name} ${data.stock.symbol}`;
     els.statusText.textContent = `${levelLabel(state.level)} · ${formatDate(data.query.start_date)} 至 ${formatDate(data.query.end_date)}`;
     hideError();
-    renderAll();
     loadMxSummary(data.stock);
     loadEventNews(data.stock);
+    renderAll();
   } catch (err) {
     showError(err.message);
   } finally {
     setLoading(false);
+    if (showJumpLoading) {
+      setAnalysisJumpLoading(false);
+    }
   }
 }
 
@@ -362,7 +372,7 @@ async function loadEventNews(stock) {
   try {
     const data = await fetchJson(`/api/mx/news?ts_code=${encodeURIComponent(stock.ts_code || "")}&name=${encodeURIComponent(stock.name || "")}`, {
       timeoutMs: 8000,
-      timeoutMessage: "妙想事件催化加载超时，请稍后重试。",
+      timeoutMessage: "妙想事件加载超时，请稍后重试。",
     });
     if (requestId !== state.eventNewsRequestId) return;
     state.eventNews = data;
@@ -376,6 +386,34 @@ async function loadEventNews(stock) {
 function setLoading(isLoading) {
   els.refreshBtn.disabled = isLoading;
   els.refreshBtn.textContent = isLoading ? "分析中" : "分析";
+}
+
+function setAnalysisJumpLoading(isVisible, text = "智能分析中") {
+  if (!els.analysisJumpLoading) return;
+  if (els.analysisJumpLoadingText) {
+    els.analysisJumpLoadingText.textContent = text;
+  }
+  els.analysisJumpLoading.hidden = !isVisible;
+  document.body.classList.toggle("hasAnalysisJumpLoading", isVisible);
+}
+
+function startAnalysisFlow(options = {}) {
+  const loadingText = options.loadingText || "智能分析中";
+  setAnalysisJumpLoading(true, loadingText);
+  loadAnalysis({ showJumpLoading: true, jumpLoadingText: loadingText });
+}
+
+async function withPageLoading(loadingText, task) {
+  setAnalysisJumpLoading(true, loadingText);
+  try {
+    return await task();
+  } finally {
+    setAnalysisJumpLoading(false);
+  }
+}
+
+function startSmartPickerFlow(task) {
+  return withPageLoading("智能选股中", task);
 }
 
 function switchMainPage(targetId) {
@@ -658,7 +696,7 @@ function renderEventCatalyst() {
     els.eventNewsBox.innerHTML = `
       <article class="mxCard loading">
         <div class="mxCardHeader">
-          <strong>事件催化</strong>
+          <strong>事件</strong>
           <small>加载中</small>
         </div>
         <div class="mxSkeleton"></div>
@@ -670,12 +708,12 @@ function renderEventCatalyst() {
 
   if (news.status === "error") {
     els.eventNewsBox.className = "mxError";
-    els.eventNewsBox.textContent = news.message || "妙想事件催化加载失败。";
+    els.eventNewsBox.textContent = news.message || "妙想事件加载失败。";
     return;
   }
 
   els.eventNewsBox.className = "mxStack";
-  els.eventNewsBox.innerHTML = renderNewsDigest(news) || `<div class="empty">未检索到相关事件催化。</div>`;
+  els.eventNewsBox.innerHTML = renderNewsDigest(news) || `<div class="empty">未检索到相关事件。</div>`;
 }
 
 function renderCenters() {
@@ -1624,6 +1662,13 @@ function openPickerEastmoneyModal() {
   }, 0);
 }
 
+function openPickerEastmoneyModalWithLoading() {
+  return startSmartPickerFlow(async () => {
+    await new Promise((resolve) => window.setTimeout(resolve, 120));
+    openPickerEastmoneyModal();
+  });
+}
+
 function closePickerEastmoneyModal() {
   if (!els.pickerEastmoneyModal) return;
   els.pickerEastmoneyModal.hidden = true;
@@ -1674,26 +1719,28 @@ async function submitPickerEastmoneyBatch(action) {
   }
 }
 
-function openCandidateInAnalysis(stock) {
+function openCandidateInAnalysis(stock, options = {}) {
   if (!stock) return;
   state.selectedStock = { ts_code: stock.ts_code };
   els.stockInput.value = `${stock.name} ${stock.symbol}`;
   setAnalysisLevel(els.pickerLevel?.value || "daily");
+  const loadingText = options.loadingText || "智能分析中";
   switchMainPage("analysisPage");
-  loadAnalysis();
+  startAnalysisFlow({ loadingText });
 }
 
-function openReviewStockInAnalysis(rowOrPayload) {
+function openReviewStockInAnalysis(rowOrPayload, options = {}) {
   const row = rowOrPayload || {};
   const tsCode = resolveReviewStockCode(row);
   const name = String(row.name || row.exalter || row.query_name || "").trim();
+  const loadingText = options.loadingText || "智能分析中";
   if (tsCode) {
     const symbol = String(tsCode).split(".")[0] || "";
     openCandidateInAnalysis({
       ts_code: tsCode,
       name: name || symbol,
       symbol,
-    });
+    }, { loadingText });
     return;
   }
   if (!name) return;
@@ -1701,7 +1748,7 @@ function openReviewStockInAnalysis(rowOrPayload) {
   els.stockInput.value = name;
   setAnalysisLevel(els.pickerLevel?.value || "daily");
   switchMainPage("analysisPage");
-  loadAnalysis();
+  startAnalysisFlow({ loadingText });
 }
 
 function resolveReviewStockCode(row) {
@@ -5429,7 +5476,7 @@ function bindEvents() {
     if (event.key === "Enter") {
       hideSuggestions();
       state.selectedStock = null;
-      loadAnalysis();
+      startAnalysisFlow();
     }
   });
 
@@ -5441,7 +5488,7 @@ function bindEvents() {
     state.selectedStock = { ts_code: code };
     els.stockInput.value = text[1] ? `${text[1].trim()} ${text[0].trim()}` : code;
     hideSuggestions();
-    loadAnalysis();
+    startAnalysisFlow();
   });
 
   document.addEventListener("click", (event) => {
@@ -5454,8 +5501,8 @@ function bindEvents() {
     switchMainPage(button.dataset.page);
   });
 
-  els.pickerOverviewBtn?.addEventListener("click", loadPickerOverview);
-  els.pickerWatchlistBtn?.addEventListener("click", loadPickerWatchlist);
+  els.pickerOverviewBtn?.addEventListener("click", () => startSmartPickerFlow(() => loadPickerOverview()));
+  els.pickerWatchlistBtn?.addEventListener("click", () => startSmartPickerFlow(() => loadPickerWatchlist()));
   els.watchtowerRefreshBtn?.addEventListener("click", () => loadWatchtowerOverview(1));
   els.watchtowerSearchBtn?.addEventListener("click", () => loadWatchtowerOverview(1));
   els.watchtowerQueryInput?.addEventListener("keydown", (event) => {
@@ -5465,12 +5512,12 @@ function bindEvents() {
     }
   });
   els.reviewRefreshBtn?.addEventListener("click", loadReviewOverview);
-  els.pickerRunBtn?.addEventListener("click", () => runSmartPicker("combined"));
-  els.pickerEastmoneyBatchBtn?.addEventListener("click", openPickerEastmoneyModal);
-  els.pickerRunConditionBtn?.addEventListener("click", () => runSmartPicker("condition"));
-  els.pickerRunDcBtn?.addEventListener("click", () => runSmartPicker("dc"));
-  els.pickerRunTdxBtn?.addEventListener("click", () => runSmartPicker("tdx"));
-  els.pickerRunThsBtn?.addEventListener("click", () => runSmartPicker("ths"));
+  els.pickerRunBtn?.addEventListener("click", () => startSmartPickerFlow(() => runSmartPicker("combined")));
+  els.pickerEastmoneyBatchBtn?.addEventListener("click", openPickerEastmoneyModalWithLoading);
+  els.pickerRunConditionBtn?.addEventListener("click", () => startSmartPickerFlow(() => runSmartPicker("condition")));
+  els.pickerRunDcBtn?.addEventListener("click", () => startSmartPickerFlow(() => runSmartPicker("dc")));
+  els.pickerRunTdxBtn?.addEventListener("click", () => startSmartPickerFlow(() => runSmartPicker("tdx")));
+  els.pickerRunThsBtn?.addEventListener("click", () => startSmartPickerFlow(() => runSmartPicker("ths")));
 
   ["dc", "tdx", "ths"].forEach((source) => {
     const dom = pickerBoardDom(source);
@@ -5549,7 +5596,7 @@ function bindEvents() {
   });
   els.pickerQueryInput?.addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
-      runSmartPicker("condition");
+      startSmartPickerFlow(() => runSmartPicker("condition"));
     }
   });
 
@@ -5705,7 +5752,7 @@ function bindEvents() {
     if (state.analysis || state.selectedStock) loadAnalysis();
   });
 
-  els.refreshBtn.addEventListener("click", loadAnalysis);
+  els.refreshBtn.addEventListener("click", () => startAnalysisFlow());
   els.analysisWatchlistBtn?.addEventListener("click", addCurrentAnalysisToWatchlist);
 
   els.showStrokes.addEventListener("change", () => {
