@@ -198,19 +198,26 @@ class FakePickerClient:
             "news": {"status": "ok", "items": []},
         }
 
-    def screen(self, query_text="", level="daily", limit=6):
-        return self.screen_with_scopes(query_text=query_text, level=level, limit=limit, board_filters=None)
+    def screen(self, query_text="", level="daily", limit=6, screen_filters=None):
+        return self.screen_with_scopes(query_text=query_text, level=level, limit=limit, board_filters=None, screen_filters=screen_filters)
 
-    def screen_with_board(self, query_text="", level="daily", limit=6, board_filter=None):
+    def screen_with_board(self, query_text="", level="daily", limit=6, board_filter=None, screen_filters=None):
         return self.screen_with_scopes(
             query_text=query_text,
             level=level,
             limit=limit,
             board_filters=[board_filter] if board_filter else None,
+            screen_filters=screen_filters,
         )
 
-    def screen_with_scopes(self, query_text="", level="daily", limit=6, board_filters=None):
-        self.last_screen = {"query_text": query_text, "level": level, "limit": limit, "board_filters": board_filters or []}
+    def screen_with_scopes(self, query_text="", level="daily", limit=6, board_filters=None, screen_filters=None):
+        self.last_screen = {
+            "query_text": query_text,
+            "level": level,
+            "limit": limit,
+            "board_filters": board_filters or [],
+            "screen_filters": screen_filters or {},
+        }
         return {
             "status": "ok",
             "query_text": query_text,
@@ -240,8 +247,8 @@ class FakePickerClient:
             "errors": [],
         }
 
-    def screen_watchlist(self, level="daily", limit=None):
-        self.last_watchlist_screen = {"level": level, "limit": limit}
+    def screen_watchlist(self, level="daily", limit=None, screen_filters=None):
+        self.last_watchlist_screen = {"level": level, "limit": limit, "screen_filters": screen_filters or {}}
         payload = self.screen_with_scopes(query_text="", level=level, limit=limit or 6, board_filters=None)
         payload["source_type"] = "watchlist"
         payload["description"] = "已把东方财富自选股同步为候选池。"
@@ -701,16 +708,41 @@ class ApiTest(unittest.TestCase):
         used_sources = [item["source"] for item in self.fake_picker.last_screen["board_filters"] if item.get("name") or item.get("ts_code")]
         self.assertEqual(used_sources, ["tdx", "ths"])
 
+    def test_smart_picker_screen_passes_optional_filters(self):
+        response = self.app.post(
+            "/api/smart-picker/screen",
+            json={
+                "query_text": "小金属",
+                "level": "daily",
+                "limit": 200,
+                "technical_shape": "ma_bullish",
+                "market_scope": "star",
+                "turnover_min": 3,
+                "turnover_max": 18,
+                "market_cap_min": 80,
+                "market_cap_max": 500,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        filters = self.fake_picker.last_screen["screen_filters"]
+        self.assertEqual(self.fake_picker.last_screen["limit"], 200)
+        self.assertEqual(filters["technical_shape"], "ma_bullish")
+        self.assertEqual(filters["market_scope"], "star")
+        self.assertEqual(filters["turnover_min"], 3)
+        self.assertEqual(filters["market_cap_max"], 500)
+
     def test_smart_picker_screen_watchlist_source(self):
         response = self.app.post(
             "/api/smart-picker/screen",
-            json={"source_type": "watchlist", "level": "weekly", "limit_all": True},
+            json={"source_type": "watchlist", "level": "weekly", "limit_all": True, "market_scope": "sz"},
         )
 
         self.assertEqual(response.status_code, 200)
         data = response.get_json()
         self.assertEqual(self.fake_picker.last_watchlist_screen["level"], "weekly")
         self.assertIsNone(self.fake_picker.last_watchlist_screen["limit"])
+        self.assertEqual(self.fake_picker.last_watchlist_screen["screen_filters"]["market_scope"], "sz")
         self.assertEqual(data["source_type"], "watchlist")
 
     def test_smart_picker_candidate_detail(self):

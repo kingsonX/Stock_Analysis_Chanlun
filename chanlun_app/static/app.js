@@ -50,6 +50,7 @@ const state = {
     thsMatches: [],
     selectedThsBoard: null,
     thsSearchRequestId: 0,
+    screenFilters: {},
     loaded: false,
   },
   review: {
@@ -128,6 +129,12 @@ const els = {
   pickerRunThsBtn: document.querySelector("#pickerRunThsBtn"),
   pickerLevel: document.querySelector("#pickerLevel"),
   pickerLimit: document.querySelector("#pickerLimit"),
+  pickerTechnicalShape: document.querySelector("#pickerTechnicalShape"),
+  pickerScreenMarket: document.querySelector("#pickerScreenMarket"),
+  pickerTurnoverMin: document.querySelector("#pickerTurnoverMin"),
+  pickerTurnoverMax: document.querySelector("#pickerTurnoverMax"),
+  pickerMarketCapMin: document.querySelector("#pickerMarketCapMin"),
+  pickerMarketCapMax: document.querySelector("#pickerMarketCapMax"),
   pickerRunBtn: document.querySelector("#pickerRunBtn"),
   pickerEastmoneyBatchBtn: document.querySelector("#pickerEastmoneyBatchBtn"),
   pickerMarketScopeFilter: document.querySelector("#pickerMarketScopeFilter"),
@@ -414,6 +421,10 @@ async function withPageLoading(loadingText, task) {
 
 function startSmartPickerFlow(task) {
   return withPageLoading("智能选股中", task);
+}
+
+function startReviewFlow(task) {
+  return withPageLoading("智能复盘中", task);
 }
 
 function switchMainPage(targetId) {
@@ -1319,7 +1330,7 @@ function ensureReviewLoaded() {
   }
   if (state.review.loaded) return;
   state.review.loaded = true;
-  loadReviewOverview();
+  startReviewFlow(() => loadReviewOverview());
 }
 
 function syncPickerFiltersFromControls() {
@@ -1330,6 +1341,64 @@ function syncPickerFiltersFromControls() {
   state.smartPicker.overallFilter = els.pickerOverallFilter?.value || "all";
   state.smartPicker.sortBy = els.pickerSortBy?.value || "overall_score";
   state.smartPicker.sortDirection = els.pickerSortDirection?.value || "desc";
+}
+
+function pickerOptionalNumber(input) {
+  const text = String(input?.value || "").trim();
+  if (!text) return "";
+  const value = Number(text);
+  return Number.isFinite(value) ? value : "";
+}
+
+function readPickerScreenFilters() {
+  return {
+    technical_shape: els.pickerTechnicalShape?.value || "all",
+    market_scope: els.pickerScreenMarket?.value || "all",
+    turnover_min: pickerOptionalNumber(els.pickerTurnoverMin),
+    turnover_max: pickerOptionalNumber(els.pickerTurnoverMax),
+    market_cap_min: pickerOptionalNumber(els.pickerMarketCapMin),
+    market_cap_max: pickerOptionalNumber(els.pickerMarketCapMax),
+  };
+}
+
+function pickerScreenFilterPayload() {
+  const filters = readPickerScreenFilters();
+  return {
+    technical_shape: filters.technical_shape,
+    market_scope: filters.market_scope,
+    turnover_min: filters.turnover_min,
+    turnover_max: filters.turnover_max,
+    market_cap_min: filters.market_cap_min,
+    market_cap_max: filters.market_cap_max,
+  };
+}
+
+function pickerScreenFilterSummary(filters = state.smartPicker.screenFilters || {}) {
+  const parts = [];
+  const technicalLabels = {
+    ma_bullish: "均线多头",
+    laoyatou: "老鸭头",
+    boll_open: "布林开口",
+  };
+  if (filters.technical_shape && filters.technical_shape !== "all") {
+    parts.push(`技术=${technicalLabels[filters.technical_shape] || "已限定"}`);
+  }
+  if (filters.market_scope && filters.market_scope !== "all") {
+    parts.push(`市场=${pickerMarketScopeLabel(filters.market_scope)}`);
+  }
+  if (filters.turnover_min !== "" && filters.turnover_min !== null && filters.turnover_min !== undefined) {
+    parts.push(`换手≥${filters.turnover_min}%`);
+  }
+  if (filters.turnover_max !== "" && filters.turnover_max !== null && filters.turnover_max !== undefined) {
+    parts.push(`换手≤${filters.turnover_max}%`);
+  }
+  if (filters.market_cap_min !== "" && filters.market_cap_min !== null && filters.market_cap_min !== undefined) {
+    parts.push(`市值≥${filters.market_cap_min}亿`);
+  }
+  if (filters.market_cap_max !== "" && filters.market_cap_max !== null && filters.market_cap_max !== undefined) {
+    parts.push(`市值≤${filters.market_cap_max}亿`);
+  }
+  return parts.join("，");
 }
 
 async function loadPickerOverview() {
@@ -1358,6 +1427,8 @@ async function loadPickerOverview() {
 async function loadPickerWatchlist() {
   const requestId = ++state.smartPicker.screenRequestId;
   const level = els.pickerLevel?.value || "daily";
+  const screenFilters = pickerScreenFilterPayload();
+  state.smartPicker.screenFilters = screenFilters;
   state.smartPicker.screen = { status: "loading", source_type: "watchlist" };
   state.smartPicker.detail = null;
   state.smartPicker.ai = null;
@@ -1375,17 +1446,20 @@ async function loadPickerWatchlist() {
         source_type: "watchlist",
         level,
         limit_all: true,
+        ...screenFilters,
       }),
     });
     if (requestId !== state.smartPicker.screenRequestId) return;
     state.smartPicker.screen = data;
+    state.smartPicker.screenFilters = data.filters || screenFilters;
     state.smartPicker.watchlist = data.watchlist || null;
     const count = (data.candidates || []).length;
     const total = data.total || data.source_total || count;
+    const filterText = pickerScreenFilterSummary(data.filters || screenFilters);
     setPickerStatus(
       count
-        ? `已把 ${total} 只东财自选同步到候选池，当前生成 ${count} 只结构分析。`
-        : "东财自选已同步，但当前没有生成可用候选。"
+        ? `已把 ${total} 只东财自选同步到候选池，当前生成 ${count} 只结构分析${filterText ? `（${filterText}）` : ""}。`
+        : `东财自选已同步，但当前没有生成可用候选${filterText ? `（${filterText}）` : ""}。`
     );
   } catch (err) {
     if (requestId !== state.smartPicker.screenRequestId) return;
@@ -1468,10 +1542,13 @@ function pickerBoardRequestPayload(source, board) {
 
 async function runSmartPicker(mode = "combined") {
   const queryText = els.pickerQueryInput?.value.trim() || "";
+  const screenFilters = pickerScreenFilterPayload();
+  state.smartPicker.screenFilters = screenFilters;
   const payload = {
     query_text: "",
     level: els.pickerLevel?.value || "daily",
     limit: Number(els.pickerLimit?.value || 20),
+    ...screenFilters,
   };
   const selectedBoards = [];
 
@@ -1525,14 +1602,16 @@ async function runSmartPicker(mode = "combined") {
     });
     if (requestId !== state.smartPicker.screenRequestId) return;
     state.smartPicker.screen = data;
+    state.smartPicker.screenFilters = data.filters || screenFilters;
     const count = (data.candidates || []).length;
     const marketTotal = data.universe?.total ? `全市场 ${data.universe.total} 只股票里` : "全市场里";
     const scopeSummary = pickerScopeSummary(data.board_filters || selectedBoards);
     const prefix = scopeSummary ? `${scopeSummary} 已载入；` : "";
+    const filterText = pickerScreenFilterSummary(data.filters || screenFilters);
     setPickerStatus(
       count
-        ? `${prefix}已从 ${marketTotal} 生成 ${count} 只结构候选，先按排序和筛选缩小观察范围。`
-        : `${prefix}筛选已完成，但当前条件下没有生成可用候选。`
+        ? `${prefix}已从 ${marketTotal} 生成 ${count} 只结构候选${filterText ? `（${filterText}）` : ""}，先按排序和筛选缩小观察范围。`
+        : `${prefix}筛选已完成，但当前条件下没有生成可用候选${filterText ? `（${filterText}）` : ""}。`
     );
   } catch (err) {
     if (requestId !== state.smartPicker.screenRequestId) return;
@@ -2783,6 +2862,12 @@ function renderReviewStockButton(label, row, className = "reviewStockLink") {
   return `<button type="button" class="${escapeHtml(className)}" data-review-open-analysis="1" data-ts-code="${escapeHtml(tsCode)}" data-name="${escapeHtml(name)}">${escapeHtml(text)}</button>`;
 }
 
+function matchesReviewKeyword(parts, keyword) {
+  if (!keyword) return false;
+  const values = Array.isArray(parts) ? parts : [parts];
+  return values.some((part) => String(part || "").toLowerCase().includes(keyword));
+}
+
 function renderReviewInstitutionModal(items, searchTerm = "", page = 1) {
   const keyword = String(searchTerm || "").trim().toLowerCase();
   const groups = groupReviewHotMoneyRecords(items);
@@ -2794,15 +2879,15 @@ function renderReviewInstitutionModal(items, searchTerm = "", page = 1) {
   const board = filtered.length
     ? `
       <div class="reviewHotMoneyBoard">
-        ${sections.map((section) => renderReviewHotMoneyCategorySection(section)).join("")}
+        ${sections.map((section) => renderReviewHotMoneyCategorySection(section, keyword)).join("")}
       </div>
     `
-    : `<div class="empty">没有匹配当前游资名称的游资明细。</div>`;
+    : `<div class="empty">没有匹配当前游资、股票名称或代码的游资明细。</div>`;
   return `
     <form class="reviewModalSearchBar" data-review-modal-search-form="hot-money">
       <label class="reviewModalSearchField">
-        <span>按游资名称搜索</span>
-        <input type="search" data-review-modal-search="hot-money" placeholder="例如：量化基金、北京帮" value="${escapeHtml(searchTerm)}" />
+        <span>按游资或股票搜索</span>
+        <input type="search" data-review-modal-search="hot-money" placeholder="例如：量化基金、北京帮、达实智能、002421" value="${escapeHtml(searchTerm)}" />
       </label>
       <div class="reviewModalSearchActions">
         <button type="submit" class="miniButton">确定</button>
@@ -2812,8 +2897,13 @@ function renderReviewInstitutionModal(items, searchTerm = "", page = 1) {
     </form>
     <div class="reviewPanelStack">
       <div class="reviewPanelMeta">
-        <small>按“机构 / 量化 / 游资”合并展示，同一游资下买入过的股票集中列出，点击股票可直接跳转到股票分析。</small>
+        <small>支持按“机构 / 量化 / 游资名称”或股票名称、代码搜索；点击股票可直接跳转到股票分析。</small>
       </div>
+      ${filtered.length ? `
+        <div class="reviewPanelMeta">
+          <small>${keyword ? "命中的股票会用红色高亮，方便你快速扫出来。" : "输入游资名或股票名后，会把命中的股票用红色高亮。"}</small>
+        </div>
+      ` : ""}
       ${board}
     </div>
   `;
@@ -2959,7 +3049,7 @@ function classifyReviewHotMoneyGroup(group) {
   return "游资";
 }
 
-function renderReviewHotMoneyCategorySection(section) {
+function renderReviewHotMoneyCategorySection(section, keyword = "") {
   return `
     <section class="reviewHotMoneyCategorySection">
       <div class="reviewHotMoneyCategoryCell">
@@ -2968,15 +3058,38 @@ function renderReviewHotMoneyCategorySection(section) {
         <span class="reviewHotMoneyCategoryNet ${Number(section.net_amount || 0) >= 0 ? "positive" : "negative"}">${formatSignedAmountShort(section.net_amount)}</span>
       </div>
       <div class="reviewHotMoneyCategoryRows">
-        ${section.groups.map((group) => renderReviewHotMoneyBoardRow(group)).join("")}
+        ${section.groups.map((group) => renderReviewHotMoneyBoardRow(group, keyword)).join("")}
       </div>
     </section>
   `;
 }
 
-function renderReviewHotMoneyBoardRow(group) {
+function splitReviewHotMoneyStocks(stocks) {
+  const list = Array.isArray(stocks) ? stocks : [];
+  const buys = list.filter((stock) => Number(stock?.net_amount || 0) >= 0);
+  const sells = list.filter((stock) => Number(stock?.net_amount || 0) < 0);
+  return [
+    {
+      key: "buy",
+      label: "净买入",
+      tone: "positive",
+      stocks: buys,
+      total: buys.reduce((sum, stock) => sum + Number(stock?.net_amount || 0), 0),
+    },
+    {
+      key: "sell",
+      label: "净卖出",
+      tone: "negative",
+      stocks: sells,
+      total: sells.reduce((sum, stock) => sum + Number(stock?.net_amount || 0), 0),
+    },
+  ].filter((section) => section.stocks.length);
+}
+
+function renderReviewHotMoneyBoardRow(group, keyword = "") {
   const positive = Number(group.net_amount || 0) >= 0;
   const stocks = Array.isArray(group.stocks) ? group.stocks : [];
+  const stockSections = splitReviewHotMoneyStocks(stocks);
   return `
     <article class="reviewHotMoneyBoardRow ${positive ? "positive" : "negative"}">
       <div class="reviewHotMoneyBoardLead">
@@ -2991,27 +3104,38 @@ function renderReviewHotMoneyBoardRow(group) {
         </div>
       </div>
       <div class="reviewHotMoneyBoardStocks">
-        ${stocks.map((stock) => renderReviewHotMoneyStockPill(stock)).join("")}
+        ${stockSections.map((section) => `
+          <section class="reviewHotMoneyStockBucket tone-${section.tone}">
+            <div class="reviewHotMoneyStockBucketHeader">
+              <strong>${section.label}</strong>
+              <small>${intValue(section.stocks.length)} 只 · ${formatSignedAmountShort(section.total)}</small>
+            </div>
+            <div class="reviewHotMoneyStockBucketGrid">
+              ${section.stocks.map((stock) => renderReviewHotMoneyStockPill(stock, keyword)).join("")}
+            </div>
+          </section>
+        `).join("")}
       </div>
     </article>
   `;
 }
 
-function renderReviewHotMoneyStockPill(stock) {
+function renderReviewHotMoneyStockPill(stock, keyword = "") {
   const tags = Array.isArray(stock?.tags) ? stock.tags.filter(Boolean) : [];
   const positive = Number(stock?.net_amount || 0) >= 0;
+  const matched = matchesReviewKeyword([stock?.name, stock?.ts_code], keyword);
   return `
-    <div class="reviewHotMoneyStockPill ${positive ? "positive" : "negative"}">
+    <div class="reviewHotMoneyStockPill ${positive ? "positive" : "negative"}${matched ? " matched" : ""}">
       <div class="reviewHotMoneyStockPillMain">
-        ${renderReviewStockButton(stock?.name || stock?.ts_code || "-", stock, "reviewStockLink board-pill")}
-        <span class="reviewHotMoneyStockPillAmount ${positive ? "positive" : "negative"}">${formatSignedAmountShort(stock?.net_amount || 0)}</span>
+        ${renderReviewStockButton(stock?.name || stock?.ts_code || "-", stock, `reviewStockLink board-pill${matched ? " matched" : ""}`)}
+        <span class="reviewHotMoneyStockPillAmount ${positive ? "positive" : "negative"}${matched ? " matched" : ""}">${formatSignedAmountShort(stock?.net_amount || 0)}</span>
       </div>
-      <small>${escapeHtml(stock?.ts_code || "-")}${tags.length ? ` · ${escapeHtml(tags.join(" / "))}` : ""}</small>
+      <small class="${matched ? "matched" : ""}">${escapeHtml(stock?.ts_code || "-")}${tags.length ? ` · ${escapeHtml(tags.join(" / "))}` : ""}</small>
     </div>
   `;
 }
 
-function renderReviewHotMoneyGroup(group) {
+function renderReviewHotMoneyGroup(group, keyword = "") {
   const positive = Number(group.net_amount || 0) >= 0;
   return `
     <article class="reviewHotMoneyGroup reviewHotMoneyFlowCard">
@@ -3032,24 +3156,25 @@ function renderReviewHotMoneyGroup(group) {
           <small>${escapeHtml(group.org_summary || "席位数据待补充")}</small>
         </div>
         <div class="reviewHotMoneyBranchList">
-          ${group.stocks.map((stock) => renderReviewHotMoneyStockRow(stock)).join("")}
+          ${group.stocks.map((stock) => renderReviewHotMoneyStockRow(stock, keyword)).join("")}
         </div>
       </div>
     </article>
   `;
 }
 
-function renderReviewHotMoneyStockRow(stock) {
+function renderReviewHotMoneyStockRow(stock, keyword = "") {
   const tags = Array.isArray(stock.tags) ? stock.tags.filter(Boolean) : [];
   const positive = Number(stock.net_amount || 0) >= 0;
+  const matched = matchesReviewKeyword([stock?.name, stock?.ts_code], keyword);
   return `
     <article class="reviewHotMoneyBranch">
-      <div class="reviewHotMoneyStockNode ${positive ? "positive" : "negative"}${reviewRowCanOpen(stock) ? " reviewClickable" : ""}" ${reviewRowCanOpen(stock) ? `data-review-open-analysis="1" data-ts-code="${escapeHtml(resolveReviewStockCode(stock))}" data-name="${escapeHtml(stock.name || "")}"` : ""}>
+      <div class="reviewHotMoneyStockNode ${positive ? "positive" : "negative"}${matched ? " matched" : ""}${reviewRowCanOpen(stock) ? " reviewClickable" : ""}" ${reviewRowCanOpen(stock) ? `data-review-open-analysis="1" data-ts-code="${escapeHtml(resolveReviewStockCode(stock))}" data-name="${escapeHtml(stock.name || "")}"` : ""}>
         <div class="reviewHotMoneyStockLabel">
-          <strong>${renderReviewStockButton(stock.name || stock.ts_code || "-", stock, "reviewStockLink inline light")}</strong>
-          <small>${escapeHtml(stock.ts_code || "-")}</small>
+          <strong>${renderReviewStockButton(stock.name || stock.ts_code || "-", stock, `reviewStockLink inline light${matched ? " matched" : ""}`)}</strong>
+          <small class="${matched ? "matched" : ""}">${escapeHtml(stock.ts_code || "-")}</small>
         </div>
-        <span class="reviewHotMoneyStockAmount">${formatSignedAmountShort(stock.net_amount)}</span>
+        <span class="reviewHotMoneyStockAmount${matched ? " matched" : ""}">${formatSignedAmountShort(stock.net_amount)}</span>
       </div>
       <div class="reviewHotMoneyAmountNode">
         <strong>${escapeHtml(stock.org_summary || "关联席位")}</strong>
@@ -3610,6 +3735,10 @@ function buildPickerFilterSummary(rawCount, visibleCount) {
   }
   if (state.smartPicker.focusReadyOnly) {
     parts.push("已启用“主流强票”快捷筛选");
+  }
+  const screenFilterText = pickerScreenFilterSummary(state.smartPicker.screen?.filters || state.smartPicker.screenFilters);
+  if (screenFilterText) {
+    parts.push(screenFilterText);
   }
   if (state.smartPicker.marketScopeFilter !== "all") {
     parts.push(`市场=${pickerMarketScopeLabel(state.smartPicker.marketScopeFilter)}`);
@@ -5511,7 +5640,7 @@ function bindEvents() {
       loadWatchtowerOverview(1);
     }
   });
-  els.reviewRefreshBtn?.addEventListener("click", loadReviewOverview);
+  els.reviewRefreshBtn?.addEventListener("click", () => startReviewFlow(() => loadReviewOverview()));
   els.pickerRunBtn?.addEventListener("click", () => startSmartPickerFlow(() => runSmartPicker("combined")));
   els.pickerEastmoneyBatchBtn?.addEventListener("click", openPickerEastmoneyModalWithLoading);
   els.pickerRunConditionBtn?.addEventListener("click", () => startSmartPickerFlow(() => runSmartPicker("condition")));
@@ -5576,6 +5705,13 @@ function bindEvents() {
     if (els.pickerOverallFilter) els.pickerOverallFilter.value = "all";
     if (els.pickerSortBy) els.pickerSortBy.value = "overall_score";
     if (els.pickerSortDirection) els.pickerSortDirection.value = "desc";
+    if (els.pickerTechnicalShape) els.pickerTechnicalShape.value = "all";
+    if (els.pickerScreenMarket) els.pickerScreenMarket.value = "all";
+    if (els.pickerTurnoverMin) els.pickerTurnoverMin.value = "";
+    if (els.pickerTurnoverMax) els.pickerTurnoverMax.value = "";
+    if (els.pickerMarketCapMin) els.pickerMarketCapMin.value = "";
+    if (els.pickerMarketCapMax) els.pickerMarketCapMax.value = "";
+    state.smartPicker.screenFilters = {};
     if (els.pickerQueryInput) els.pickerQueryInput.value = "";
     [
       { source: "dc", typeInput: els.pickerBoardType, input: els.pickerBoardInput },
@@ -5703,6 +5839,15 @@ function bindEvents() {
       if (action === "hot-money-modal") {
         updateReviewModalPage(page);
       }
+      return;
+    }
+    const openTrigger = event.target.closest("[data-review-open-analysis]");
+    if (openTrigger) {
+      closeReviewModal();
+      openReviewStockInAnalysis({
+        ts_code: openTrigger.dataset.tsCode || "",
+        query_name: openTrigger.dataset.name || "",
+      });
     }
   });
   els.reviewModal?.addEventListener("submit", (event) => {

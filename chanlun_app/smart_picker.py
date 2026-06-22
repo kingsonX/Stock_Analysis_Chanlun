@@ -288,8 +288,20 @@ class SmartPickerService:
             "news": news,
         }
 
-    def screen(self, query_text: str, level: str = "daily", limit: int = 20) -> dict[str, Any]:
-        return self.screen_with_scopes(query_text=query_text, level=level, limit=limit, board_filters=None)
+    def screen(
+        self,
+        query_text: str,
+        level: str = "daily",
+        limit: int = 20,
+        screen_filters: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return self.screen_with_scopes(
+            query_text=query_text,
+            level=level,
+            limit=limit,
+            board_filters=None,
+            screen_filters=screen_filters,
+        )
 
     def screen_with_board(
         self,
@@ -297,12 +309,14 @@ class SmartPickerService:
         level: str = "daily",
         limit: int = 20,
         board_filter: dict[str, Any] | None = None,
+        screen_filters: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         return self.screen_with_scopes(
             query_text=query_text,
             level=level,
             limit=limit,
             board_filters=[board_filter] if board_filter else None,
+            screen_filters=screen_filters,
         )
 
     def screen_with_scopes(
@@ -311,11 +325,13 @@ class SmartPickerService:
         level: str = "daily",
         limit: int = 20,
         board_filters: list[dict[str, Any]] | None = None,
+        screen_filters: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         cleaned_query = (query_text or "").strip()
         if level not in LEVELS:
             raise MXProviderError(f"level 只支持 {'、'.join(LEVELS)}。", 400)
 
+        normalized_filters = _normalize_screen_filters(screen_filters)
         board_contexts = self._resolve_board_filters(board_filters or [])
         if cleaned_query:
             parsed = self.screen_provider.parse_response(self.screen_provider.search(cleaned_query))
@@ -331,15 +347,18 @@ class SmartPickerService:
             source_total = len(scoped_rows)
         else:
             raise MXProviderError("至少输入一种查询方式：条件、东方财富、通达信或同花顺。", 400)
+        filtered_rows = self._apply_screen_row_filters(scoped_rows, normalized_filters)
         market_cards = self._market_cards()
         stage = _market_stage(market_cards)
-        theme_context = self._build_theme_context(scoped_rows)
+        theme_context = self._build_theme_context(filtered_rows)
 
         candidates = []
         errors = []
-        for row in scoped_rows[:limit]:
+        for row in filtered_rows[:limit]:
             try:
-                candidates.append(self._candidate_from_row(row, level, stage, theme_context))
+                candidate = self._candidate_from_row(row, level, stage, theme_context, normalized_filters)
+                if candidate:
+                    candidates.append(candidate)
             except (DataProviderError, MXProviderError) as exc:
                 errors.append({"row": row, "message": getattr(exc, "message", str(exc))})
 
@@ -352,7 +371,9 @@ class SmartPickerService:
             "description": description,
             "parser_text": parser_text,
             "source_total": source_total,
-            "total": len(scoped_rows),
+            "total": len(filtered_rows),
+            "unfiltered_total": len(scoped_rows),
+            "filters": normalized_filters,
             "stage": stage,
             "theme_ladders": theme_context.get("groups", []),
             "leader_board": theme_context.get("leaders", []),
@@ -363,23 +384,32 @@ class SmartPickerService:
             "errors": errors,
         }
 
-    def screen_watchlist(self, level: str = "daily", limit: int | None = None) -> dict[str, Any]:
+    def screen_watchlist(
+        self,
+        level: str = "daily",
+        limit: int | None = None,
+        screen_filters: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         if level not in LEVELS:
             raise MXProviderError(f"level 只支持 {'、'.join(LEVELS)}。", 400)
 
+        normalized_filters = _normalize_screen_filters(screen_filters)
         watchlist = self.watchlist()
         rows = self._rows_from_watchlist(watchlist.get("items", []))
+        filtered_rows = self._apply_screen_row_filters(rows, normalized_filters)
         market_cards = self._market_cards()
         stage = _market_stage(market_cards)
         theme_context = self._build_theme_context(self._market_theme_rows(market_cards))
 
-        scan_rows = rows if limit is None else rows[:limit]
+        scan_rows = filtered_rows if limit is None else filtered_rows[:limit]
         candidates = []
         errors = []
         fallback_count = 0
         for row in scan_rows:
             try:
-                candidates.append(self._candidate_from_row(row, level, stage, theme_context))
+                candidate = self._candidate_from_row(row, level, stage, theme_context, normalized_filters)
+                if candidate:
+                    candidates.append(candidate)
             except (DataProviderError, MXProviderError) as exc:
                 message = getattr(exc, "message", str(exc))
                 fallback = self._fallback_candidate_from_row(row, level, stage, theme_context, message)
@@ -398,7 +428,9 @@ class SmartPickerService:
             "description": "已把东方财富自选股同步为候选池，按当前结构级别做自选分析。",
             "parser_text": "",
             "source_total": watchlist.get("total", len(rows)),
-            "total": len(rows),
+            "total": len(filtered_rows),
+            "unfiltered_total": len(rows),
+            "filters": normalized_filters,
             "stage": stage,
             "theme_ladders": theme_context.get("groups", []),
             "leader_board": theme_context.get("leaders", []),
@@ -616,7 +648,8 @@ class SmartPickerService:
         level: str,
         stage: dict[str, Any],
         theme_context: dict[str, Any],
-    ) -> dict[str, Any]:
+        screen_filters: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
         query = (
             _row_value(row, ["股票代码", "代码"])
             or _row_value(row, ["股票简称", "名称"])
@@ -628,6 +661,9 @@ class SmartPickerService:
         stock = self.data_client.resolve_stock(query)
         start_date, end_date = default_date_range(level)
         klines = self.data_client.get_klines(stock.ts_code, level, start_date, end_date)
+        technical_match = _technical_shape_match(klines, (screen_filters or {}).get("technical_shape", "all"))
+        if not technical_match["matched"]:
+            return None
         analysis = analyze_klines(klines, level=level)
 
         structure = _candidate_structure(analysis, level)
@@ -648,14 +684,22 @@ class SmartPickerService:
                 "turnover_value": _parse_numeric(_row_value(row, ["换手率"])),
                 "amount": _row_value(row, ["成交额", "成交金额"]),
                 "amount_value": _parse_numeric(_row_value(row, ["成交额", "成交金额"])),
+                "market_cap": _row_value(row, ["总市值", "流通市值", "市值"]),
+                "market_cap_value": _parse_numeric(_row_value(row, ["总市值", "流通市值", "市值"])),
             },
             "structure": structure,
             "emotion": emotion,
             "capacity": capacity,
             "leader": leader,
             "overall": overall,
+            "technical_shape": technical_match,
             "screen_row": row,
         }
+
+    def _apply_screen_row_filters(self, rows: list[dict[str, Any]], filters: dict[str, Any]) -> list[dict[str, Any]]:
+        if not filters:
+            return list(rows)
+        return [row for row in rows if _row_matches_screen_filters(row, filters)]
 
     def _fallback_candidate_from_row(
         self,
@@ -719,6 +763,8 @@ class SmartPickerService:
                 "turnover_value": _parse_numeric(_row_value(row, ["换手率"])),
                 "amount": _row_value(row, ["成交额", "成交金额"]),
                 "amount_value": _parse_numeric(_row_value(row, ["成交额", "成交金额"])),
+                "market_cap": _row_value(row, ["总市值", "流通市值", "市值"]),
+                "market_cap_value": _parse_numeric(_row_value(row, ["总市值", "流通市值", "市值"])),
             },
             "structure": structure,
             "emotion": emotion,
@@ -764,12 +810,28 @@ class SmartPickerService:
             if stock_key in seen:
                 continue
             seen.add(stock_key)
-            amount_value = _parse_numeric(_row_value(row, ["成交额", "成交金额"]))
-            turnover_value = _parse_numeric(_row_value(row, ["换手率"]))
-            change_value = _parse_numeric(_row_value(row, ["涨跌幅"]))
+            amount_text = _row_value(row, ["成交额", "成交金额"])
+            turnover_text = _row_value(row, ["换手率"])
+            change_text = _row_value(row, ["涨跌幅"])
+            amount_value = _parse_numeric(amount_text)
+            turnover_value = _parse_numeric(turnover_text)
+            change_value = _parse_numeric(change_text)
+            has_amount = bool(amount_text)
+            has_turnover = bool(turnover_text)
+            has_change = bool(change_text)
             group = groups.setdefault(
                 industry,
-                {"industry": industry, "members": [], "sample_count": 0, "strong_count": 0, "active_count": 0, "limit_up_count": 0},
+                {
+                    "industry": industry,
+                    "members": [],
+                    "sample_count": 0,
+                    "strong_count": 0,
+                    "active_count": 0,
+                    "limit_up_count": 0,
+                    "valid_change_count": 0,
+                    "valid_amount_count": 0,
+                    "valid_turnover_count": 0,
+                },
             )
             member = {
                 "symbol": symbol,
@@ -777,19 +839,28 @@ class SmartPickerService:
                 "name": name,
                 "industry": industry,
                 "change_pct_value": change_value,
-                "change_pct": _row_value(row, ["涨跌幅"]),
+                "change_pct": change_text,
+                "has_change": has_change,
                 "amount_value": amount_value,
-                "amount": _row_value(row, ["成交额", "成交金额"]),
+                "amount": amount_text,
+                "has_amount": has_amount,
                 "turnover_value": turnover_value,
-                "turnover": _row_value(row, ["换手率"]),
+                "turnover": turnover_text,
+                "has_turnover": has_turnover,
             }
             group["members"].append(member)
             group["sample_count"] += 1
-            if change_value >= 5:
+            if has_change:
+                group["valid_change_count"] += 1
+            if has_amount:
+                group["valid_amount_count"] += 1
+            if has_turnover:
+                group["valid_turnover_count"] += 1
+            if has_change and change_value >= 5:
                 group["strong_count"] += 1
-            if amount_value >= 1_000_000_000:
+            if has_amount and amount_value >= 1_000_000_000:
                 group["active_count"] += 1
-            if change_value >= 9.5:
+            if has_change and change_value >= 9.5:
                 group["limit_up_count"] += 1
 
         prepared = []
@@ -797,32 +868,47 @@ class SmartPickerService:
             members = group["members"]
             if not members:
                 continue
-            avg_change = sum(item["change_pct_value"] for item in members) / len(members)
+            change_members = [item for item in members if item.get("has_change")]
+            amount_members = [item for item in members if item.get("has_amount")]
+            valid_change_count = group["valid_change_count"]
+            valid_amount_count = group["valid_amount_count"]
+            valid_turnover_count = group["valid_turnover_count"]
+            min_evidence_count = min(5, max(2, len(members) // 4 or 1))
+            has_market_evidence = valid_change_count >= min_evidence_count
+            has_capacity_evidence = valid_amount_count >= min_evidence_count or group["active_count"] > 0
+            avg_change = sum(item["change_pct_value"] for item in change_members) / len(change_members) if change_members else 0.0
             total_amount = sum(item["amount_value"] for item in members)
             tier_score = (
-                len(members) * 12
-                + avg_change * 4
-                + group["strong_count"] * 10
-                + group["active_count"] * 7
-                + group["limit_up_count"] * 14
+                avg_change * 5
+                + group["strong_count"] * 14
+                + group["active_count"] * 10
+                + group["limit_up_count"] * 18
+                + min(valid_change_count, 10) * 1.5
             )
             members_by_strength = sorted(
                 members,
-                key=lambda item: (item["change_pct_value"], item["amount_value"], item["turnover_value"]),
+                key=lambda item: (item.get("has_change", False), item["change_pct_value"], item["amount_value"], item["turnover_value"]),
                 reverse=True,
             )
             members_by_amount = sorted(
                 members,
-                key=lambda item: (item["amount_value"], item["change_pct_value"], item["turnover_value"]),
+                key=lambda item: (item.get("has_amount", False), item["amount_value"], item["change_pct_value"], item["turnover_value"]),
                 reverse=True,
             )
             dragon = members_by_strength[0]
             capacity_core = members_by_amount[0] if members_by_amount else dragon
             front_runners = members_by_strength[:3]
-            if tier_score >= 78 or (len(members) >= 3 and group["strong_count"] >= 2 and group["active_count"] >= 2):
+            if not has_market_evidence:
+                tier_label = "轮动观察"
+                tone = "caution"
+                tier_score = min(tier_score, 38)
+            elif (
+                (avg_change >= 4.5 and group["strong_count"] >= 2 and (group["limit_up_count"] >= 1 or group["active_count"] >= 1))
+                or (group["strong_count"] >= 3 and group["active_count"] >= 2)
+            ):
                 tier_label = "主流热点"
                 tone = "positive"
-            elif tier_score >= 42 or (len(members) >= 2 and group["active_count"] >= 1):
+            elif avg_change >= 2.0 or group["strong_count"] >= 1 or group["active_count"] >= 1:
                 tier_label = "次主流"
                 tone = "neutral"
             else:
@@ -833,12 +919,16 @@ class SmartPickerService:
             dragon_key = dragon["ts_code"] or dragon["symbol"] or dragon["name"]
             dragon_is_limit = dragon["change_pct_value"] >= 9.5
             dragon_is_front = dragon["change_pct_value"] >= 7
-            dragon_has_takeover = dragon["amount_value"] >= 1_000_000_000 or dragon["turnover_value"] >= 5
+            dragon_has_takeover = (dragon.get("has_amount") and dragon["amount_value"] >= 1_000_000_000) or (
+                dragon.get("has_turnover") and dragon["turnover_value"] >= 5
+            )
             dragon_has_theme_depth = group["strong_count"] >= 2 and group["active_count"] >= 2
             dragon_has_mainstream_heat = group["limit_up_count"] >= 1 or avg_change >= 7.5
             dragon_has_clear_lead = dragon_is_limit or dragon["change_pct_value"] >= max(7.0, avg_change + 1.2)
             if (
                 tier_label == "主流热点"
+                and has_market_evidence
+                and has_capacity_evidence
                 and dragon_has_theme_depth
                 and dragon_has_mainstream_heat
                 and dragon_has_takeover
@@ -850,14 +940,14 @@ class SmartPickerService:
                     "score": 86,
                     "summary": f"{industry}具备主流合力、前排辨识度和承接容量，先按龙头候选跟踪。",
                 }
-            elif tier_label == "主流热点" and dragon_has_takeover and (dragon_is_front or group["strong_count"] >= 2):
+            elif tier_label == "主流热点" and has_market_evidence and dragon_has_takeover and (dragon_is_front or group["strong_count"] >= 2):
                 roles[dragon_key] = {
                     "label": "前排助攻",
                     "tone": "neutral",
                     "score": 68,
                     "summary": f"{industry}强度在前，但主流合力或承接确认还不够，先按前排助攻观察。",
                 }
-            elif tier_label == "次主流" and dragon_has_takeover and dragon_is_front:
+            elif tier_label == "次主流" and has_market_evidence and dragon_has_takeover and dragon_is_front:
                 roles[dragon_key] = {
                     "label": "前排助攻",
                     "tone": "neutral",
@@ -865,7 +955,12 @@ class SmartPickerService:
                     "summary": f"{industry}有一定辨识度，但题材还没走成主流，先当次主流前排看待。",
                 }
             capacity_key = capacity_core["ts_code"] or capacity_core["symbol"] or capacity_core["name"]
-            if capacity_key not in roles and capacity_core["amount_value"] >= 1_000_000_000 and group["active_count"] >= 1:
+            if (
+                capacity_key not in roles
+                and capacity_core.get("has_amount")
+                and capacity_core["amount_value"] >= 1_000_000_000
+                and group["active_count"] >= 1
+            ):
                 roles[capacity_key] = {
                     "label": "容量中军",
                     "tone": "positive" if capacity_core["amount_value"] >= 1_000_000_000 else "neutral",
@@ -877,6 +972,8 @@ class SmartPickerService:
                 if front_key in roles:
                     continue
                 if tier_label not in {"主流热点", "次主流"} or front["change_pct_value"] < 5:
+                    continue
+                if not front.get("has_change"):
                     continue
                 roles[front_key] = {
                     "label": "前排助攻",
@@ -896,8 +993,18 @@ class SmartPickerService:
                     "active_count": group["active_count"],
                     "strong_count": group["strong_count"],
                     "limit_up_count": group["limit_up_count"],
+                    "valid_change_count": valid_change_count,
+                    "valid_amount_count": valid_amount_count,
+                    "valid_turnover_count": valid_turnover_count,
+                    "has_market_evidence": has_market_evidence,
+                    "has_capacity_evidence": has_capacity_evidence,
                     "total_amount": total_amount,
-                    "summary": f"{industry}样本 {len(members)} 只，平均涨幅 {avg_change:.2f}%，活跃承接 {group['active_count']} 只。",
+                    "summary": (
+                        f"{industry}样本 {len(members)} 只，行情样本 {valid_change_count} 只，平均涨幅 {avg_change:.2f}%，"
+                        f"活跃承接 {group['active_count']} 只。"
+                        if has_market_evidence
+                        else f"{industry}有 {len(members)} 只成分股，但缺少足够涨跌幅/成交额样本，先按轮动观察处理。"
+                    ),
                     "dragon": _theme_member_snapshot(dragon),
                     "capacity_core": _theme_member_snapshot(capacity_core),
                     "front_runners": [_theme_member_snapshot(item) for item in front_runners],
@@ -1011,6 +1118,7 @@ class SmartPickerService:
 
     def _rows_from_board_contexts(self, board_contexts: list[dict[str, Any]]) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
+        stocks_by_ts_code: dict[str, StockRecord] = {}
         seen: set[str] = set()
         for context in board_contexts:
             for member in context.get("members") or []:
@@ -1022,8 +1130,10 @@ class SmartPickerService:
                 if stock.ts_code in seen:
                     continue
                 seen.add(stock.ts_code)
+                stocks_by_ts_code[stock.ts_code.upper()] = stock
                 rows.append(
                     {
+                        "ts_code": stock.ts_code,
                         "股票代码": stock.symbol,
                         "股票简称": stock.name,
                         "股票名称": stock.name,
@@ -1031,11 +1141,76 @@ class SmartPickerService:
                         "涨跌幅": "",
                         "成交额": "",
                         "换手率": "",
+                        "总市值": "",
                         "__source_scope": context.get("public", {}).get("name", ""),
                         "__source_label": context.get("public", {}).get("source_label", ""),
                     }
                 )
+        return self._enrich_board_rows_with_quote(rows, stocks_by_ts_code)
+
+    def _enrich_board_rows_with_quote(
+        self,
+        rows: list[dict[str, Any]],
+        stocks_by_ts_code: dict[str, StockRecord],
+    ) -> list[dict[str, Any]]:
+        if not rows:
+            return rows
+
+        quote_map: dict[str, dict[str, Any]] = {}
+        get_realtime_daily = getattr(self.data_client, "get_realtime_daily", None)
+        if callable(get_realtime_daily):
+            try:
+                realtime_rows = get_realtime_daily([row.get("ts_code") or "" for row in rows])
+                for item in realtime_rows or []:
+                    ts_code = _flatten(item.get("ts_code") or "").strip().upper()
+                    symbol = ts_code.split(".", 1)[0]
+                    if ts_code:
+                        quote_map[ts_code] = item
+                    if symbol:
+                        quote_map[symbol] = item
+            except DataProviderError:
+                quote_map = {}
+
+        for row in rows:
+            ts_code = _flatten(row.get("ts_code") or "").strip().upper()
+            symbol = _row_value(row, ["股票代码", "代码"]).strip().upper()
+            stock = stocks_by_ts_code.get(ts_code)
+            quote = quote_map.get(ts_code) or quote_map.get(symbol) or {}
+            close = _safe_float(quote.get("close"))
+            pre_close = _safe_float(quote.get("pre_close"))
+            amount = _safe_float(quote.get("amount"))
+            pct_change = ((close - pre_close) / pre_close * 100) if close and pre_close else 0.0
+
+            if close and not _row_value(row, ["最新价"]):
+                row["最新价"] = _format_price_value(close)
+            if pct_change and not _row_value(row, ["涨跌幅"]):
+                row["涨跌幅"] = f"{pct_change:+.2f}%"
+            if amount and not _row_value(row, ["成交额", "成交金额"]):
+                row["成交额"] = _format_amount_short(amount)
+
+            basics = self._safe_stock_bak_basic(ts_code)
+            market_cap = _market_cap_from_basic(close, basics)
+            turnover = _turnover_from_quote(quote, basics)
+            if market_cap and not _row_value(row, ["总市值", "流通市值", "市值"]):
+                row["总市值"] = _format_yi_value(market_cap)
+            if turnover and not _row_value(row, ["换手率"]):
+                row["换手率"] = f"{turnover:.2f}%"
+            if stock:
+                row.setdefault("所属行业", getattr(stock, "industry", ""))
+                row.setdefault("所属市场", getattr(stock, "market", ""))
+                row.setdefault("交易所", getattr(stock, "exchange", ""))
         return rows
+
+    def _safe_stock_bak_basic(self, ts_code: str) -> dict[str, Any]:
+        if not ts_code:
+            return {}
+        get_stock_bak_basic = getattr(self.data_client, "get_stock_bak_basic", None)
+        if not callable(get_stock_bak_basic):
+            return {}
+        try:
+            return dict(get_stock_bak_basic(ts_code) or {})
+        except DataProviderError:
+            return {}
 
     def _watchlist_state(self, stock_record: StockRecord) -> tuple[dict[str, Any], bool, dict[str, Any]]:
         try:
@@ -1318,24 +1493,42 @@ def _candidate_structure(analysis: dict[str, Any], level: str) -> dict[str, Any]
     trend = analysis.get("trend") or {}
     signal = _latest_signal(analysis.get("signals") or [])
     divergence = (analysis.get("divergences") or [])[-1] if analysis.get("divergences") else None
+    trend_type = trend.get("type") or ""
+    trend_direction = trend.get("direction") or ""
+    trend_position = trend.get("position") or ""
 
     score = 45
     tone = "neutral"
-    if trend.get("direction") == "up":
+    if trend_direction == "up":
         score += 12
-    elif trend.get("direction") == "down":
-        score -= 12
-    if trend.get("position") == "above_center":
+    elif trend_direction == "down":
+        score -= 18
+    if trend_position == "above_center":
         score += 10
-    elif trend.get("position") == "below_center":
-        score -= 10
+    elif trend_position == "below_center":
+        score -= 14
 
     if signal and signal.get("side") == "buy":
         score += 18 if signal.get("status") == "confirmed" else 10
     elif signal and signal.get("side") == "sell":
         score -= 18 if signal.get("status") == "confirmed" else 10
 
-    if score >= 68:
+    is_downtrend_buy_trap = (
+        signal
+        and signal.get("side") == "buy"
+        and signal.get("status") != "invalid"
+        and (trend_direction == "down" or trend_position == "below_center")
+    )
+    is_unfinished_rebound = (
+        signal
+        and signal.get("side") == "buy"
+        and trend_type in {"未成中枢", "未成型"}
+    )
+
+    if is_downtrend_buy_trap:
+        label = "结构回避"
+        tone = "caution"
+    elif score >= 68 and not is_unfinished_rebound:
         label = "结构可看"
         tone = "positive"
     elif score >= 52:
@@ -1366,21 +1559,29 @@ def _candidate_emotion(stock: dict[str, Any], row: dict[str, Any], theme_context
             "summary": f"{industry}暂未进入当前样本里的热点前排，更适合补充观察，不适合先给高权重。",
         }
 
+    if not group.get("has_market_evidence"):
+        return {
+            "score": 36,
+            "label": "轮动观察",
+            "tone": "caution",
+            "summary": f"{industry}只命中板块名单，缺少足够涨跌幅和成交样本；养家视角不能直接判主流。",
+        }
+
     tier_label = group.get("tier_label") or "轮动观察"
     tone = group.get("tone") or "neutral"
     if tier_label == "主流热点":
-        score = 78
+        score = 78 if group.get("has_capacity_evidence") else 68
     elif tier_label == "次主流":
         score = 62
     else:
-        score = 48
+        score = 44 if tone == "caution" else 48
     return {
         "score": score,
         "label": tier_label,
         "tone": tone,
         "summary": (
-            f"{industry}样本 {group.get('sample_count', 0)} 只，平均涨幅 {group.get('avg_change_pct', 0):.2f}% ，"
-            f"活跃承接 {group.get('active_count', 0)} 只。"
+            f"{industry}行情样本 {group.get('valid_change_count', 0)} / {group.get('sample_count', 0)} 只，"
+            f"平均涨幅 {group.get('avg_change_pct', 0):.2f}% ，活跃承接 {group.get('active_count', 0)} 只。"
         ),
     }
 
@@ -1388,32 +1589,49 @@ def _candidate_emotion(stock: dict[str, Any], row: dict[str, Any], theme_context
 def _candidate_capacity(row: dict[str, Any]) -> dict[str, Any]:
     turnover_text = _row_value(row, ["换手率"])
     amount_text = _row_value(row, ["成交额", "成交金额"])
+    market_cap_text = _row_value(row, ["总市值", "流通市值", "市值"])
     change_text = _row_value(row, ["涨跌幅"])
 
     turnover = _parse_numeric(turnover_text)
     amount = _parse_numeric(amount_text)
+    market_cap_yi = _market_cap_to_yi(_parse_numeric(market_cap_text))
     change_pct = _parse_numeric(change_text)
+    has_amount = bool(amount_text)
+    has_turnover = bool(turnover_text)
+    has_market_cap = bool(market_cap_text)
 
-    score = 45
+    score = 38
     tone = "neutral"
-    if amount >= 3_000_000_000:
+    if not has_amount:
+        score -= 12
+    elif amount >= 3_000_000_000:
         score += 22
     elif amount >= 1_000_000_000:
         score += 14
+    elif amount >= 500_000_000:
+        score += 6
     elif amount > 0:
-        score += 4
+        score -= 6
     else:
-        score -= 8
+        score -= 12
 
-    if 3 <= turnover <= 18:
+    if not has_turnover:
+        score -= 4
+    elif 3 <= turnover <= 18:
         score += 14
     elif turnover > 18:
-        score += 6
+        score += 4
     elif turnover > 0:
-        score -= 4
+        score -= 6
 
-    if change_pct >= 5:
+    if has_amount and change_pct >= 5:
         score += 6
+
+    if has_market_cap:
+        if 80 <= market_cap_yi <= 1800:
+            score += 8
+        elif market_cap_yi > 0:
+            score += 3
 
     if score >= 70:
         label = "容量较优"
@@ -1424,11 +1642,13 @@ def _candidate_capacity(row: dict[str, Any]) -> dict[str, Any]:
         label = "容量待核"
         tone = "caution"
 
+    metric_summary = f"成交额 {amount_text or '-'} · 换手率 {turnover_text or '-'} · 总市值 {market_cap_text or '-'}"
+
     return {
         "score": max(0, min(100, score)),
         "label": label,
         "tone": tone,
-        "summary": f"成交额 {amount_text or '-'} · 换手率 {turnover_text or '-'}",
+        "summary": metric_summary if has_amount else f"{metric_summary}；缺少成交额数据，章盟主视角暂不判断大资金容量。",
     }
 
 
@@ -1443,6 +1663,14 @@ def _candidate_leader(stock: dict[str, Any], row: dict[str, Any], theme_context:
             "summary": f"{industry}当前不在热点前排，先别把它当成龙头或核心容量来处理。",
         }
 
+    if not group.get("has_market_evidence"):
+        return {
+            "score": 26,
+            "label": "非核心观察",
+            "tone": "caution",
+            "summary": f"{industry}只确认板块归属，缺少涨幅、成交和梯队证据，不能贴龙头标签。",
+        }
+
     stock_key = (
         _flatten(stock.get("ts_code") or "").strip()
         or _flatten(stock.get("symbol") or "").strip()
@@ -1453,10 +1681,10 @@ def _candidate_leader(stock: dict[str, Any], row: dict[str, Any], theme_context:
         return role
 
     return {
-        "score": 44 if group.get("tier_label") in {"主流热点", "次主流"} else 30,
-        "label": "跟风观察",
+        "score": 44 if group.get("tier_label") in {"主流热点", "次主流"} else 28,
+        "label": "跟风观察" if group.get("tier_label") in {"主流热点", "次主流"} else "非核心观察",
         "tone": "neutral" if group.get("tier_label") in {"主流热点", "次主流"} else "caution",
-        "summary": f"{industry}有热点样本，但这只票缺少前排辨识度或承接确认，先按跟风观察处理。",
+        "summary": f"{industry}有热点样本，但这只票缺少前排辨识度或承接确认，先按跟风或非核心观察处理。",
     }
 
 
@@ -1481,7 +1709,21 @@ def _candidate_overall(
         label = "暂不参与"
         tone = "caution"
         decision = "结构没站稳时，不把主流热度和龙头标签当买入理由。"
-    elif score >= 74 and emotion.get("label") == "主流热点" and leader.get("tone") != "caution":
+    elif emotion.get("tone") == "caution" and leader.get("tone") == "caution":
+        label = "暂不参与"
+        tone = "caution"
+        decision = "主流和龙头证据不足时，先不把板块名单当交易机会。"
+    elif capacity.get("tone") == "caution" and structure.get("label") != "结构可看":
+        label = "暂不参与"
+        tone = "caution"
+        decision = "容量或成交证据不足，章盟主视角看不清大资金承接，先不参与。"
+    elif (
+        score >= 74
+        and structure.get("label") == "结构可看"
+        and emotion.get("label") == "主流热点"
+        and leader.get("label") in {"龙头候选", "容量中军", "前排助攻"}
+        and capacity.get("tone") != "caution"
+    ):
         label = "重点观察"
         tone = "positive"
         decision = "结构、主流梯队和龙头角色有一定共振，可以进重点观察池，但仍要等确认。"
@@ -1776,6 +2018,223 @@ def _row_value(row: dict[str, Any], keywords: list[str]) -> str:
         if any(keyword in key_text for keyword in keywords):
             return _flatten(value)
     return ""
+
+
+def _normalize_screen_filters(raw: dict[str, Any] | None) -> dict[str, Any]:
+    payload = raw or {}
+    technical_shape = _flatten(payload.get("technical_shape") or "all").strip() or "all"
+    market_scope = _flatten(payload.get("market_scope") or "all").strip() or "all"
+    if technical_shape not in {"all", "ma_bullish", "laoyatou", "boll_open"}:
+        technical_shape = "all"
+    if market_scope not in {"all", "sz", "sh", "chinext", "star", "bse"}:
+        market_scope = "all"
+    return {
+        "technical_shape": technical_shape,
+        "market_scope": market_scope,
+        "turnover_min": _optional_float(payload.get("turnover_min")),
+        "turnover_max": _optional_float(payload.get("turnover_max")),
+        "market_cap_min": _optional_float(payload.get("market_cap_min")),
+        "market_cap_max": _optional_float(payload.get("market_cap_max")),
+    }
+
+
+def _optional_float(value: Any) -> float | None:
+    text = _flatten(value).strip()
+    if not text:
+        return None
+    try:
+        return float(text.replace("%", "").replace(",", ""))
+    except ValueError:
+        return None
+
+
+def _row_matches_screen_filters(row: dict[str, Any], filters: dict[str, Any]) -> bool:
+    if not _row_matches_market_scope(row, filters.get("market_scope", "all")):
+        return False
+
+    turnover_min = filters.get("turnover_min")
+    turnover_max = filters.get("turnover_max")
+    if turnover_min is not None or turnover_max is not None:
+        turnover_text = _row_value(row, ["换手率"])
+        if not turnover_text:
+            return False
+        turnover = _parse_numeric(turnover_text)
+        if turnover_min is not None and turnover < turnover_min:
+            return False
+        if turnover_max is not None and turnover > turnover_max:
+            return False
+
+    cap_min = filters.get("market_cap_min")
+    cap_max = filters.get("market_cap_max")
+    if cap_min is not None or cap_max is not None:
+        cap_text = _row_value(row, ["总市值", "流通市值", "市值"])
+        if not cap_text:
+            return False
+        cap_yi = _market_cap_to_yi(_parse_numeric(cap_text))
+        if cap_min is not None and cap_yi < cap_min:
+            return False
+        if cap_max is not None and cap_yi > cap_max:
+            return False
+
+    return True
+
+
+def _row_matches_market_scope(row: dict[str, Any], scope: str) -> bool:
+    if scope == "all":
+        return True
+    code = _row_value(row, ["股票代码", "代码"]).strip().upper()
+    symbol = code.split(".", 1)[0]
+    ts_code = code if "." in code else ""
+    market = _row_value(row, ["市场", "板块"]).strip()
+    exchange = _row_value(row, ["交易所"]).strip().upper()
+
+    if scope == "chinext":
+        return market.find("创业板") >= 0 or symbol.startswith(("300", "301"))
+    if scope == "star":
+        return market.find("科创板") >= 0 or symbol.startswith(("688", "689"))
+    if scope == "bse":
+        return ts_code.endswith(".BJ") or exchange in {"BSE", "BJSE"} or symbol.startswith(("4", "8", "920"))
+    if scope == "sh":
+        return ts_code.endswith(".SH") or exchange == "SSE" or symbol.startswith(("5", "6", "9"))
+    if scope == "sz":
+        return ts_code.endswith(".SZ") or exchange == "SZSE" or symbol.startswith(("0", "2", "3"))
+    return True
+
+
+def _market_cap_to_yi(value: float) -> float:
+    if value <= 0:
+        return 0.0
+    return value / 100_000_000.0 if value > 100_000 else value
+
+
+def _technical_shape_match(klines: list[dict[str, Any]], shape: str) -> dict[str, Any]:
+    if shape in {"", "all", None}:
+        return {"shape": "all", "label": "不限技术形态", "matched": True, "reason": "未限定技术形态。"}
+    closes = [_safe_float(item.get("close")) for item in klines]
+    highs = [_safe_float(item.get("high")) for item in klines]
+    lows = [_safe_float(item.get("low")) for item in klines]
+    vols = [_safe_float(item.get("vol")) for item in klines]
+    if len(closes) < 26:
+        return {"shape": shape, "label": _technical_shape_label(shape), "matched": False, "reason": "K线数量不足，暂不满足该技术形态。"}
+
+    ma5 = _rolling_ma(closes, 5)
+    ma10 = _rolling_ma(closes, 10)
+    ma20 = _rolling_ma(closes, 20)
+    latest_close = closes[-1]
+
+    if shape == "ma_bullish":
+        matched = bool(ma5[-1] and ma10[-1] and ma20[-1] and latest_close > ma5[-1] > ma10[-1] > ma20[-1] and ma20[-1] > ma20[-6])
+        reason = "收盘价站上 MA5，且 MA5 > MA10 > MA20，MA20 继续上行。" if matched else "未形成收盘价、MA5、MA10、MA20 的多头顺序。"
+        return {"shape": shape, "label": "均线多头排列", "matched": matched, "reason": reason}
+
+    if shape == "boll_open":
+        current = _boll_width(closes[-20:])
+        previous = _boll_width(closes[-25:-5])
+        middle = ma20[-1] or latest_close
+        matched = current > previous * 1.18 and latest_close >= middle
+        reason = "布林带宽度较前段放大，且收盘价位于中轨上方。" if matched else "布林带宽度未明显扩张，或价格仍未站上中轨。"
+        return {"shape": shape, "label": "布林线开口", "matched": matched, "reason": reason}
+
+    if shape == "laoyatou":
+        prior_bullish = ma5[-12] and ma10[-12] and ma20[-12] and ma5[-12] > ma10[-12] > ma20[-12]
+        recent_low = min(lows[-12:])
+        near_ma20 = bool(ma20[-1] and recent_low <= ma20[-1] * 1.04 and recent_low >= ma20[-1] * 0.9)
+        rebound = bool(ma5[-1] and ma10[-1] and latest_close > ma5[-1] > ma10[-1])
+        recent_vol = sum(vols[-5:]) / 5 if len(vols) >= 5 else 0
+        prior_vol = sum(vols[-15:-5]) / 10 if len(vols) >= 15 else 0
+        volume_ok = prior_vol <= 0 or recent_vol >= prior_vol * 0.85
+        matched = bool(prior_bullish and near_ma20 and rebound and volume_ok)
+        reason = "前期多头后缩量回踩 MA20 附近，近期重新站回短均线。" if matched else "未同时满足前期多头、回踩 MA20 附近和重新转强。"
+        return {"shape": shape, "label": "老鸭头", "matched": matched, "reason": reason}
+
+    return {"shape": "all", "label": "不限技术形态", "matched": True, "reason": "未限定技术形态。"}
+
+
+def _technical_shape_label(shape: str) -> str:
+    return {
+        "ma_bullish": "均线多头排列",
+        "laoyatou": "老鸭头",
+        "boll_open": "布林线开口",
+    }.get(shape, "不限技术形态")
+
+
+def _rolling_ma(values: list[float], period: int) -> list[float | None]:
+    output: list[float | None] = []
+    window_sum = 0.0
+    for index, value in enumerate(values):
+        window_sum += value
+        if index >= period:
+            window_sum -= values[index - period]
+        if index + 1 >= period:
+            output.append(window_sum / period)
+        else:
+            output.append(None)
+    return output
+
+
+def _boll_width(values: list[float]) -> float:
+    if not values:
+        return 0.0
+    mean = sum(values) / len(values)
+    variance = sum((value - mean) ** 2 for value in values) / len(values)
+    std = variance ** 0.5
+    return std * 4
+
+
+def _format_price_value(value: float) -> str:
+    return f"{float(value):.2f}"
+
+
+def _format_amount_short(value: float) -> str:
+    amount = float(value or 0)
+    if abs(amount) >= 100_000_000:
+        return f"{amount / 100_000_000:.2f}亿"
+    if abs(amount) >= 10_000:
+        return f"{amount / 10_000:.0f}万"
+    return f"{amount:.0f}"
+
+
+def _format_yi_value(value: float) -> str:
+    yi_value = float(value or 0)
+    if yi_value >= 1000:
+        return f"{yi_value:.0f}亿"
+    if yi_value >= 100:
+        return f"{yi_value:.1f}亿"
+    return f"{yi_value:.2f}亿"
+
+
+def _market_cap_from_basic(close: float, basics: dict[str, Any]) -> float:
+    if close <= 0 or not basics:
+        return 0.0
+    total_share_yi = _share_to_yi(basics.get("total_share"))
+    return close * total_share_yi if total_share_yi > 0 else 0.0
+
+
+def _turnover_from_quote(quote: dict[str, Any], basics: dict[str, Any]) -> float:
+    turnover = _safe_float(quote.get("turnover_rate"))
+    if turnover > 0:
+        return turnover
+    volume = _safe_float(quote.get("vol"))
+    float_share_yi = _share_to_yi(basics.get("float_share"))
+    if volume <= 0 or float_share_yi <= 0:
+        return 0.0
+    return volume / (float_share_yi * 100_000_000) * 100
+
+
+def _share_to_yi(value: Any) -> float:
+    raw = _parse_numeric(value)
+    if raw <= 0:
+        return 0.0
+    if raw > 100_000:
+        return raw / 100_000_000
+    return raw
+
+
+def _safe_float(value: Any) -> float:
+    try:
+        return float(str(value).replace(",", "").replace("，", "").strip())
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _parse_watchlist_targets(text: str) -> list[str]:

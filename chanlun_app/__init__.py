@@ -254,9 +254,17 @@ def create_app(
     def smart_picker_screen():
         payload = request.get_json(silent=True) or {}
         level = payload.get("level", "daily")
-        limit = _safe_int(payload.get("limit"), 20, 1, 80)
+        limit = _safe_int(payload.get("limit"), 20, 1, 300)
         source_type = str(payload.get("source_type", "")).strip().lower()
         query_text = payload.get("query_text", "")
+        screen_filters = {
+            "technical_shape": payload.get("technical_shape", ""),
+            "market_scope": payload.get("market_scope", ""),
+            "turnover_min": payload.get("turnover_min", ""),
+            "turnover_max": payload.get("turnover_max", ""),
+            "market_cap_min": payload.get("market_cap_min", ""),
+            "market_cap_max": payload.get("market_cap_max", ""),
+        }
         board_filters = [
             {
                 "source": "dc",
@@ -280,13 +288,14 @@ def create_app(
         try:
             if source_type == "watchlist":
                 watchlist_limit = None if payload.get("limit_all", False) else limit
-                return jsonify(smart_picker.screen_watchlist(level=level, limit=watchlist_limit))
+                return jsonify(smart_picker.screen_watchlist(level=level, limit=watchlist_limit, screen_filters=screen_filters))
             return jsonify(
                 smart_picker.screen_with_scopes(
                     query_text=query_text,
                     level=level,
                     limit=limit,
                     board_filters=board_filters,
+                    screen_filters=screen_filters,
                 )
             )
         except (DataProviderError, MXProviderError) as exc:
