@@ -13,7 +13,7 @@ class _BrokenConnectionContext:
 
 class BrokenReadStore(HotMoneyDailyTradeStore):
     def __init__(self):
-        super().__init__(dsn="postgresql://demo")
+        super().__init__(dsn="mysql://demo:demo@127.0.0.1:3306/demo")
 
     def _connection(self):
         return _BrokenConnectionContext()
@@ -26,7 +26,7 @@ class HotMoneyStoreTest(unittest.TestCase):
         with self.assertRaises(HotMoneyStoreError) as ctx:
             store.get_payload("20260604")
 
-        self.assertIn("读取 Supabase 游资缓存失败", str(ctx.exception))
+        self.assertIn("读取 MySQL 游资缓存失败", str(ctx.exception))
 
     def test_save_payload_wraps_connection_errors(self):
         store = BrokenReadStore()
@@ -34,7 +34,7 @@ class HotMoneyStoreTest(unittest.TestCase):
         with self.assertRaises(HotMoneyStoreError) as ctx:
             store.save_payload({"trade_date": "20260604", "items": []})
 
-        self.assertIn("写入 Supabase 游资缓存失败", str(ctx.exception))
+        self.assertIn("写入 MySQL 游资缓存失败", str(ctx.exception))
 
 
 if __name__ == "__main__":

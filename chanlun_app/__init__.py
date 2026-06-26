@@ -9,6 +9,7 @@ from .data_provider import DataProviderError, TushareClient
 from .mx_provider import MXDataProvider, MXProviderError
 from .review_service import ReviewService
 from .smart_picker import SmartPickerService
+from .theme_board_service import ThemeBoardService
 from .trading_profile import TradingProfileService
 from .watchtower_service import WatchtowerService
 
@@ -25,6 +26,7 @@ def create_app(
     ai_client: ClaudeProfileExplainer | None = None,
     review_client: ReviewService | None = None,
     watchtower_client: WatchtowerService | None = None,
+    theme_board_client: ThemeBoardService | None = None,
 ):
     from pathlib import Path
 
@@ -50,6 +52,7 @@ def create_app(
         data_client=client,
         picker_client=smart_picker,
     )
+    theme_board_service = theme_board_client or ThemeBoardService(data_client=client)
 
     def json_error(message: str, status_code: int):
         return jsonify({"error": {"message": message, "status_code": status_code}}), status_code
@@ -254,9 +257,17 @@ def create_app(
     def smart_picker_screen():
         payload = request.get_json(silent=True) or {}
         level = payload.get("level", "daily")
-        limit = _safe_int(payload.get("limit"), 20, 1, 80)
+        limit = _safe_int(payload.get("limit"), 20, 1, 300)
         source_type = str(payload.get("source_type", "")).strip().lower()
         query_text = payload.get("query_text", "")
+        screen_filters = {
+            "technical_shape": payload.get("technical_shape", ""),
+            "market_scope": payload.get("market_scope", ""),
+            "turnover_min": payload.get("turnover_min", ""),
+            "turnover_max": payload.get("turnover_max", ""),
+            "market_cap_min": payload.get("market_cap_min", ""),
+            "market_cap_max": payload.get("market_cap_max", ""),
+        }
         board_filters = [
             {
                 "source": "dc",
@@ -280,13 +291,14 @@ def create_app(
         try:
             if source_type == "watchlist":
                 watchlist_limit = None if payload.get("limit_all", False) else limit
-                return jsonify(smart_picker.screen_watchlist(level=level, limit=watchlist_limit))
+                return jsonify(smart_picker.screen_watchlist(level=level, limit=watchlist_limit, screen_filters=screen_filters))
             return jsonify(
                 smart_picker.screen_with_scopes(
                     query_text=query_text,
                     level=level,
                     limit=limit,
                     board_filters=board_filters,
+                    screen_filters=screen_filters,
                 )
             )
         except (DataProviderError, MXProviderError) as exc:
@@ -403,6 +415,26 @@ def create_app(
         ts_code = str(request.args.get("ts_code") or "").strip()
         try:
             return jsonify(watchtower_service.realtime_detail(ts_code))
+        except DataProviderError as exc:
+            return json_error(exc.message, exc.status_code)
+
+    @app.get("/api/theme-board/overview")
+    def theme_board_overview():
+        trade_date = normalize_yyyymmdd(request.args.get("trade_date"))
+        try:
+            return jsonify(theme_board_service.overview(trade_date=trade_date))
+        except DataProviderError as exc:
+            return json_error(exc.message, exc.status_code)
+
+    @app.get("/api/theme-board/detail")
+    def theme_board_detail():
+        trade_date = normalize_yyyymmdd(request.args.get("trade_date"))
+        ts_code = str(request.args.get("ts_code") or "").strip()
+        name = str(request.args.get("name") or "").strip()
+        if not ts_code and not name:
+            return json_error("请输入题材代码或题材名称。", 400)
+        try:
+            return jsonify(theme_board_service.detail(trade_date=trade_date, ts_code=ts_code, name=name))
         except DataProviderError as exc:
             return json_error(exc.message, exc.status_code)
 

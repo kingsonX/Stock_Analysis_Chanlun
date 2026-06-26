@@ -58,7 +58,7 @@ class WatchtowerService:
 
     def track_stock(self, stock: dict[str, Any], bak_basic: dict[str, Any] | None = None) -> dict[str, Any]:
         if not self.store.enabled:
-            return {"status": "disabled", "message": "未配置 PostgreSQL 智能盯盘数据库。"}
+            return {"status": "disabled", "message": "未配置 MySQL 智能盯盘数据库。"}
         try:
             self.store.save_entry(stock=stock, bak_basic=bak_basic)
         except WatchlistStoreError as exc:
@@ -67,7 +67,7 @@ class WatchtowerService:
 
     def delete_stock(self, ts_code: str) -> dict[str, Any]:
         if not self.store.enabled:
-            raise DataProviderError("未配置 PostgreSQL 智能盯盘数据库。", 500)
+            raise DataProviderError("未配置 MySQL 智能盯盘数据库。", 500)
         try:
             entry = self.store.get_entry(ts_code)
         except WatchlistStoreError as exc:
@@ -93,7 +93,7 @@ class WatchtowerService:
 
     def realtime_detail(self, ts_code: str) -> dict[str, Any]:
         if not self.store.enabled:
-            raise DataProviderError("未配置 PostgreSQL 智能盯盘数据库。", 500)
+            raise DataProviderError("未配置 MySQL 智能盯盘数据库。", 500)
         cleaned_code = str(ts_code or "").strip().upper()
         if not cleaned_code:
             raise DataProviderError("缺少股票代码。", 400)
@@ -124,7 +124,7 @@ class WatchtowerService:
 
     def add_to_eastmoney_group(self, ts_code: str, group_name: str | None = None) -> dict[str, Any]:
         if not self.store.enabled:
-            raise DataProviderError("未配置 PostgreSQL 智能盯盘数据库。", 500)
+            raise DataProviderError("未配置 MySQL 智能盯盘数据库。", 500)
         cleaned_code = str(ts_code or "").strip().upper()
         if not cleaned_code:
             raise DataProviderError("缺少股票代码。", 400)

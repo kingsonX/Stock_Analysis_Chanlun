@@ -2,7 +2,14 @@ import unittest
 
 import pandas as pd
 
-from chanlun_app.smart_picker import MXWatchlistProvider, SmartPickerService, _candidate_leader
+from chanlun_app.smart_picker import (
+    MXWatchlistProvider,
+    SmartPickerService,
+    _candidate_capacity,
+    _candidate_emotion,
+    _candidate_leader,
+    _candidate_structure,
+)
 from chanlun_app.data_provider import DataProviderError
 from chanlun_app.mx_provider import MXProviderError
 
@@ -155,6 +162,47 @@ class FakeDataClient:
     def get_board_members(self, source, ts_code, trade_date=None, force_refresh=False):
         return self.board_members.get(ts_code, [])
 
+    def get_realtime_daily(self, ts_codes):
+        if isinstance(ts_codes, str):
+            codes = [item.strip().upper() for item in ts_codes.split(",") if item.strip()]
+        else:
+            codes = [str(item or "").strip().upper() for item in ts_codes if str(item or "").strip()]
+        rows = {
+            "000001.SZ": {
+                "ts_code": "000001.SZ",
+                "name": "平安银行",
+                "pre_close": 10.0,
+                "close": 11.0,
+                "vol": 920000000,
+                "amount": 1600000000,
+            },
+            "600000.SH": {
+                "ts_code": "600000.SH",
+                "name": "浦发银行",
+                "pre_close": 9.0,
+                "close": 9.61,
+                "vol": 410000000,
+                "amount": 1100000000,
+            },
+            "300059.SZ": {
+                "ts_code": "300059.SZ",
+                "name": "东方财富",
+                "pre_close": 17.39,
+                "close": 18.36,
+                "vol": 310000000,
+                "amount": 1260000000,
+            },
+        }
+        return [rows[code] for code in codes if code in rows]
+
+    def get_stock_bak_basic(self, ts_code, trade_date=None):
+        rows = {
+            "000001.SZ": {"ts_code": "000001.SZ", "total_share": 194.06, "float_share": 194.06},
+            "600000.SH": {"ts_code": "600000.SH", "total_share": 293.52, "float_share": 293.52},
+            "300059.SZ": {"ts_code": "300059.SZ", "total_share": 66.5, "float_share": 50.0},
+        }
+        return rows.get(str(ts_code or "").strip().upper(), {})
+
 
 class TokenlessKlineDataClient(FakeDataClient):
     def get_klines(self, ts_code, level, start_date, end_date):
@@ -179,6 +227,26 @@ class SparseThemeDataClient(FakeDataClient):
             self.records[stock.symbol] = stock
             self.records[stock.ts_code] = stock
             self.records[stock.name] = stock
+
+
+class BullishKlineDataClient(FakeDataClient):
+    def get_klines(self, ts_code, level, start_date, end_date):
+        rows = []
+        for idx in range(36):
+            close = 10 + idx * 0.35
+            rows.append(
+                {
+                    "index": idx,
+                    "date": f"202402{idx + 1:02d}",
+                    "open": close - 0.18,
+                    "high": close + 0.32,
+                    "low": close - 0.35,
+                    "close": close,
+                    "vol": 1000 + idx * 20,
+                    "amount": 10000 + idx * 100,
+                }
+            )
+        return rows
 
 
 class FakeScreenProvider:
@@ -232,6 +300,7 @@ class FakeScreenProvider:
                     "涨跌幅": "10.0%",
                     "成交额": "16.0亿",
                     "换手率": "5.6%",
+                    "总市值": "2000亿",
                 },
                 {
                     "股票代码": "600000",
@@ -240,6 +309,7 @@ class FakeScreenProvider:
                     "涨跌幅": "6.8%",
                     "成交额": "11.0亿",
                     "换手率": "4.3%",
+                    "总市值": "1500亿",
                 },
                 {
                     "股票代码": "300059",
@@ -248,6 +318,7 @@ class FakeScreenProvider:
                     "涨跌幅": "5.6%",
                     "成交额": "12.6亿",
                     "换手率": "6.2%",
+                    "总市值": "500亿",
                 }
             ],
             "total": 3,
@@ -374,6 +445,49 @@ class SmartPickerServiceTest(unittest.TestCase):
         self.assertEqual(result["candidates"][0]["leader"]["label"], "龙头候选")
         self.assertEqual(result["leader_board"][0]["role"], "龙头候选")
 
+    def test_screen_filters_market_turnover_and_market_cap(self):
+        result = self.service.screen(
+            query_text="银行股涨幅大于2%",
+            level="daily",
+            limit=4,
+            screen_filters={
+                "market_scope": "chinext",
+                "turnover_min": 6,
+                "market_cap_max": 800,
+            },
+        )
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["total"], 1)
+        self.assertEqual(result["candidates"][0]["stock"]["symbol"], "300059")
+        self.assertEqual(result["filters"]["market_scope"], "chinext")
+
+    def test_screen_technical_shape_filter_uses_klines(self):
+        result = self.service.screen(
+            query_text="银行股涨幅大于2%",
+            level="daily",
+            limit=4,
+            screen_filters={"technical_shape": "ma_bullish"},
+        )
+        self.assertEqual(result["candidates"], [])
+
+        bullish_service = SmartPickerService(
+            data_client=BullishKlineDataClient(),
+            mx_data_provider=None,
+            news_provider=FakeNewsProvider(),
+            screen_provider=FakeScreenProvider(),
+            watchlist_provider=self.watchlist,
+            trading_profile=FakeProfileService(),
+        )
+        bullish_result = bullish_service.screen(
+            query_text="银行股涨幅大于2%",
+            level="daily",
+            limit=4,
+            screen_filters={"technical_shape": "ma_bullish"},
+        )
+        self.assertTrue(bullish_result["candidates"])
+        self.assertEqual(bullish_result["candidates"][0]["technical_shape"]["label"], "均线多头排列")
+
     def test_leader_label_requires_theme_depth_and_takeover(self):
         service = SmartPickerService(
             data_client=SparseThemeDataClient(),
@@ -399,6 +513,82 @@ class SmartPickerServiceTest(unittest.TestCase):
         self.assertIn("主流合力或承接确认还不够", leader["summary"])
         self.assertEqual(theme_context["leaders"][0]["role"], "前排助攻")
 
+    def test_candidate_structure_rejects_buy_signal_in_downtrend(self):
+        analysis = {
+            "trend": {
+                "type": "趋势",
+                "direction": "down",
+                "label": "下跌趋势",
+                "position": "below_center",
+                "position_label": "中枢下方",
+            },
+            "signals": [
+                {
+                    "name": "buy3",
+                    "side": "buy",
+                    "status": "confirmed",
+                    "status_label": "确认",
+                    "invalidation_price": 18.6,
+                }
+            ],
+            "divergences": [],
+        }
+
+        structure = _candidate_structure(analysis, "daily")
+
+        self.assertEqual(structure["label"], "结构回避")
+        self.assertEqual(structure["tone"], "caution")
+
+    def test_candidate_structure_caps_unfinished_rebound_to_observe(self):
+        analysis = {
+            "trend": {
+                "type": "未成中枢",
+                "direction": "up",
+                "label": "线段推进",
+                "position": "no_center",
+                "position_label": "无中枢",
+            },
+            "signals": [
+                {
+                    "name": "buy3",
+                    "side": "buy",
+                    "status": "confirmed",
+                    "status_label": "确认",
+                    "invalidation_price": 22.3,
+                }
+            ],
+            "divergences": [],
+        }
+
+        structure = _candidate_structure(analysis, "daily")
+
+        self.assertEqual(structure["label"], "候选观察")
+        self.assertEqual(structure["tone"], "neutral")
+
+    def test_theme_context_does_not_promote_board_list_without_quote_data(self):
+        rows = [
+            {"股票代码": "000001", "股票简称": "平安银行"},
+            {"股票代码": "600000", "股票简称": "浦发银行"},
+        ]
+
+        theme_context = self.service._build_theme_context(rows)
+        group = theme_context["groups_by_industry"]["银行"]
+        stock = self.service.data_client.resolve_stock("000001.SZ").as_dict()
+        emotion = _candidate_emotion(stock, rows[0], theme_context)
+        leader = _candidate_leader(stock, rows[0], theme_context)
+
+        self.assertFalse(group["has_market_evidence"])
+        self.assertEqual(group["tier_label"], "轮动观察")
+        self.assertEqual(emotion["tone"], "caution")
+        self.assertEqual(leader["label"], "非核心观察")
+
+    def test_candidate_capacity_requires_amount_evidence(self):
+        capacity = _candidate_capacity({"股票代码": "000001", "股票简称": "平安银行"})
+
+        self.assertEqual(capacity["label"], "容量待核")
+        self.assertEqual(capacity["tone"], "caution")
+        self.assertIn("缺少成交额", capacity["summary"])
+
     def test_screen_supports_board_scope(self):
         result = self.service.screen_with_board(
             query_text="银行股涨幅大于2%",
@@ -422,6 +612,10 @@ class SmartPickerServiceTest(unittest.TestCase):
         self.assertEqual(result["board_filters"][0]["source"], "tdx")
         self.assertEqual(result["total"], 1)
         self.assertEqual(result["candidates"][0]["stock"]["symbol"], "300059")
+        self.assertEqual(result["candidates"][0]["quote"]["amount"], "12.60亿")
+        self.assertEqual(result["candidates"][0]["quote"]["turnover"], "6.20%")
+        self.assertEqual(result["candidates"][0]["quote"]["market_cap"], "1221亿")
+        self.assertIn("总市值 1221亿", result["candidates"][0]["capacity"]["summary"])
 
     def test_screen_watchlist_builds_candidates(self):
         result = self.service.screen_watchlist(level="daily")

@@ -13,7 +13,7 @@ class _BrokenConnectionContext:
 
 class BrokenStockBasicStore(StockBasicCacheStore):
     def __init__(self):
-        super().__init__(dsn="postgresql://demo")
+        super().__init__(dsn="mysql://demo:demo@127.0.0.1:3306/demo")
 
     def _connection(self):
         return _BrokenConnectionContext()

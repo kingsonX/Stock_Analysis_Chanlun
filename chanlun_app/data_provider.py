@@ -13,6 +13,7 @@ import pandas as pd
 
 from .config import BASE_DIR, LEVELS, STOCK_CACHE_FILE
 from .hot_money_store import HotMoneyDailyTradeStore, HotMoneyStoreError
+from .mysql_store import build_mysql_dsn
 from .stock_basic_store import StockBasicCacheStore, StockBasicStoreError
 
 
@@ -118,15 +119,16 @@ class TushareClient:
         self._hot_money_cache: tuple[float, list[dict[str, Any]]] | None = None
         self._hot_money_detail_cache: dict[str, tuple[float, dict[str, Any]]] = {}
         self._hot_money_detail_cache_dir = BASE_DIR / "cache" / "hot_money_detail"
+        mysql_dsn = _mysql_dsn_from_env()
         self._hot_money_store = hot_money_store or HotMoneyDailyTradeStore(
-            dsn=_env_value("SUPABASE_DB_URL") or _env_value("DATABASE_URL"),
-            min_size=_safe_env_int("SUPABASE_DB_POOL_MIN_SIZE", 1),
-            max_size=_safe_env_int("SUPABASE_DB_POOL_MAX_SIZE", 4),
+            dsn=mysql_dsn,
+            min_size=_safe_env_int("MYSQL_POOL_MIN_SIZE", 1),
+            max_size=_safe_env_int("MYSQL_POOL_MAX_SIZE", 4),
         )
         self._stock_basic_store = stock_basic_store or StockBasicCacheStore(
-            dsn=_env_value("SUPABASE_DB_URL") or _env_value("DATABASE_URL"),
-            min_size=_safe_env_int("SUPABASE_DB_POOL_MIN_SIZE", 1),
-            max_size=_safe_env_int("SUPABASE_DB_POOL_MAX_SIZE", 4),
+            dsn=mysql_dsn,
+            min_size=_safe_env_int("MYSQL_POOL_MIN_SIZE", 1),
+            max_size=_safe_env_int("MYSQL_POOL_MAX_SIZE", 4),
         )
 
     def _client(self) -> Any:
@@ -393,7 +395,7 @@ class TushareClient:
         if not self._stock_basic_store.enabled:
             return {
                 "status": "disabled",
-                "message": "未配置 SUPABASE_DB_URL，已跳过 PostgreSQL 基础资料缓存。",
+                "message": "未配置 MySQL 缓存连接，已跳过基础资料缓存。",
                 "ts_code": ts_code,
             }
 
@@ -410,7 +412,7 @@ class TushareClient:
         self._write_stock_basic_store_cache(stock_payload, basics)
         return {
             "status": "ok",
-            "message": "股票基础资料已写入 PostgreSQL 缓存。",
+            "message": "股票基础资料已写入 MySQL 缓存。",
             "ts_code": ts_code,
             "trade_date": str(basics.get("trade_date") or ""),
         }
@@ -729,6 +731,44 @@ class TushareClient:
             ),
         }
 
+    def get_kpl_list(self, trade_date: str | None = None) -> dict[str, Any]:
+        df, actual_trade_date = self._fetch_market_dataframe(
+            api_name="kpl_list",
+            label="开盘啦榜单",
+            trade_date=trade_date,
+            fields="ts_code,name,trade_date,theme,pct_chg,amount,turnover_rate,tag,status,net_change,bid_amount,lu_desc",
+            candidate_days=5,
+        )
+        return {
+            "trade_date": actual_trade_date,
+            "items": _standardize_market_rows(
+                df,
+                numeric_fields=("pct_chg", "amount", "turnover_rate", "net_change", "bid_amount"),
+            ),
+        }
+
+    def get_kpl_concept_cons(
+        self,
+        trade_date: str | None = None,
+        ts_code: str | None = None,
+        con_code: str | None = None,
+    ) -> dict[str, Any]:
+        df, actual_trade_date = self._fetch_market_dataframe(
+            api_name="kpl_concept_cons",
+            label="开盘啦题材成分",
+            trade_date=trade_date,
+            fields="ts_code,name,con_name,con_code,trade_date,desc,hot_num",
+            extra_params={
+                "ts_code": str(ts_code or "").strip() or None,
+                "con_code": str(con_code or "").strip().upper() or None,
+            },
+            candidate_days=5,
+        )
+        return {
+            "trade_date": actual_trade_date,
+            "items": _standardize_market_rows(df, numeric_fields=("hot_num",)),
+        }
+
     def get_hot_money_list(self, name: str | None = None, force_refresh: bool = False) -> list[dict[str, Any]]:
         cleaned_name = (name or "").strip()
         if not cleaned_name and not force_refresh and self._hot_money_cache is not None:
@@ -854,7 +894,7 @@ class TushareClient:
         try:
             payload = self._hot_money_store.get_payload(trade_date)
         except HotMoneyStoreError as exc:
-            logger.warning("读取 Supabase 游资缓存失败：%s", exc)
+            logger.warning("读取 MySQL 游资缓存失败：%s", exc)
             return None
         if payload is None:
             return None
@@ -870,7 +910,7 @@ class TushareClient:
         try:
             self._hot_money_store.save_payload(payload)
         except HotMoneyStoreError as exc:
-            logger.warning("写入 Supabase 游资缓存失败：%s", exc)
+            logger.warning("写入 MySQL 游资缓存失败：%s", exc)
 
     def _read_stock_basic_store_cache(self, ts_code: str, trade_date: str | None = None) -> dict[str, Any]:
         if not self._stock_basic_store.enabled:
@@ -878,7 +918,7 @@ class TushareClient:
         try:
             payload = self._stock_basic_store.get_payload(ts_code=ts_code, trade_date=trade_date)
         except StockBasicStoreError as exc:
-            logger.warning("读取 Supabase 股票基础资料缓存失败：%s", exc)
+            logger.warning("读取 MySQL 股票基础资料缓存失败：%s", exc)
             return {}
         if not isinstance(payload, dict):
             return {}
@@ -891,7 +931,7 @@ class TushareClient:
         try:
             self._stock_basic_store.save_payload(stock=stock, bak_basic=bak_basic)
         except StockBasicStoreError as exc:
-            logger.warning("写入 Supabase 股票基础资料缓存失败：%s", exc)
+            logger.warning("写入 MySQL 股票基础资料缓存失败：%s", exc)
 
     def _normalize_rt_code(self, value: str) -> str:
         cleaned = str(value or "").strip().upper()
@@ -1239,3 +1279,30 @@ def _safe_env_int(name: str, default: int) -> int:
         return int(raw)
     except ValueError:
         return default
+
+
+def _mysql_dsn_from_env() -> str:
+    explicit = _env_value("MYSQL_URL")
+    if explicit:
+        return explicit
+
+    database_url = _env_value("DATABASE_URL")
+    if database_url and database_url.lower().startswith("mysql"):
+        return database_url
+
+    host = _env_value("MYSQL_HOST")
+    user = _env_value("MYSQL_USER")
+    database = _env_value("MYSQL_DATABASE")
+    if not (host and user and database):
+        return ""
+    port = _safe_env_int("MYSQL_PORT", 3306)
+    password = _env_value("MYSQL_PASSWORD") or ""
+    charset = _env_value("MYSQL_CHARSET") or "utf8mb4"
+    return build_mysql_dsn(
+        host=host,
+        port=port,
+        user=user,
+        password=password,
+        database=database,
+        charset=charset,
+    )
