@@ -9,7 +9,7 @@ python3 -m venv --system-site-packages .venv
 .venv/bin/python -m pip install -r requirements.txt
 export TUSHARE_TOKEN="你的 Tushare Pro Token"
 export MX_APIKEY="你的东方财富妙想 API Key"
-export SUPABASE_DB_URL="你的 Supabase Session Pool 连接串"
+export MYSQL_URL="mysql://root:你的密码@127.0.0.1:3306/Stock_Analysis_Chanlun?charset=utf8mb4"
 export CLAUDE_BASE_URL="https://code.newcli.com/claude"
 export CLAUDE_API_KEY="你的 Claude API Key"
 .venv/bin/python run.py
@@ -23,7 +23,7 @@ export CLAUDE_MODEL="Claude Sonnet 4.6"
 
 打开浏览器访问 `http://127.0.0.1:5000`。
 
-也可以复制 `.env.example` 为 `.env`，把 `TUSHARE_TOKEN` 和可选的 `MX_APIKEY`、`SUPABASE_DB_URL` 填进去后再启动；`.env` 已被 Git 忽略。
+也可以复制 `.env.example` 为 `.env`，把 `TUSHARE_TOKEN` 和可选的 `MX_APIKEY`、`MYSQL_URL` 填进去后再启动；`.env` 已被 Git 忽略。
 
 ## 功能
 
@@ -49,5 +49,5 @@ export CLAUDE_MODEL="Claude Sonnet 4.6"
 - Token 从 `TUSHARE_TOKEN` 环境变量读取，不会写入代码。
 - 妙想数据从 `MX_APIKEY` 环境变量读取；缺少或调用失败时只影响右侧数据页，不影响缠论主功能。
 - `Claude` 研究解读从 `CLAUDE_API_KEY` 环境变量读取；建议同时配置 `CLAUDE_BASE_URL` 和 `CLAUDE_MODEL`；缺少时不影响候选池和缠论结构，只会让 AI 解读按钮无法生成内容。
-- `SUPABASE_DB_URL` 建议填写 **Supabase Supavisor session mode** 连接串（端口 `5432`）。项目会优先查询 `app_private.hot_money_daily_fetches / app_private.hot_money_daily_trades`，没有命中时才调用 `hm_detail`，并通过 PostgreSQL session pool 回写缓存，避免反复消耗每天仅两次的接口额度。
+- `MYSQL_URL` 或 `MYSQL_HOST / MYSQL_PORT / MYSQL_USER / MYSQL_PASSWORD / MYSQL_DATABASE` 用于游资缓存、股票基础资料缓存、自选入库和智能盯盘。项目会优先查询 MySQL 中的 `hot_money_daily_fetches / hot_money_daily_trades`，没有命中时才调用 `hm_detail`，并回写缓存，避免反复消耗每天仅两次的接口额度。
 - 缠论规则存在社区口径差异，本项目把主要规则集中在 `chanlun_app/chanlun.py`，后续可继续细化。

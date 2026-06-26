@@ -131,7 +131,7 @@ class FakeClient:
         self.last_stock_basic_cache = {"stock": stock, "bak_basic": bak_basic}
         return {
             "status": "ok",
-            "message": "股票基础资料已写入 PostgreSQL 缓存。",
+            "message": "股票基础资料已写入 MySQL 缓存。",
             "ts_code": stock.get("ts_code", ""),
             "trade_date": (bak_basic or {}).get("trade_date", ""),
         }
@@ -509,6 +509,75 @@ class FakeWatchtowerClient:
         }
 
 
+class FakeThemeBoardClient:
+    def __init__(self):
+        self.last_overview_trade_date = None
+        self.last_detail = None
+
+    def overview(self, trade_date=None):
+        self.last_overview_trade_date = trade_date
+        return {
+            "status": "ok",
+            "trade_date": trade_date or "20260626",
+            "summary": {
+                "theme_count": 3,
+                "stock_count": 12,
+                "leader_name": "先进封装",
+                "leader_stock_count": 5,
+                "leader_hot_total": 56000,
+                "kpl_stock_count": 28,
+            },
+            "items": [
+                {
+                    "ts_code": "000352.KP",
+                    "name": "先进封装",
+                    "rank": 1,
+                    "stock_count": 5,
+                    "hot_total": 56000,
+                    "hot_avg": 11200,
+                    "hot_max": 16000,
+                    "top_stock": {"name": "通富微电", "ts_code": "002156.SZ", "hot_num": 16000},
+                    "stock_names": ["通富微电", "长电科技", "华天科技"],
+                    "sample_desc": "先进封装题材持续活跃。",
+                    "board_hit_count": 2,
+                }
+            ],
+        }
+
+    def detail(self, trade_date=None, ts_code="", name=""):
+        self.last_detail = {"trade_date": trade_date, "ts_code": ts_code, "name": name}
+        return {
+            "status": "ok",
+            "trade_date": trade_date or "20260626",
+            "theme": {
+                "ts_code": ts_code or "000352.KP",
+                "name": name or "先进封装",
+                "stock_count": 2,
+                "hot_total": 22000,
+            },
+            "items": [
+                {
+                    "ts_code": "002156.SZ",
+                    "name": "通富微电",
+                    "theme_ts_code": ts_code or "000352.KP",
+                    "theme_name": name or "先进封装",
+                    "trade_date": trade_date or "20260626",
+                    "hot_num": 16000,
+                    "desc": "先进封装核心辨识度个股。",
+                },
+                {
+                    "ts_code": "600584.SH",
+                    "name": "长电科技",
+                    "theme_ts_code": ts_code or "000352.KP",
+                    "theme_name": name or "先进封装",
+                    "trade_date": trade_date or "20260626",
+                    "hot_num": 6000,
+                    "desc": "封测龙头。",
+                },
+            ],
+        }
+
+
 @unittest.skipIf(create_app is None, "Flask 未安装，跳过 API 测试。")
 class ApiTest(unittest.TestCase):
     def setUp(self):
@@ -519,6 +588,7 @@ class ApiTest(unittest.TestCase):
         self.fake_ai = FakeAIClient()
         self.fake_review = FakeReviewClient()
         self.fake_watchtower = FakeWatchtowerClient()
+        self.fake_theme_board = FakeThemeBoardClient()
         self.app = create_app(
             data_client=self.fake,
             mx_client=self.fake_mx,
@@ -527,6 +597,7 @@ class ApiTest(unittest.TestCase):
             ai_client=self.fake_ai,
             review_client=self.fake_review,
             watchtower_client=self.fake_watchtower,
+            theme_board_client=self.fake_theme_board,
         ).test_client()
 
     def test_search_supports_fuzzy_name(self):
@@ -553,7 +624,7 @@ class ApiTest(unittest.TestCase):
         self.assertIn("trend", data)
         self.assertIn("level_context", data)
         self.assertIn("ma_centers", data)
-        self.assertIn("ma_signals", data)
+        self.assertIn("kline_patterns", data)
         self.assertEqual([item["level"] for item in data["level_context"]["items"]], ["monthly", "weekly"])
         self.assertEqual(len(data["indicators"]["macd"]), len(data["klines"]))
         self.assertEqual(len(data["indicators"]["bbi"]), len(data["klines"]))
@@ -910,6 +981,24 @@ class ApiTest(unittest.TestCase):
         data = response.get_json()
         self.assertEqual(data["ai_review"]["status"], "ok")
         self.assertEqual(self.fake_review.last_ai_payload["trade_date"], "20260515")
+
+    def test_theme_board_overview(self):
+        response = self.app.get("/api/theme-board/overview?trade_date=2026-06-26")
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertEqual(data["status"], "ok")
+        self.assertEqual(data["summary"]["leader_name"], "先进封装")
+        self.assertEqual(self.fake_theme_board.last_overview_trade_date, "20260626")
+
+    def test_theme_board_detail(self):
+        response = self.app.get("/api/theme-board/detail?trade_date=2026-06-26&ts_code=000352.KP&name=先进封装")
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertEqual(data["theme"]["name"], "先进封装")
+        self.assertEqual(data["items"][0]["name"], "通富微电")
+        self.assertEqual(self.fake_theme_board.last_detail["ts_code"], "000352.KP")
 
 
 if __name__ == "__main__":

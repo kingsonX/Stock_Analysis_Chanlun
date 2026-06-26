@@ -63,6 +63,15 @@ const state = {
     hotMoneyPage: 1,
     modalPage: 1,
   },
+  themeBoard: {
+    overview: null,
+    detail: null,
+    requestId: 0,
+    detailRequestId: 0,
+    loaded: false,
+    modalTsCode: "",
+    modalName: "",
+  },
   watchtower: {
     overview: null,
     requestId: 0,
@@ -173,6 +182,18 @@ const els = {
   reviewModalMeta: document.querySelector("#reviewModalMeta"),
   reviewModalBody: document.querySelector("#reviewModalBody"),
   reviewModalCloseBtn: document.querySelector("#reviewModalCloseBtn"),
+  themeBoardStatusText: document.querySelector("#themeBoardStatusText"),
+  themeBoardDate: document.querySelector("#themeBoardDate"),
+  themeBoardRefreshBtn: document.querySelector("#themeBoardRefreshBtn"),
+  themeBoardErrorBox: document.querySelector("#themeBoardErrorBox"),
+  themeBoardSummaryBox: document.querySelector("#themeBoardSummaryBox"),
+  themeBoardListBox: document.querySelector("#themeBoardListBox"),
+  themeBoardInsightBox: document.querySelector("#themeBoardInsightBox"),
+  themeBoardModal: document.querySelector("#themeBoardModal"),
+  themeBoardModalTitle: document.querySelector("#themeBoardModalTitle"),
+  themeBoardModalMeta: document.querySelector("#themeBoardModalMeta"),
+  themeBoardModalBody: document.querySelector("#themeBoardModalBody"),
+  themeBoardModalCloseBtn: document.querySelector("#themeBoardModalCloseBtn"),
   watchtowerStatusText: document.querySelector("#watchtowerStatusText"),
   watchtowerQueryInput: document.querySelector("#watchtowerQueryInput"),
   watchtowerSearchBtn: document.querySelector("#watchtowerSearchBtn"),
@@ -427,6 +448,10 @@ function startReviewFlow(task) {
   return withPageLoading("智能复盘中", task);
 }
 
+function startThemeBoardFlow(task) {
+  return withPageLoading("题材榜单加载中", task);
+}
+
 function switchMainPage(targetId) {
   state.currentPage = targetId;
   els.mainMenu?.querySelectorAll("button[data-page]").forEach((item) => {
@@ -454,6 +479,11 @@ function switchMainPage(targetId) {
 
   if (targetId === "reviewPage") {
     ensureReviewLoaded();
+    return;
+  }
+
+  if (targetId === "themeBoardPage") {
+    ensureThemeBoardLoaded();
   }
 }
 
@@ -492,7 +522,7 @@ function renderAnalysisWatchlistAction() {
 
   if (!stock) {
     els.analysisWatchlistBtn.textContent = "加入自选";
-    els.analysisWatchlistHint.textContent = "加入后会同步当前股票基础资料到 PostgreSQL 缓存。";
+    els.analysisWatchlistHint.textContent = "加入后会同步当前股票基础资料到 MySQL 缓存。";
     return;
   }
 
@@ -506,9 +536,9 @@ function renderAnalysisWatchlistAction() {
     els.analysisWatchlistBtn.textContent = "已在自选";
     const cache = watch.cache || {};
     if (cache.status === "ok") {
-      els.analysisWatchlistHint.textContent = `${stockName} 已加入自选，基础资料已写入 PostgreSQL 缓存。`;
+      els.analysisWatchlistHint.textContent = `${stockName} 已加入自选，基础资料已写入 MySQL 缓存。`;
     } else if (cache.status === "disabled") {
-      els.analysisWatchlistHint.textContent = `${stockName} 已加入自选；当前环境未配置 PostgreSQL 缓存。`;
+      els.analysisWatchlistHint.textContent = `${stockName} 已加入自选；当前环境未配置 MySQL 缓存。`;
     } else if (cache.status === "error") {
       els.analysisWatchlistHint.textContent = `${stockName} 已加入自选，但基础资料缓存写入失败：${cache.message || "未知错误"}`;
     } else {
@@ -1331,6 +1361,18 @@ function ensureReviewLoaded() {
   if (state.review.loaded) return;
   state.review.loaded = true;
   startReviewFlow(() => loadReviewOverview());
+}
+
+function ensureThemeBoardLoaded() {
+  if (!els.themeBoardDate?.value) {
+    els.themeBoardDate.value = todayInputValue();
+  }
+  if (state.themeBoard.loaded) {
+    renderThemeBoard();
+    return;
+  }
+  state.themeBoard.loaded = true;
+  startThemeBoardFlow(() => loadThemeBoardOverview());
 }
 
 function syncPickerFiltersFromControls() {
@@ -2269,6 +2311,267 @@ function hideReviewError() {
   if (!els.reviewErrorBox) return;
   els.reviewErrorBox.hidden = true;
   els.reviewErrorBox.textContent = "";
+}
+
+function setThemeBoardStatus(message) {
+  if (els.themeBoardStatusText) {
+    els.themeBoardStatusText.textContent = message;
+  }
+}
+
+function showThemeBoardError(message) {
+  if (!els.themeBoardErrorBox) return;
+  els.themeBoardErrorBox.textContent = message;
+  els.themeBoardErrorBox.hidden = false;
+}
+
+function hideThemeBoardError() {
+  if (!els.themeBoardErrorBox) return;
+  els.themeBoardErrorBox.hidden = true;
+  els.themeBoardErrorBox.textContent = "";
+}
+
+function closeThemeBoardModal() {
+  if (!els.themeBoardModal) return;
+  state.themeBoard.modalTsCode = "";
+  state.themeBoard.modalName = "";
+  state.themeBoard.detail = null;
+  els.themeBoardModal.hidden = true;
+  document.body.classList.remove("modalOpen");
+}
+
+async function loadThemeBoardOverview() {
+  const requestId = ++state.themeBoard.requestId;
+  state.themeBoard.overview = { status: "loading" };
+  closeThemeBoardModal();
+  renderThemeBoard();
+  hideThemeBoardError();
+  setThemeBoardStatus("正在聚合开盘啦题材热度与成分股...");
+  try {
+    const dateValue = normalizeDateInput(els.themeBoardDate?.value || "");
+    const suffix = dateValue ? `?trade_date=${encodeURIComponent(dateValue)}` : "";
+    const data = await fetchJson(`/api/theme-board/overview${suffix}`);
+    if (requestId !== state.themeBoard.requestId) return;
+    state.themeBoard.overview = data;
+    state.themeBoard.loaded = true;
+    setThemeBoardStatus(`题材榜单已更新到 ${formatDate(data.trade_date || dateValue)}，先看题材热度，再点开成分股找核心票。`);
+  } catch (err) {
+    if (requestId !== state.themeBoard.requestId) return;
+    state.themeBoard.overview = { status: "error", message: err.message };
+    showThemeBoardError(err.message);
+  }
+  renderThemeBoard();
+}
+
+function renderThemeBoard() {
+  renderThemeBoardSummary();
+  renderThemeBoardList();
+  renderThemeBoardInsight();
+}
+
+function renderThemeBoardSummary() {
+  const overview = state.themeBoard.overview;
+  if (!els.themeBoardSummaryBox) return;
+  if (!overview || overview.status === "loading") {
+    els.themeBoardSummaryBox.innerHTML = `
+      <article class="reviewStatCard loading"><div class="mxSkeleton"></div><div class="mxSkeleton short"></div></article>
+      <article class="reviewStatCard loading"><div class="mxSkeleton"></div><div class="mxSkeleton short"></div></article>
+      <article class="reviewStatCard loading"><div class="mxSkeleton"></div><div class="mxSkeleton short"></div></article>
+      <article class="reviewStatCard loading"><div class="mxSkeleton"></div><div class="mxSkeleton short"></div></article>
+    `;
+    return;
+  }
+  if (overview.status === "error") {
+    els.themeBoardSummaryBox.innerHTML = `<div class="mxError">${escapeHtml(overview.message || "题材榜单加载失败。")}</div>`;
+    return;
+  }
+  const summary = overview.summary || {};
+  const cards = [
+    { label: "题材数", value: intValue(summary.theme_count), note: "当日可聚合题材" },
+    { label: "成分股数", value: intValue(summary.stock_count), note: "去重后的题材股票" },
+    { label: "龙一题材", value: summary.leader_name || "-", note: `成分股 ${intValue(summary.leader_stock_count)} 只` },
+    { label: "题材热度", value: intValue(summary.leader_hot_total), note: `榜单个股 ${intValue(summary.kpl_stock_count)} 只` },
+  ];
+  els.themeBoardSummaryBox.innerHTML = cards
+    .map(
+      (card) => `
+        <article class="reviewStatCard">
+          <span>${escapeHtml(card.label)}</span>
+          <strong>${escapeHtml(String(card.value ?? "-"))}</strong>
+          <p>${escapeHtml(card.note)}</p>
+        </article>
+      `
+    )
+    .join("");
+}
+
+function renderThemeBoardList() {
+  const overview = state.themeBoard.overview;
+  if (!els.themeBoardListBox) return;
+  if (!overview || overview.status === "loading") {
+    els.themeBoardListBox.innerHTML = `<div class="empty">正在加载题材榜单...</div>`;
+    return;
+  }
+  if (overview.status === "error") {
+    els.themeBoardListBox.innerHTML = `<div class="mxError">${escapeHtml(overview.message || "题材榜单加载失败。")}</div>`;
+    return;
+  }
+  const items = overview.items || [];
+  if (!items.length) {
+    els.themeBoardListBox.innerHTML = `<div class="empty">当前日期没有可用的题材榜单数据。</div>`;
+    return;
+  }
+  els.themeBoardListBox.innerHTML = `
+    <div class="themeBoardList">
+      ${items.map((item) => renderThemeBoardCard(item)).join("")}
+    </div>
+  `;
+}
+
+function renderThemeBoardCard(item) {
+  const topStock = item.top_stock || {};
+  const sampleStocks = Array.isArray(item.stock_names) ? item.stock_names.slice(0, 6) : [];
+  return `
+    <article class="themeBoardCard reviewClickable" data-theme-board-open="1" data-ts-code="${escapeHtml(item.ts_code || "")}" data-name="${escapeHtml(item.name || "")}">
+      <div class="themeBoardCardHeader">
+        <div>
+          <div class="themeBoardRank">第 ${intValue(item.rank)} 名</div>
+          <strong>${escapeHtml(item.name || "-")}</strong>
+        </div>
+        <span class="profileVerdict tone-neutral">热度 ${intValue(item.hot_total)}</span>
+      </div>
+      <div class="themeBoardMetrics">
+        <span>成分股 ${intValue(item.stock_count)} 只</span>
+        <span>均值 ${escapeHtml(String(item.hot_avg ?? 0))}</span>
+        <span>龙一 ${escapeHtml(topStock.name || "-")}</span>
+        <span>人气 ${intValue(topStock.hot_num)}</span>
+      </div>
+      ${sampleStocks.length ? `<p>${escapeHtml(sampleStocks.join(" / "))}</p>` : `<p>暂无题材成分股摘要。</p>`}
+      ${item.sample_desc ? `<small>${escapeHtml(item.sample_desc)}</small>` : ""}
+    </article>
+  `;
+}
+
+function renderThemeBoardInsight() {
+  const overview = state.themeBoard.overview;
+  if (!els.themeBoardInsightBox) return;
+  if (!overview || overview.status === "loading") {
+    els.themeBoardInsightBox.innerHTML = `<div class="empty">正在生成题材观察要点...</div>`;
+    return;
+  }
+  if (overview.status === "error") {
+    els.themeBoardInsightBox.innerHTML = `<div class="mxError">${escapeHtml(overview.message || "题材观察要点加载失败。")}</div>`;
+    return;
+  }
+  const items = overview.items || [];
+  const leader = items[0] || {};
+  const runnerUp = items[1] || {};
+  els.themeBoardInsightBox.innerHTML = `
+    <div class="reviewFocusStack">
+      <article class="reviewFocusItem">
+        <strong>当前龙一</strong>
+        <p>${escapeHtml(leader.name || "暂无数据")}</p>
+        <div class="reviewFocusMeta">成分股 ${intValue(leader.stock_count)} 只 · 热度 ${intValue(leader.hot_total)}</div>
+      </article>
+      <article class="reviewFocusItem">
+        <strong>第二梯队</strong>
+        <p>${escapeHtml(runnerUp.name || "暂无数据")}</p>
+        <div class="reviewFocusMeta">成分股 ${intValue(runnerUp.stock_count)} 只 · 热度 ${intValue(runnerUp.hot_total)}</div>
+      </article>
+      <article class="reviewFocusItem">
+        <strong>使用方式</strong>
+        <p>先看题材热度密度，再点开题材成分股，优先核对龙一和前排辨识度个股。</p>
+      </article>
+    </div>
+  `;
+}
+
+async function openThemeBoardModal(tsCode, name) {
+  const cleanTsCode = String(tsCode || "").trim().toUpperCase();
+  const cleanName = String(name || "").trim();
+  if (!cleanTsCode && !cleanName) return;
+  const requestId = ++state.themeBoard.detailRequestId;
+  state.themeBoard.modalTsCode = cleanTsCode;
+  state.themeBoard.modalName = cleanName;
+  state.themeBoard.detail = { status: "loading" };
+  if (els.themeBoardModalTitle) {
+    els.themeBoardModalTitle.textContent = cleanName || "题材成分股明细";
+  }
+  if (els.themeBoardModalMeta) {
+    els.themeBoardModalMeta.textContent = `正在加载 ${cleanName || cleanTsCode} 的成分股数据...`;
+  }
+  if (els.themeBoardModalBody) {
+    els.themeBoardModalBody.innerHTML = `<div class="empty">正在加载题材成分股数据...</div>`;
+  }
+  if (els.themeBoardModal) {
+    els.themeBoardModal.hidden = false;
+  }
+  document.body.classList.add("modalOpen");
+  try {
+    const params = new URLSearchParams();
+    const dateValue = normalizeDateInput(els.themeBoardDate?.value || "");
+    if (dateValue) params.set("trade_date", dateValue);
+    if (cleanTsCode) params.set("ts_code", cleanTsCode);
+    if (cleanName) params.set("name", cleanName);
+    const data = await fetchJson(`/api/theme-board/detail?${params.toString()}`);
+    if (requestId !== state.themeBoard.detailRequestId) return;
+    state.themeBoard.detail = data;
+    renderThemeBoardModal();
+  } catch (err) {
+    if (requestId !== state.themeBoard.detailRequestId) return;
+    state.themeBoard.detail = { status: "error", message: err.message };
+    renderThemeBoardModal();
+  }
+}
+
+function renderThemeBoardModal() {
+  const detail = state.themeBoard.detail;
+  if (!els.themeBoardModalBody || !els.themeBoardModalTitle || !els.themeBoardModalMeta) return;
+  if (!detail || detail.status === "loading") {
+    els.themeBoardModalTitle.textContent = state.themeBoard.modalName || "题材成分股明细";
+    els.themeBoardModalMeta.textContent = "正在加载题材成分股数据...";
+    els.themeBoardModalBody.innerHTML = `<div class="empty">正在加载题材成分股数据...</div>`;
+    return;
+  }
+  if (detail.status === "error") {
+    els.themeBoardModalTitle.textContent = state.themeBoard.modalName || "题材成分股明细";
+    els.themeBoardModalMeta.textContent = "题材成分股加载失败";
+    els.themeBoardModalBody.innerHTML = `<div class="mxError">${escapeHtml(detail.message || "题材成分股加载失败。")}</div>`;
+    return;
+  }
+  const theme = detail.theme || {};
+  const items = detail.items || [];
+  els.themeBoardModalTitle.textContent = theme.name || state.themeBoard.modalName || "题材成分股明细";
+  els.themeBoardModalMeta.textContent = `题材日期 ${formatDate(detail.trade_date || "")} · 成分股 ${intValue(theme.stock_count)} 只 · 总热度 ${intValue(theme.hot_total)}`;
+  els.themeBoardModalBody.innerHTML = items.length
+    ? `
+      <div class="reviewPanelStack">
+        <div class="reviewPanelMeta">
+          <small>点击股票可直接跳转到股票分析；题材描述保留开盘啦题材成分接口原文。</small>
+        </div>
+        <table class="reviewTable">
+          <thead>
+            <tr>
+              <th>股票</th>
+              <th>代码</th>
+              <th>人气值</th>
+              <th>题材描述</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${items.map((item) => `
+              <tr class="reviewClickable" data-review-open-analysis="1" data-ts-code="${escapeHtml(item.ts_code || "")}" data-name="${escapeHtml(item.name || "")}">
+                <td>${renderReviewStockButton(item.name || "-", item)}</td>
+                <td>${escapeHtml(item.ts_code || "-")}</td>
+                <td>${intValue(item.hot_num)}</td>
+                <td>${escapeHtml(item.desc || "-")}</td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      </div>
+    `
+    : `<div class="empty">当前题材没有可展示的成分股数据。</div>`;
 }
 
 async function loadReviewOverview() {
@@ -4367,7 +4670,7 @@ function renderChart() {
   const visibleMa10 = (analysis.indicators?.ma10 || []).slice(view.start, view.end);
   const visibleMa20 = (analysis.indicators?.ma20 || []).slice(view.start, view.end);
   const visibleMaCenters = visibleItems(replayItemsByEnd(analysis.ma_centers || [], "end_index"), "start_index", "end_index", view);
-  const visibleMaSignals = visibleIndexSignals(replayFilteredIndexSignals(analysis.ma_signals || []), view);
+  const visibleKlinePatterns = visibleIndexSignals(replayFilteredIndexSignals(analysis.kline_patterns || []), view);
   const weakToStrongSet = buildWeakToStrongSet(analysis);
   const range = priceRange(visibleKlines, visibleCenters, visibleBbi);
   const maRange = movingAverageRange(visibleKlines, visibleMa5, visibleMa10, visibleMa20, visibleMaCenters);
@@ -4397,7 +4700,7 @@ function renderChart() {
     { key: "MA10", rows: visibleMa10, color: "#2563eb" },
     { key: "MA20", rows: visibleMa20, color: "#7c3aed" },
   ]);
-  drawMaSignals(ctx, visibleMaSignals, x, maY, maPlot);
+  drawKlinePatterns(ctx, visibleKlinePatterns, x, maY, maPlot);
   drawMacd(ctx, rect, macdPlot, visibleMacd, visibleDivergences(replayFilteredDivergences(analysis.divergences || []), view), x, candleW);
 
   if (state.hoverIndex !== null && state.hoverIndex >= view.start && state.hoverIndex < view.end) {
@@ -4548,21 +4851,6 @@ function drawMaCenters(ctx, centers, x, y, plot) {
   });
 }
 
-function drawMaSignals(ctx, signals, x, y, plot) {
-  signals.forEach((item) => {
-    const px = x(item.index);
-    const py = y(item.price);
-    drawSignalTag(ctx, {
-      x: px,
-      y: py,
-      label: maSignalLabel(item),
-      buy: item.side === "buy",
-      plot,
-      compact: true,
-    });
-  });
-}
-
 function drawBbi(ctx, bbiRows, x, y) {
   const validRows = bbiRows.filter((item) => item.value !== null && Number.isFinite(Number(item.value)));
   if (validRows.length < 2) return;
@@ -4585,6 +4873,20 @@ function drawBbi(ctx, bbiRows, x, y) {
   ctx.textAlign = "left";
   ctx.textBaseline = "middle";
   ctx.fillText("BBI", x(last.index) + 6, y(last.value));
+}
+
+function drawKlinePatterns(ctx, patterns, x, y, plot) {
+  patterns.forEach((item) => {
+    drawPatternTag(ctx, {
+      x: x(item.index),
+      y: y(item.price),
+      label: item.label || "形态",
+      direction: item.direction || "neutral",
+      tone: item.tone || "neutral",
+      focus: Boolean(item.focus),
+      plot,
+    });
+  });
 }
 
 function drawMacd(ctx, rect, plot, macdRows, divergences, x, candleW) {
@@ -4877,6 +5179,50 @@ function drawSignalTag(ctx, { x, y, label, buy, plot, compact = false }) {
   ctx.lineWidth = 1;
 }
 
+function drawPatternTag(ctx, { x, y, label, direction, tone, focus, plot }) {
+  const above = direction !== "down";
+  const { tagX, tagY, width, height } = patternTagBounds(x, y, label, above, plot);
+  const color = patternToneColor(tone);
+
+  ctx.fillStyle = color;
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.9)";
+  ctx.lineWidth = focus ? 2 : 1;
+  roundedRect(ctx, tagX, tagY, width, height, 4);
+  ctx.fill();
+  ctx.stroke();
+  ctx.lineWidth = 1;
+
+  ctx.beginPath();
+  if (above) {
+    const baseY = tagY + height;
+    ctx.moveTo(x, Math.max(y - 1, plot.top));
+    ctx.lineTo(Math.max(tagX + 8, x - 5), baseY);
+    ctx.lineTo(Math.min(tagX + width - 8, x + 5), baseY);
+  } else {
+    const baseY = tagY;
+    ctx.moveTo(x, Math.min(y + 1, plot.top + plot.height));
+    ctx.lineTo(Math.max(tagX + 8, x - 5), baseY);
+    ctx.lineTo(Math.min(tagX + width - 8, x + 5), baseY);
+  }
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.fillStyle = "#fff";
+  ctx.font = "600 11px sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(label, tagX + width / 2, tagY + height / 2 + 0.5);
+
+  ctx.fillStyle = color;
+  ctx.strokeStyle = "#fff";
+  ctx.lineWidth = 1.4;
+  ctx.beginPath();
+  ctx.arc(x, y, 3.3, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.lineWidth = 1;
+}
+
 function signalTagBounds(x, y, buy, plot, compact = false) {
   const width = compact ? 28 : 34;
   const height = compact ? 18 : 20;
@@ -4886,6 +5232,29 @@ function signalTagBounds(x, y, buy, plot, compact = false) {
   const idealY = buy ? y + gap + pointer : y - gap - pointer - height;
   const tagY = Math.max(plot.top + 2, Math.min(idealY, plot.top + plot.height - height - 2));
   return { tagX, tagY, width, height };
+}
+
+function patternTagBounds(x, y, label, above, plot) {
+  const metrics = patternTagMetrics(label);
+  const pointer = 6;
+  const gap = 7;
+  const tagX = Math.max(plot.left + 2, Math.min(x - metrics.width / 2, plot.left + plot.width - metrics.width - 2));
+  const idealY = above ? y - gap - pointer - metrics.height : y + gap + pointer;
+  const tagY = Math.max(plot.top + 2, Math.min(idealY, plot.top + plot.height - metrics.height - 2));
+  return { tagX, tagY, width: metrics.width, height: metrics.height };
+}
+
+function patternTagMetrics(label) {
+  return {
+    width: Math.max(48, Math.min(86, String(label || "").length * 13 + 18)),
+    height: 20,
+  };
+}
+
+function patternToneColor(tone) {
+  if (tone === "positive") return "#c24136";
+  if (tone === "caution") return "#14845f";
+  return "#256f92";
 }
 
 function roundedRect(ctx, x, y, width, height, radius) {
@@ -4913,15 +5282,6 @@ function signalLabel(signal) {
   if (match) {
     return `${side}${{ 一: "1", 二: "2", 三: "3" }[match[1]]}`;
   }
-  return side;
-}
-
-function maSignalLabel(signal) {
-  const type = signal.type || "";
-  const side = signal.side === "sell" ? "S" : "B";
-  if (type.includes("三类")) return `${side}3`;
-  if (type.includes("二类")) return `${side}2`;
-  if (type.includes("一类")) return `${side}1`;
   return side;
 }
 
@@ -5178,7 +5538,7 @@ function signalFromMainPointer(event, analysis) {
   return best;
 }
 
-function maSignalFromPointer(event, analysis) {
+function klinePatternFromPointer(event, analysis) {
   const rect = els.canvas.getBoundingClientRect();
   const plots = chartPlots(rect);
   const plot = plots.ma;
@@ -5195,7 +5555,7 @@ function maSignalFromPointer(event, analysis) {
   const range = movingAverageRange(visibleKlines, visibleMa5, visibleMa10, visibleMa20, visibleMaCenters);
   const x = (idx) => plot.left + ((idx - view.start + 0.5) / view.count) * plot.width;
   const y = (price) => plot.top + ((range.high - price) / (range.high - range.low)) * plot.height;
-  const candidates = visibleIndexSignals(replayFilteredIndexSignals(analysis.ma_signals || []), view);
+  const candidates = visibleIndexSignals(replayFilteredIndexSignals(analysis.kline_patterns || []), view);
   const barHit = Math.max(10, plot.width / view.count);
 
   let best = null;
@@ -5203,7 +5563,7 @@ function maSignalFromPointer(event, analysis) {
   for (const item of candidates) {
     const px = x(item.index);
     const py = y(item.price);
-    const bounds = signalTagBounds(px, py, item.side === "buy", plot, true);
+    const bounds = patternTagBounds(px, py, item.label || "形态", item.direction !== "down", plot);
     const insideTag =
       pointerX >= bounds.tagX - 4 &&
       pointerX <= bounds.tagX + bounds.width + 4 &&
@@ -5233,13 +5593,18 @@ function showSignalTooltip(event, signal) {
   `;
 }
 
-function showMaSignalTooltip(event, signal) {
+function showKlinePatternTooltip(event, pattern) {
   els.tooltip.hidden = false;
   positionTooltip(event, 260, 140);
+  const strength = Number(pattern.strength);
+  const direction = pattern.direction === "down" ? "偏空/风险" : pattern.direction === "up" ? "偏多/转强" : "中性";
+  const strengthLabel = Number.isFinite(strength) ? `${(Math.abs(strength) * 100).toFixed(2)}%` : "-";
   els.tooltip.innerHTML = `
-    <strong>${maSignalLabel(signal)} · ${formatDate(signal.date)}</strong><br>
-    状态 ${signal.status_label || "均线辅助"} · 价格 ${formatPrice(signal.price)}<br>
-    ${signal.reason || ""}
+    <strong>${pattern.label || "K线形态"} · ${formatDate(pattern.date)}</strong><br>
+    范围 ${pattern.scope_label || "近期形态"} · 方向 ${direction}<br>
+    参考价 ${formatPrice(pattern.price)}<br>
+    强度 ${strengthLabel}<br>
+    ${pattern.reason || ""}
   `;
 }
 
@@ -5641,6 +6006,7 @@ function bindEvents() {
     }
   });
   els.reviewRefreshBtn?.addEventListener("click", () => startReviewFlow(() => loadReviewOverview()));
+  els.themeBoardRefreshBtn?.addEventListener("click", () => startThemeBoardFlow(() => loadThemeBoardOverview()));
   els.pickerRunBtn?.addEventListener("click", () => startSmartPickerFlow(() => runSmartPicker("combined")));
   els.pickerEastmoneyBatchBtn?.addEventListener("click", openPickerEastmoneyModalWithLoading);
   els.pickerRunConditionBtn?.addEventListener("click", () => startSmartPickerFlow(() => runSmartPicker("condition")));
@@ -5823,6 +6189,21 @@ function bindEvents() {
     }
   });
 
+  document.querySelector("#themeBoardPage")?.addEventListener("click", (event) => {
+    const themeTrigger = event.target.closest("[data-theme-board-open]");
+    if (themeTrigger) {
+      openThemeBoardModal(themeTrigger.dataset.tsCode || "", themeTrigger.dataset.name || "");
+      return;
+    }
+    const stockTrigger = event.target.closest("[data-review-open-analysis]");
+    if (stockTrigger) {
+      openReviewStockInAnalysis({
+        ts_code: stockTrigger.dataset.tsCode || "",
+        query_name: stockTrigger.dataset.name || "",
+      });
+    }
+  });
+
   els.reviewModal?.addEventListener("click", (event) => {
     if (event.target.closest("[data-review-modal-close]")) {
       closeReviewModal();
@@ -5861,6 +6242,20 @@ function bindEvents() {
       closeWatchtowerModal();
     }
   });
+  els.themeBoardModal?.addEventListener("click", (event) => {
+    if (event.target.closest("[data-theme-board-modal-close]")) {
+      closeThemeBoardModal();
+      return;
+    }
+    const openTrigger = event.target.closest("[data-review-open-analysis]");
+    if (openTrigger) {
+      closeThemeBoardModal();
+      openReviewStockInAnalysis({
+        ts_code: openTrigger.dataset.tsCode || "",
+        query_name: openTrigger.dataset.name || "",
+      });
+    }
+  });
   els.pickerEastmoneyModal?.addEventListener("click", (event) => {
     if (event.target.closest("[data-picker-eastmoney-close]")) {
       closePickerEastmoneyModal();
@@ -5882,6 +6277,10 @@ function bindEvents() {
     }
     if (event.key === "Escape" && els.reviewModal && !els.reviewModal.hidden) {
       closeReviewModal();
+      return;
+    }
+    if (event.key === "Escape" && els.themeBoardModal && !els.themeBoardModal.hidden) {
+      closeThemeBoardModal();
       return;
     }
     if (event.key === "Escape" && els.watchtowerModal && !els.watchtowerModal.hidden) {
@@ -5988,8 +6387,8 @@ function bindEvents() {
       if (signal) showSignalTooltip(event, signal);
       else showMainTooltip(event, analysis, idx);
     } else if (region === "ma") {
-      const signal = maSignalFromPointer(event, analysis);
-      if (signal) showMaSignalTooltip(event, signal);
+      const pattern = klinePatternFromPointer(event, analysis);
+      if (pattern) showKlinePatternTooltip(event, pattern);
       else showMainTooltip(event, analysis, idx);
     } else if (region === "macd") {
       showMacdTooltip(event, analysis);

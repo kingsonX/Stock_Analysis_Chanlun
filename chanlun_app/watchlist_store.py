@@ -6,6 +6,8 @@ import time
 from datetime import date, datetime
 from typing import Any
 
+from .mysql_store import MySQLStoreConnectionError, mysql_connection
+
 logger = logging.getLogger(__name__)
 
 
@@ -27,7 +29,6 @@ class AnalysisWatchlistStore:
         self.max_size = max(self.min_size, int(max_size))
         self.connection_timeout_seconds = max(0.2, float(connection_timeout_seconds))
         self.failure_cooldown_seconds = max(1.0, float(failure_cooldown_seconds))
-        self._pool = None
         self._schema_ready = False
         self._disabled_until = 0.0
 
@@ -44,17 +45,17 @@ class AnalysisWatchlistStore:
             with self._connection() as conn, conn.cursor() as cur:
                 self._ensure_schema(cur)
                 if cleaned_query:
-                    like = f"%{cleaned_query}%"
+                    like = f"%{cleaned_query.lower()}%"
                     cur.execute(
                         """
                         select ts_code, symbol, name, area, industry, market, exchange, list_date,
                                bak_trade_date, raw_payload, created_at, updated_at
-                        from app_private.analysis_watchlist_entries
-                        where ts_code ilike %s
-                           or symbol ilike %s
-                           or name ilike %s
-                           or area ilike %s
-                           or industry ilike %s
+                        from analysis_watchlist_entries
+                        where lower(ts_code) like %s
+                           or lower(symbol) like %s
+                           or lower(name) like %s
+                           or lower(area) like %s
+                           or lower(industry) like %s
                         order by updated_at desc, ts_code asc
                         """,
                         (like, like, like, like, like),
@@ -64,7 +65,7 @@ class AnalysisWatchlistStore:
                         """
                         select ts_code, symbol, name, area, industry, market, exchange, list_date,
                                bak_trade_date, raw_payload, created_at, updated_at
-                        from app_private.analysis_watchlist_entries
+                        from analysis_watchlist_entries
                         order by updated_at desc, ts_code asc
                         """
                     )
@@ -89,7 +90,7 @@ class AnalysisWatchlistStore:
                     """
                     select ts_code, symbol, name, area, industry, market, exchange, list_date,
                            bak_trade_date, raw_payload, created_at, updated_at
-                    from app_private.analysis_watchlist_entries
+                    from analysis_watchlist_entries
                     where ts_code = %s
                     """,
                     (cleaned_code,),
@@ -128,31 +129,29 @@ class AnalysisWatchlistStore:
         )
 
         try:
-            with self._connection() as conn:
-                with conn.transaction():
-                    with conn.cursor() as cur:
-                        self._ensure_schema(cur)
-                        cur.execute(
-                            """
-                            insert into app_private.analysis_watchlist_entries (
-                              ts_code, symbol, name, area, industry, market, exchange, list_date,
-                              bak_trade_date, raw_payload, created_at, updated_at
-                            )
-                            values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, timezone('utc', now()), timezone('utc', now()))
-                            on conflict (ts_code) do update set
-                              symbol = excluded.symbol,
-                              name = excluded.name,
-                              area = excluded.area,
-                              industry = excluded.industry,
-                              market = excluded.market,
-                              exchange = excluded.exchange,
-                              list_date = excluded.list_date,
-                              bak_trade_date = excluded.bak_trade_date,
-                              raw_payload = excluded.raw_payload,
-                              updated_at = excluded.updated_at
-                            """,
-                            row,
-                        )
+            with self._connection() as conn, conn.cursor() as cur:
+                self._ensure_schema(cur)
+                cur.execute(
+                    """
+                    insert into analysis_watchlist_entries (
+                      ts_code, symbol, name, area, industry, market, exchange, list_date,
+                      bak_trade_date, raw_payload
+                    )
+                    values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    on duplicate key update
+                      symbol = values(symbol),
+                      name = values(name),
+                      area = values(area),
+                      industry = values(industry),
+                      market = values(market),
+                      exchange = values(exchange),
+                      list_date = values(list_date),
+                      bak_trade_date = values(bak_trade_date),
+                      raw_payload = values(raw_payload),
+                      updated_at = current_timestamp
+                    """,
+                    row,
+                )
         except WatchlistStoreError:
             raise
         except Exception as exc:
@@ -167,12 +166,10 @@ class AnalysisWatchlistStore:
             return False
 
         try:
-            with self._connection() as conn:
-                with conn.transaction():
-                    with conn.cursor() as cur:
-                        self._ensure_schema(cur)
-                        cur.execute("delete from app_private.analysis_watchlist_entries where ts_code = %s", (cleaned_code,))
-                        return cur.rowcount > 0
+            with self._connection() as conn, conn.cursor() as cur:
+                self._ensure_schema(cur)
+                cur.execute("delete from analysis_watchlist_entries where ts_code = %s", (cleaned_code,))
+                return cur.rowcount > 0
         except WatchlistStoreError:
             raise
         except Exception as exc:
@@ -180,39 +177,15 @@ class AnalysisWatchlistStore:
             raise WatchlistStoreError(f"删除智能盯盘数据库记录失败：{exc}") from exc
 
     def close(self) -> None:
-        if self._pool is not None:
-            self._pool.close()
-            self._pool = None
-            self._schema_ready = False
+        self._schema_ready = False
 
     def _connection(self):
         if self._disabled_until > time.time():
             raise WatchlistStoreError("智能盯盘数据库连接暂时熔断，等待冷却后再试。")
-        pool = self._get_pool()
-        return pool.connection(timeout=self.connection_timeout_seconds)
-
-    def _get_pool(self):
-        if self._pool is not None:
-            return self._pool
-        if not self.enabled:
-            raise WatchlistStoreError("未配置 SUPABASE_DB_URL，无法使用智能盯盘数据库。")
         try:
-            from psycopg.rows import dict_row
-            from psycopg_pool import ConnectionPool
-        except Exception as exc:
-            raise WatchlistStoreError("未安装 psycopg / psycopg_pool，无法启用 PostgreSQL session pool。") from exc
-
-        try:
-            self._pool = ConnectionPool(
-                conninfo=self.dsn,
-                min_size=self.min_size,
-                max_size=self.max_size,
-                open=True,
-                kwargs={"autocommit": False, "row_factory": dict_row},
-            )
-            return self._pool
-        except Exception as exc:
-            raise WatchlistStoreError(f"智能盯盘 PostgreSQL session pool 初始化失败：{exc}") from exc
+            return mysql_connection(self.dsn, connect_timeout_seconds=self.connection_timeout_seconds)
+        except MySQLStoreConnectionError as exc:
+            raise WatchlistStoreError(str(exc)) from exc
 
     def _trip_circuit(self) -> None:
         self.close()
@@ -221,41 +194,42 @@ class AnalysisWatchlistStore:
     def _ensure_schema(self, cur) -> None:
         if self._schema_ready:
             return
-        cur.execute("create schema if not exists app_private")
         cur.execute(
             """
-            create table if not exists app_private.analysis_watchlist_entries (
-              ts_code text primary key,
-              symbol text not null default '',
-              name text not null default '',
-              area text not null default '',
-              industry text not null default '',
-              market text not null default '',
-              exchange text not null default '',
-              list_date text not null default '',
+            create table if not exists analysis_watchlist_entries (
+              ts_code varchar(16) not null primary key,
+              symbol varchar(16) not null default '',
+              name varchar(64) not null default '',
+              area varchar(32) not null default '',
+              industry varchar(64) not null default '',
+              market varchar(32) not null default '',
+              exchange varchar(16) not null default '',
+              list_date varchar(16) not null default '',
               bak_trade_date date null,
-              raw_payload jsonb not null default '{}'::jsonb,
-              created_at timestamptz not null default timezone('utc', now()),
-              updated_at timestamptz not null default timezone('utc', now())
-            )
+              raw_payload json not null,
+              created_at datetime not null default current_timestamp,
+              updated_at datetime not null default current_timestamp on update current_timestamp,
+              key idx_watchlist_updated_at (updated_at),
+              key idx_watchlist_name (name),
+              key idx_watchlist_symbol (symbol)
+            ) engine=InnoDB default charset=utf8mb4 collate=utf8mb4_unicode_ci
             """
         )
-        cur.execute("select count(*) as total from app_private.analysis_watchlist_entries")
+        cur.execute("select count(*) as total from analysis_watchlist_entries")
         summary = cur.fetchone() or {}
         if int(summary.get("total") or 0) == 0:
-            cur.execute("select to_regclass('app_private.stock_basic_snapshots') as table_name")
+            cur.execute("show tables like 'stock_basic_snapshots'")
             existing = cur.fetchone() or {}
-            if existing.get("table_name"):
+            if existing:
                 cur.execute(
                     """
-                    insert into app_private.analysis_watchlist_entries (
+                    insert ignore into analysis_watchlist_entries (
                       ts_code, symbol, name, area, industry, market, exchange, list_date,
-                      bak_trade_date, raw_payload, created_at, updated_at
+                      bak_trade_date, raw_payload
                     )
                     select ts_code, symbol, name, area, industry, market, exchange, list_date,
-                           trade_date, raw_payload, timezone('utc', now()), timezone('utc', now())
-                    from app_private.stock_basic_snapshots
-                    on conflict (ts_code) do nothing
+                           trade_date, raw_payload
+                    from stock_basic_snapshots
                     """
                 )
         self._schema_ready = True

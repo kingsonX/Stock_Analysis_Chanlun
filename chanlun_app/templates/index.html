@@ -21,6 +21,7 @@
           <button type="button" data-page="smartPickerPage">智能选股</button>
           <button type="button" data-page="watchtowerPage">智能盯盘</button>
           <button type="button" data-page="reviewPage">智能复盘</button>
+          <button type="button" data-page="themeBoardPage">题材榜单</button>
         </nav>
       </aside>
 
@@ -45,7 +46,7 @@
                     <input id="stockInput" type="search" placeholder="平安银行 / 000001 / PAYH" autocomplete="off">
                     <button id="analysisWatchlistBtn" type="button" class="ghostButton" disabled>加入自选</button>
                   </div>
-                  <p id="analysisWatchlistHint" class="searchBoxHint">加入后会同步当前股票基础资料到 PostgreSQL 缓存。</p>
+                  <p id="analysisWatchlistHint" class="searchBoxHint">加入后会同步当前股票基础资料到 MySQL 缓存。</p>
                   <div id="suggestions" class="suggestions" hidden></div>
                 </div>
               </header>
@@ -515,6 +516,54 @@
             </aside>
           </main>
         </section>
+
+        <section id="themeBoardPage" class="appPage">
+          <main class="pickerShell reviewShell themeBoardShell">
+            <section class="pickerWorkspace reviewWorkspace themeBoardWorkspace">
+              <header class="topbar pickerTopbar">
+                <div>
+                  <h1>题材榜单</h1>
+                  <p id="themeBoardStatusText">按交易日查看开盘啦题材热度排行，再展开每个题材的成分股与描述。</p>
+                </div>
+                <div class="pickerActions reviewActions">
+                  <label class="reviewDateField">
+                    题材日期
+                    <input id="themeBoardDate" type="date">
+                  </label>
+                  <button id="themeBoardRefreshBtn" type="button" class="ghostButton">刷新榜单</button>
+                </div>
+              </header>
+
+              <section id="themeBoardErrorBox" class="errorBox" hidden></section>
+
+              <section id="themeBoardSummaryBox" class="reviewSummaryGrid">
+                <article class="reviewStatCard loading"><div class="mxSkeleton"></div></article>
+                <article class="reviewStatCard loading"><div class="mxSkeleton"></div></article>
+                <article class="reviewStatCard loading"><div class="mxSkeleton"></div></article>
+                <article class="reviewStatCard loading"><div class="mxSkeleton"></div></article>
+              </section>
+
+              <section class="panel">
+                <div class="pickerTableHeader">
+                  <div>
+                    <h2>题材热度排行</h2>
+                    <p>按题材聚合人气值与成分股数量，点击题材即可展开成分股明细。</p>
+                  </div>
+                </div>
+                <div id="themeBoardListBox" class="tableWrap">
+                  <div class="empty">等待题材榜单数据。</div>
+                </div>
+              </section>
+            </section>
+
+            <aside class="pickerSidePanel themeBoardSidePanel">
+              <section class="panel themeBoardGuidePanel">
+                <h2>榜单提示</h2>
+                <div id="themeBoardInsightBox" class="empty">先看题材热度，再看龙一人气和成分股密度，点击题材可展开股票清单。</div>
+              </section>
+            </aside>
+          </main>
+        </section>
       </section>
     </main>
 
@@ -546,6 +595,22 @@
         </header>
         <div id="watchtowerModalBody" class="reviewModalBody">
           <div class="empty">等待实时日线数据。</div>
+        </div>
+      </section>
+    </div>
+
+    <div id="themeBoardModal" class="reviewModal" hidden>
+      <div class="reviewModalBackdrop" data-theme-board-modal-close="1"></div>
+      <section class="reviewModalDialog" role="dialog" aria-modal="true" aria-labelledby="themeBoardModalTitle">
+        <header class="reviewModalHeader">
+          <div>
+            <h2 id="themeBoardModalTitle">题材成分股明细</h2>
+            <p id="themeBoardModalMeta">点击题材后展示该题材的股票清单与人气值。</p>
+          </div>
+          <button id="themeBoardModalCloseBtn" type="button" class="ghostButton" data-theme-board-modal-close="1">关闭</button>
+        </header>
+        <div id="themeBoardModalBody" class="reviewModalBody">
+          <div class="empty">等待题材成分股明细。</div>
         </div>
       </section>
     </div>

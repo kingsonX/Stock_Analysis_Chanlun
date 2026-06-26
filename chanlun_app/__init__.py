@@ -9,6 +9,7 @@ from .data_provider import DataProviderError, TushareClient
 from .mx_provider import MXDataProvider, MXProviderError
 from .review_service import ReviewService
 from .smart_picker import SmartPickerService
+from .theme_board_service import ThemeBoardService
 from .trading_profile import TradingProfileService
 from .watchtower_service import WatchtowerService
 
@@ -25,6 +26,7 @@ def create_app(
     ai_client: ClaudeProfileExplainer | None = None,
     review_client: ReviewService | None = None,
     watchtower_client: WatchtowerService | None = None,
+    theme_board_client: ThemeBoardService | None = None,
 ):
     from pathlib import Path
 
@@ -50,6 +52,7 @@ def create_app(
         data_client=client,
         picker_client=smart_picker,
     )
+    theme_board_service = theme_board_client or ThemeBoardService(data_client=client)
 
     def json_error(message: str, status_code: int):
         return jsonify({"error": {"message": message, "status_code": status_code}}), status_code
@@ -412,6 +415,26 @@ def create_app(
         ts_code = str(request.args.get("ts_code") or "").strip()
         try:
             return jsonify(watchtower_service.realtime_detail(ts_code))
+        except DataProviderError as exc:
+            return json_error(exc.message, exc.status_code)
+
+    @app.get("/api/theme-board/overview")
+    def theme_board_overview():
+        trade_date = normalize_yyyymmdd(request.args.get("trade_date"))
+        try:
+            return jsonify(theme_board_service.overview(trade_date=trade_date))
+        except DataProviderError as exc:
+            return json_error(exc.message, exc.status_code)
+
+    @app.get("/api/theme-board/detail")
+    def theme_board_detail():
+        trade_date = normalize_yyyymmdd(request.args.get("trade_date"))
+        ts_code = str(request.args.get("ts_code") or "").strip()
+        name = str(request.args.get("name") or "").strip()
+        if not ts_code and not name:
+            return json_error("请输入题材代码或题材名称。", 400)
+        try:
+            return jsonify(theme_board_service.detail(trade_date=trade_date, ts_code=ts_code, name=name))
         except DataProviderError as exc:
             return json_error(exc.message, exc.status_code)
 

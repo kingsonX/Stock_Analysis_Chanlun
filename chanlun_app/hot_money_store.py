@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 import logging
 import time
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any
+
+from .mysql_store import MySQLStoreConnectionError, mysql_connection
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +31,7 @@ class HotMoneyDailyTradeStore:
         self.latest_window_days = max(1, int(latest_window_days))
         self.connection_timeout_seconds = max(0.2, float(connection_timeout_seconds))
         self.failure_cooldown_seconds = max(1.0, float(failure_cooldown_seconds))
-        self._pool = None
+        self._schema_ready = False
         self._disabled_until = 0.0
 
     @property
@@ -43,25 +45,27 @@ class HotMoneyDailyTradeStore:
         target_date = _normalize_trade_date_text(trade_date)
         try:
             with self._connection() as conn, conn.cursor() as cur:
+                self._ensure_schema(cur)
                 if target_date:
                     cur.execute(
                         """
                         select trade_date, status, record_count
-                        from app_private.hot_money_daily_fetches
+                        from hot_money_daily_fetches
                         where trade_date = %s
                         """,
                         (target_date,),
                     )
                 else:
+                    cutoff = date.today() - timedelta(days=self.latest_window_days)
                     cur.execute(
                         """
                         select trade_date, status, record_count
-                        from app_private.hot_money_daily_fetches
-                        where trade_date >= current_date - %s::int
+                        from hot_money_daily_fetches
+                        where trade_date >= %s
                         order by trade_date desc
                         limit 1
                         """,
-                        (self.latest_window_days,),
+                        (cutoff,),
                     )
                 summary = cur.fetchone()
                 if not summary:
@@ -70,9 +74,9 @@ class HotMoneyDailyTradeStore:
                 cur.execute(
                     """
                     select raw_payload
-                    from app_private.hot_money_daily_trades
+                    from hot_money_daily_trades
                     where trade_date = %s
-                    order by abs(coalesce(net_amount, 0)) desc, coalesce(buy_amount, 0) desc, id asc
+                    order by abs(ifnull(net_amount, 0)) desc, ifnull(buy_amount, 0) desc, id asc
                     """,
                     (summary["trade_date"],),
                 )
@@ -87,7 +91,7 @@ class HotMoneyDailyTradeStore:
             raise
         except Exception as exc:
             self._trip_circuit()
-            raise HotMoneyStoreError(f"读取 Supabase 游资缓存失败：{exc}") from exc
+            raise HotMoneyStoreError(f"读取 MySQL 游资缓存失败：{exc}") from exc
 
     def save_payload(self, payload: dict[str, Any]) -> None:
         if not self.enabled:
@@ -101,82 +105,93 @@ class HotMoneyDailyTradeStore:
         rows = [_serialize_item(trade_date, item) for item in items]
 
         try:
-            with self._connection() as conn:
-                with conn.transaction():
-                    with conn.cursor() as cur:
-                        cur.execute(
-                            """
-                            insert into app_private.hot_money_daily_fetches (
-                              trade_date, source_api, status, record_count, fetched_at, updated_at
-                            )
-                            values (%s, 'hm_detail', %s, %s, timezone('utc', now()), timezone('utc', now()))
-                            on conflict (trade_date) do update set
-                              source_api = excluded.source_api,
-                              status = excluded.status,
-                              record_count = excluded.record_count,
-                              fetched_at = excluded.fetched_at,
-                              updated_at = excluded.updated_at
-                            """,
-                            (trade_date, "success" if rows else "empty", len(rows)),
+            with self._connection() as conn, conn.cursor() as cur:
+                self._ensure_schema(cur)
+                cur.execute(
+                    """
+                    insert into hot_money_daily_fetches (
+                      trade_date, source_api, status, record_count, fetched_at
+                    )
+                    values (%s, 'hm_detail', %s, %s, current_timestamp)
+                    on duplicate key update
+                      source_api = values(source_api),
+                      status = values(status),
+                      record_count = values(record_count),
+                      fetched_at = values(fetched_at),
+                      updated_at = current_timestamp
+                    """,
+                    (trade_date, "success" if rows else "empty", len(rows)),
+                )
+                cur.execute("delete from hot_money_daily_trades where trade_date = %s", (trade_date,))
+                if rows:
+                    cur.executemany(
+                        """
+                        insert into hot_money_daily_trades (
+                          trade_date, ts_code, ts_name, buy_amount, sell_amount, net_amount,
+                          hm_name, hm_orgs, tag, raw_payload, fetched_at
                         )
-                        cur.execute(
-                            "delete from app_private.hot_money_daily_trades where trade_date = %s",
-                            (trade_date,),
-                        )
-                        if rows:
-                            cur.executemany(
-                                """
-                                insert into app_private.hot_money_daily_trades (
-                                  trade_date, ts_code, ts_name, buy_amount, sell_amount, net_amount,
-                                  hm_name, hm_orgs, tag, raw_payload, fetched_at
-                                )
-                                values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, timezone('utc', now()))
-                                """,
-                                rows,
-                            )
+                        values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, current_timestamp)
+                        """,
+                        rows,
+                    )
         except HotMoneyStoreError:
             raise
         except Exception as exc:
             self._trip_circuit()
-            raise HotMoneyStoreError(f"写入 Supabase 游资缓存失败：{exc}") from exc
+            raise HotMoneyStoreError(f"写入 MySQL 游资缓存失败：{exc}") from exc
 
     def close(self) -> None:
-        if self._pool is not None:
-            self._pool.close()
-            self._pool = None
+        self._schema_ready = False
 
     def _connection(self):
         if self._disabled_until > time.time():
-            raise HotMoneyStoreError("Supabase 游资缓存连接暂时熔断，等待冷却后再试。")
-        pool = self._get_pool()
-        return pool.connection(timeout=self.connection_timeout_seconds)
-
-    def _get_pool(self):
-        if self._pool is not None:
-            return self._pool
-        if not self.enabled:
-            raise HotMoneyStoreError("未配置 SUPABASE_DB_URL，无法使用游资数据库缓存。")
+            raise HotMoneyStoreError("MySQL 游资缓存连接暂时熔断，等待冷却后再试。")
         try:
-            from psycopg.rows import dict_row
-            from psycopg_pool import ConnectionPool
-        except Exception as exc:
-            raise HotMoneyStoreError("未安装 psycopg / psycopg_pool，无法启用 PostgreSQL session pool。") from exc
-
-        try:
-            self._pool = ConnectionPool(
-                conninfo=self.dsn,
-                min_size=self.min_size,
-                max_size=self.max_size,
-                open=True,
-                kwargs={"autocommit": False, "row_factory": dict_row},
-            )
-            return self._pool
-        except Exception as exc:
-            raise HotMoneyStoreError(f"Supabase PostgreSQL session pool 初始化失败：{exc}") from exc
+            return mysql_connection(self.dsn, connect_timeout_seconds=self.connection_timeout_seconds)
+        except MySQLStoreConnectionError as exc:
+            raise HotMoneyStoreError(str(exc)) from exc
 
     def _trip_circuit(self) -> None:
         self.close()
         self._disabled_until = time.time() + self.failure_cooldown_seconds
+
+    def _ensure_schema(self, cur) -> None:
+        if self._schema_ready:
+            return
+        cur.execute(
+            """
+            create table if not exists hot_money_daily_fetches (
+              trade_date date not null primary key,
+              source_api varchar(32) not null default 'hm_detail',
+              status varchar(16) not null default 'success',
+              record_count int not null default 0,
+              fetched_at datetime not null default current_timestamp,
+              updated_at datetime not null default current_timestamp on update current_timestamp
+            ) engine=InnoDB default charset=utf8mb4 collate=utf8mb4_unicode_ci
+            """
+        )
+        cur.execute(
+            """
+            create table if not exists hot_money_daily_trades (
+              id bigint unsigned not null auto_increment primary key,
+              trade_date date not null,
+              ts_code varchar(16) not null default '',
+              ts_name varchar(64) not null default '',
+              buy_amount decimal(20, 4) not null default 0,
+              sell_amount decimal(20, 4) not null default 0,
+              net_amount decimal(20, 4) not null default 0,
+              hm_name varchar(128) not null default '',
+              hm_orgs varchar(255) not null default '',
+              tag varchar(64) not null default '',
+              raw_payload json not null,
+              fetched_at datetime not null default current_timestamp,
+              key idx_hot_money_trade_date (trade_date),
+              key idx_hot_money_ts_code (ts_code),
+              key idx_hot_money_hm_name (hm_name)
+            ) engine=InnoDB default charset=utf8mb4 collate=utf8mb4_unicode_ci
+            """
+        )
+        self._schema_ready = True
 
 
 def _normalize_trade_date_text(value: Any) -> date | None:

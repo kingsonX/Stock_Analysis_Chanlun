@@ -6,6 +6,8 @@ import time
 from datetime import date, datetime
 from typing import Any
 
+from .mysql_store import MySQLStoreConnectionError, mysql_connection
+
 logger = logging.getLogger(__name__)
 
 
@@ -27,7 +29,6 @@ class StockBasicCacheStore:
         self.max_size = max(self.min_size, int(max_size))
         self.connection_timeout_seconds = max(0.2, float(connection_timeout_seconds))
         self.failure_cooldown_seconds = max(1.0, float(failure_cooldown_seconds))
-        self._pool = None
         self._schema_ready = False
         self._disabled_until = 0.0
 
@@ -49,7 +50,7 @@ class StockBasicCacheStore:
                 cur.execute(
                     """
                     select trade_date, raw_payload
-                    from app_private.stock_basic_snapshots
+                    from stock_basic_snapshots
                     where ts_code = %s
                     """,
                     (cleaned_code,),
@@ -97,31 +98,29 @@ class StockBasicCacheStore:
         )
 
         try:
-            with self._connection() as conn:
-                with conn.transaction():
-                    with conn.cursor() as cur:
-                        self._ensure_schema(cur)
-                        cur.execute(
-                            """
-                            insert into app_private.stock_basic_snapshots (
-                              ts_code, symbol, name, area, industry, market, exchange, list_date,
-                              trade_date, raw_payload, updated_at
-                            )
-                            values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, timezone('utc', now()))
-                            on conflict (ts_code) do update set
-                              symbol = excluded.symbol,
-                              name = excluded.name,
-                              area = excluded.area,
-                              industry = excluded.industry,
-                              market = excluded.market,
-                              exchange = excluded.exchange,
-                              list_date = excluded.list_date,
-                              trade_date = excluded.trade_date,
-                              raw_payload = excluded.raw_payload,
-                              updated_at = excluded.updated_at
-                            """,
-                            row,
-                        )
+            with self._connection() as conn, conn.cursor() as cur:
+                self._ensure_schema(cur)
+                cur.execute(
+                    """
+                    insert into stock_basic_snapshots (
+                      ts_code, symbol, name, area, industry, market, exchange, list_date,
+                      trade_date, raw_payload
+                    )
+                    values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    on duplicate key update
+                      symbol = values(symbol),
+                      name = values(name),
+                      area = values(area),
+                      industry = values(industry),
+                      market = values(market),
+                      exchange = values(exchange),
+                      list_date = values(list_date),
+                      trade_date = values(trade_date),
+                      raw_payload = values(raw_payload),
+                      updated_at = current_timestamp
+                    """,
+                    row,
+                )
         except StockBasicStoreError:
             raise
         except Exception as exc:
@@ -129,39 +128,15 @@ class StockBasicCacheStore:
             raise StockBasicStoreError(f"写入股票基础资料缓存失败：{exc}") from exc
 
     def close(self) -> None:
-        if self._pool is not None:
-            self._pool.close()
-            self._pool = None
-            self._schema_ready = False
+        self._schema_ready = False
 
     def _connection(self):
         if self._disabled_until > time.time():
             raise StockBasicStoreError("股票基础资料缓存连接暂时熔断，等待冷却后再试。")
-        pool = self._get_pool()
-        return pool.connection(timeout=self.connection_timeout_seconds)
-
-    def _get_pool(self):
-        if self._pool is not None:
-            return self._pool
-        if not self.enabled:
-            raise StockBasicStoreError("未配置 SUPABASE_DB_URL，无法使用股票基础资料数据库缓存。")
         try:
-            from psycopg.rows import dict_row
-            from psycopg_pool import ConnectionPool
-        except Exception as exc:
-            raise StockBasicStoreError("未安装 psycopg / psycopg_pool，无法启用 PostgreSQL session pool。") from exc
-
-        try:
-            self._pool = ConnectionPool(
-                conninfo=self.dsn,
-                min_size=self.min_size,
-                max_size=self.max_size,
-                open=True,
-                kwargs={"autocommit": False, "row_factory": dict_row},
-            )
-            return self._pool
-        except Exception as exc:
-            raise StockBasicStoreError(f"股票基础资料 PostgreSQL session pool 初始化失败：{exc}") from exc
+            return mysql_connection(self.dsn, connect_timeout_seconds=self.connection_timeout_seconds)
+        except MySQLStoreConnectionError as exc:
+            raise StockBasicStoreError(str(exc)) from exc
 
     def _trip_circuit(self) -> None:
         self.close()
@@ -170,27 +145,24 @@ class StockBasicCacheStore:
     def _ensure_schema(self, cur) -> None:
         if self._schema_ready:
             return
-        cur.execute("select to_regclass('app_private.stock_basic_snapshots') as table_name")
-        existing = cur.fetchone()
-        if existing and existing.get("table_name"):
-            self._schema_ready = True
-            return
-        cur.execute("create schema if not exists app_private")
         cur.execute(
             """
-            create table if not exists app_private.stock_basic_snapshots (
-              ts_code text primary key,
-              symbol text not null default '',
-              name text not null default '',
-              area text not null default '',
-              industry text not null default '',
-              market text not null default '',
-              exchange text not null default '',
-              list_date text not null default '',
+            create table if not exists stock_basic_snapshots (
+              ts_code varchar(16) not null primary key,
+              symbol varchar(16) not null default '',
+              name varchar(64) not null default '',
+              area varchar(32) not null default '',
+              industry varchar(64) not null default '',
+              market varchar(32) not null default '',
+              exchange varchar(16) not null default '',
+              list_date varchar(16) not null default '',
               trade_date date null,
-              raw_payload jsonb not null default '{}'::jsonb,
-              updated_at timestamptz not null default timezone('utc', now())
-            )
+              raw_payload json not null,
+              updated_at datetime not null default current_timestamp on update current_timestamp,
+              key idx_stock_basic_trade_date (trade_date),
+              key idx_stock_basic_name (name),
+              key idx_stock_basic_symbol (symbol)
+            ) engine=InnoDB default charset=utf8mb4 collate=utf8mb4_unicode_ci
             """
         )
         self._schema_ready = True

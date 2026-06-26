@@ -276,12 +276,24 @@ class ChanlunEngineTest(unittest.TestCase):
         self.assertIn("backtest", result)
         self.assertIn("risk_cards", result)
         self.assertIn("ma_centers", result)
-        self.assertIn("ma_signals", result)
+        self.assertIn("kline_patterns", result)
         self.assertIn("ma5", result["indicators"])
         self.assertIn("ma10", result["indicators"])
         self.assertIn("ma20", result["indicators"])
         self.assertIn("position_label", result["trend"])
         self.assertIn("summary", result["backtest"])
+
+    def test_analyze_klines_detects_red_three_soldiers(self):
+        klines = [
+            {"date": "20240101", "open": 10.0, "high": 11.3, "low": 9.8, "close": 11.0, "vol": 1000, "amount": 10000},
+            {"date": "20240102", "open": 10.9, "high": 12.4, "low": 10.8, "close": 12.2, "vol": 1100, "amount": 11000},
+            {"date": "20240103", "open": 12.0, "high": 13.6, "low": 11.9, "close": 13.3, "vol": 1200, "amount": 12000},
+        ]
+
+        result = analyze_klines(klines, "daily")
+
+        labels = [item["label"] for item in result["kline_patterns"]]
+        self.assertIn("红三兵", labels)
 
 
 if __name__ == "__main__":

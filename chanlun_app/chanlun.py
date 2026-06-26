@@ -191,15 +191,20 @@ class MACenter:
 
 
 @dataclass
-class MASignal:
+class KlinePattern:
     id: str
     type: str
-    side: str
+    label: str
+    direction: str
     date: str
     index: int
     price: float
-    status: str
-    status_label: str
+    start_index: int
+    end_index: int
+    tone: str
+    strength: float
+    focus: bool
+    scope_label: str
     reason: str
 
 
@@ -211,7 +216,7 @@ def analyze_klines(klines: list[dict[str, Any]], level: str = "daily") -> dict[s
     ma10 = _ma_indicator(raw_bars, 10)
     ma20 = _ma_indicator(raw_bars, 20)
     ma_centers = build_ma_centers(raw_bars, ma5, ma10, ma20)
-    ma_signals = build_ma_signals(raw_bars, ma5, ma10, ma20, ma_centers)
+    kline_patterns = build_kline_patterns(raw_bars, ma5, ma10, ma20, level)
     if len(raw_bars) < 7:
         return {
             "meta": _meta(level, len(raw_bars), 0, note="K线数量不足，无法形成稳定缠论结构。"),
@@ -232,7 +237,7 @@ def analyze_klines(klines: list[dict[str, Any]], level: str = "daily") -> dict[s
             "divergences": [],
             "signals": [],
             "ma_centers": [asdict(item) for item in ma_centers],
-            "ma_signals": [asdict(item) for item in ma_signals],
+            "kline_patterns": [asdict(item) for item in kline_patterns],
             "trend": _trend_profile(level, [], [], [], []),
             "backtest": _signal_backtest([], [], []),
             "risk_cards": _risk_cards([], _trend_profile(level, [], [], [], [])),
@@ -265,7 +270,7 @@ def analyze_klines(klines: list[dict[str, Any]], level: str = "daily") -> dict[s
                 "divergences": len(divergences),
                 "signals": len(signals),
                 "ma_centers": len(ma_centers),
-                "ma_signals": len(ma_signals),
+                "kline_patterns": len(kline_patterns),
             },
         ),
         "klines": [asdict(bar) for bar in raw_bars],
@@ -285,7 +290,7 @@ def analyze_klines(klines: list[dict[str, Any]], level: str = "daily") -> dict[s
         "divergences": [asdict(item) for item in divergences],
         "signals": [asdict(item) for item in signals],
         "ma_centers": [asdict(item) for item in ma_centers],
-        "ma_signals": [asdict(item) for item in ma_signals],
+        "kline_patterns": [asdict(item) for item in kline_patterns],
         "trend": trend,
         "backtest": backtest,
         "risk_cards": risk_cards,
@@ -1464,83 +1469,400 @@ def build_ma_centers(
     return centers
 
 
-def build_ma_signals(
+def build_kline_patterns(
     raw_bars: list[RawBar],
     ma5_rows: list[dict[str, Any]],
     ma10_rows: list[dict[str, Any]],
     ma20_rows: list[dict[str, Any]],
-    centers: list[MACenter],
-) -> list[MASignal]:
-    signals: list[MASignal] = []
-    last_buy1_index = -1
-    last_sell1_index = -1
-    last_buy2_index = -1
-    last_sell2_index = -1
-    last_buy3_center_id = ""
-    last_sell3_center_id = ""
+    level: str = "daily",
+) -> list[KlinePattern]:
+    candidates: list[dict[str, Any]] = []
+    if not raw_bars:
+        return []
+    month_start, focus_start = _pattern_window_starts(len(raw_bars), level)
 
-    def push(signal_type: str, side: str, bar: RawBar, price: float, reason: str):
-        signals.append(
-            MASignal(
-                id=f"ma_s{len(signals) + 1}",
-                type=signal_type,
-                side=side,
-                date=bar.date,
-                index=bar.index,
-                price=round(price, 6),
-                status="candidate",
-                status_label="均线辅助",
-                reason=reason,
-            )
+    def push(
+        pattern_type: str,
+        label: str,
+        direction: str,
+        index: int,
+        price: float,
+        start_index: int,
+        tone: str,
+        strength: float,
+        reason: str,
+        priority: int,
+    ) -> None:
+        if index < 0 or index >= len(raw_bars):
+            return
+        if index < month_start:
+            return
+        bar = raw_bars[index]
+        focus = index >= focus_start
+        candidates.append(
+            {
+                "id": f"kpat_{len(candidates) + 1}",
+                "type": pattern_type,
+                "label": label,
+                "direction": direction,
+                "date": bar.date,
+                "index": bar.index,
+                "price": round(price, 6),
+                "start_index": max(0, start_index),
+                "end_index": bar.index,
+                "tone": tone,
+                "strength": round(float(strength), 6),
+                "focus": focus,
+                "scope_label": "近2周重点" if focus else "近1个月观察",
+                "reason": reason,
+                "priority": priority + (10 if focus else 0),
+            }
         )
 
-    for idx in range(1, len(raw_bars)):
+    for idx in range(max(2, month_start), len(raw_bars)):
+        first, second, third = raw_bars[idx - 2], raw_bars[idx - 1], raw_bars[idx]
+        if _is_red_three_soldiers(first, second, third):
+            strength = _pct_change(first.open, third.close)
+            push(
+                "red_three_soldiers",
+                "红三兵",
+                "up",
+                idx,
+                third.high,
+                first.index,
+                "positive",
+                strength,
+                "连续三根阳线、收盘逐级抬高，短线多头推进。",
+                82,
+            )
+        if _is_three_black_crows(first, second, third):
+            strength = abs(_pct_change(first.open, third.close))
+            push(
+                "three_black_crows",
+                "三只乌鸦",
+                "down",
+                idx,
+                third.low,
+                first.index,
+                "caution",
+                strength,
+                "连续三根阴线、收盘逐级走低，空头压制明显。",
+                82,
+            )
+        if _is_morning_star(first, second, third):
+            push(
+                "morning_star",
+                "早晨之星",
+                "up",
+                idx,
+                third.high,
+                first.index,
+                "positive",
+                _body_ratio(third),
+                "下跌后出现小实体停顿并由长阳收复，属于底部反转组合。",
+                78,
+            )
+        if _is_evening_star(first, second, third):
+            push(
+                "evening_star",
+                "黄昏之星",
+                "down",
+                idx,
+                third.low,
+                first.index,
+                "caution",
+                _body_ratio(third),
+                "上涨后出现小实体停顿并由长阴回落，属于顶部转弱组合。",
+                78,
+            )
+
+    for idx in range(max(1, month_start), len(raw_bars)):
+        previous, current = raw_bars[idx - 1], raw_bars[idx]
+        if _is_bullish_engulfing(previous, current):
+            push(
+                "bullish_engulfing",
+                "看涨吞没",
+                "up",
+                idx,
+                current.high,
+                previous.index,
+                "positive",
+                _body_ratio(current),
+                "阳线实体吞没前一根阴线实体，短线承接转强。",
+                62,
+            )
+        if _is_bearish_engulfing(previous, current):
+            push(
+                "bearish_engulfing",
+                "看跌吞没",
+                "down",
+                idx,
+                current.low,
+                previous.index,
+                "caution",
+                _body_ratio(current),
+                "阴线实体吞没前一根阳线实体，短线抛压转强。",
+                62,
+            )
+
+    for idx in range(max(5, month_start), len(raw_bars)):
         current = raw_bars[idx]
-        previous = raw_bars[idx - 1]
-        current_values = [ma5_rows[idx]["value"], ma10_rows[idx]["value"], ma20_rows[idx]["value"]]
-        previous_values = [ma5_rows[idx - 1]["value"], ma10_rows[idx - 1]["value"], ma20_rows[idx - 1]["value"]]
-        if any(value is None for value in current_values + previous_values):
+        recent_change = _pct_change(raw_bars[idx - 5].close, current.close)
+        if recent_change < -0.035 and _is_hammer(current):
+            push(
+                "hammer",
+                "锤头线",
+                "up",
+                idx,
+                current.low,
+                current.index,
+                "positive",
+                abs(recent_change),
+                "阶段回落后出现长下影锤头，说明低位有资金承接。",
+                56,
+            )
+        if recent_change > 0.045 and _is_shooting_star(current):
+            push(
+                "shooting_star",
+                "射击之星",
+                "down",
+                idx,
+                current.high,
+                current.index,
+                "caution",
+                recent_change,
+                "阶段上涨后出现长上影，说明高位抛压开始增强。",
+                56,
+            )
+
+    for idx in range(max(20, month_start), len(raw_bars)):
+        current = raw_bars[idx]
+        ma5 = _ma_value(ma5_rows, idx)
+        ma10 = _ma_value(ma10_rows, idx)
+        ma20 = _ma_value(ma20_rows, idx)
+        if ma5 is None or ma10 is None or ma20 is None:
             continue
+        ten_day_change = _pct_change(raw_bars[idx - 10].close, current.close)
+        ma5_prev = _ma_value(ma5_rows, idx - 5)
+        ma20_prev = _ma_value(ma20_rows, idx - 5)
+        in_main_rise = (
+            current.close > ma5 > ma10 > ma20
+            and ma5_prev is not None
+            and ma20_prev is not None
+            and ma5 > ma5_prev
+            and ma20 >= ma20_prev * 0.995
+            and ten_day_change >= 0.08
+        )
+        if in_main_rise:
+            push(
+                "main_uptrend",
+                "主升浪",
+                "up",
+                idx,
+                current.high,
+                raw_bars[idx - 10].index,
+                "positive",
+                ten_day_change,
+                "价格沿短中期均线向上推进，十日涨幅扩大，属于主升浪观察段。",
+                92,
+            )
 
-        ma5, ma10, ma20 = current_values
-        prev5, prev10, prev20 = previous_values
-        bullish = ma5 >= ma10 >= ma20
-        bearish = ma5 <= ma10 <= ma20
-        golden_cross = prev5 <= prev10 and ma5 > ma10 and current.close >= ma5
-        dead_cross = prev5 >= prev10 and ma5 < ma10 and current.close <= ma5
+        in_downtrend = (
+            current.close < ma5 < ma10 < ma20
+            and ma5_prev is not None
+            and ma20_prev is not None
+            and ma5 < ma5_prev
+            and ma20 <= ma20_prev * 1.005
+            and ten_day_change <= -0.06
+        )
+        if in_downtrend:
+            push(
+                "downtrend",
+                "下跌趋势",
+                "down",
+                idx,
+                current.low,
+                raw_bars[idx - 10].index,
+                "caution",
+                abs(ten_day_change),
+                "价格压在短中期均线下方，十日跌幅扩大，下降趋势仍未扭转。",
+                92,
+            )
 
-        if golden_cross:
-            push("均线一类买点", "buy", current, current.low, "MA5 上穿 MA10，价格重新站回短均线。")
-            last_buy1_index = current.index
-        elif dead_cross:
-            push("均线一类卖点", "sell", current, current.high, "MA5 下穿 MA10，价格跌回短均线下。")
-            last_sell1_index = current.index
+    selected: list[dict[str, Any]] = []
+    last_label_index: dict[str, int] = {}
+    by_index: dict[int, dict[str, Any]] = {}
+    for item in sorted(candidates, key=lambda row: (row["index"], -row["priority"], -row["strength"])):
+        cooldown = 8 if item["type"] in {"main_uptrend", "downtrend"} else 3
+        previous_index = last_label_index.get(item["label"])
+        if previous_index is not None and item["index"] - previous_index < cooldown:
+            continue
+        existing = by_index.get(item["index"])
+        if existing and existing["priority"] >= item["priority"]:
+            continue
+        if existing:
+            selected.remove(existing)
+        selected.append(item)
+        by_index[item["index"]] = item
+        last_label_index[item["label"]] = item["index"]
 
-        if bullish and last_buy1_index >= 0 and current.index > last_buy1_index and last_buy2_index < last_buy1_index:
-            if current.low <= ma10 * 1.01 and current.close >= ma10 and current.low >= ma20 * 0.99:
-                push("均线二类买点", "buy", current, current.low, "多头均线下的第一次回踩 MA10/MA20。")
-                last_buy2_index = current.index
+    focus_items = [item for item in selected if item["focus"]]
+    context_items = [item for item in selected if not item["focus"]]
+    # 近两周是主观察区；一个月内的旧形态只保留少量上下文，避免图层过密拖慢缩放。
+    focus_items = sorted(focus_items, key=lambda row: (-row["priority"], -row["strength"], -row["index"]))[:10]
+    context_items = sorted(context_items, key=lambda row: (-row["priority"], -row["strength"], -row["index"]))[:4]
+    selected = sorted(focus_items + context_items, key=lambda row: row["index"])
 
-        if bearish and last_sell1_index >= 0 and current.index > last_sell1_index and last_sell2_index < last_sell1_index:
-            if current.high >= ma10 * 0.99 and current.close <= ma10 and current.high <= ma20 * 1.01:
-                push("均线二类卖点", "sell", current, current.high, "空头均线下的第一次反抽 MA10/MA20。")
-                last_sell2_index = current.index
+    return [
+        KlinePattern(
+            id=f"kpat_{idx + 1}",
+            type=item["type"],
+            label=item["label"],
+            direction=item["direction"],
+            date=item["date"],
+            index=item["index"],
+            price=item["price"],
+            start_index=item["start_index"],
+            end_index=item["end_index"],
+            tone=item["tone"],
+            strength=item["strength"],
+            focus=item["focus"],
+            scope_label=item["scope_label"],
+            reason=item["reason"],
+        )
+        for idx, item in enumerate(sorted(selected, key=lambda row: row["index"]))
+    ]
 
-        emitted_buy3 = False
-        emitted_sell3 = False
-        for center in centers:
-            if current.index <= center.end_index:
-                continue
-            if bullish and not emitted_buy3 and previous.close <= center.high < current.close and last_buy3_center_id != center.id:
-                push("均线三类买点", "buy", current, current.close, "价格向上离开均线中枢，且均线保持多头顺序。")
-                last_buy3_center_id = center.id
-                emitted_buy3 = True
-            if bearish and not emitted_sell3 and previous.close >= center.low > current.close and last_sell3_center_id != center.id:
-                push("均线三类卖点", "sell", current, current.close, "价格向下离开均线中枢，且均线保持空头顺序。")
-                last_sell3_center_id = center.id
-                emitted_sell3 = True
 
-    return signals
+def _pattern_window_starts(total: int, level: str) -> tuple[int, int]:
+    if level == "min30":
+        month_bars, focus_bars = 176, 80
+    elif level == "min60":
+        month_bars, focus_bars = 88, 40
+    elif level == "weekly":
+        month_bars, focus_bars = 5, 2
+    elif level == "monthly":
+        month_bars, focus_bars = 2, 1
+    else:
+        month_bars, focus_bars = 24, 10
+    return max(0, total - month_bars), max(0, total - focus_bars)
+
+
+def _ma_value(rows: list[dict[str, Any]], index: int) -> float | None:
+    if index < 0 or index >= len(rows):
+        return None
+    value = rows[index].get("value")
+    if value is None:
+        return None
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        return None
+    return num if np.isfinite(num) else None
+
+
+def _bar_range(bar: RawBar) -> float:
+    return max(bar.high - bar.low, 1e-9)
+
+
+def _body(bar: RawBar) -> float:
+    return abs(bar.close - bar.open)
+
+
+def _body_ratio(bar: RawBar) -> float:
+    return _body(bar) / _bar_range(bar)
+
+
+def _upper_shadow_ratio(bar: RawBar) -> float:
+    return (bar.high - max(bar.open, bar.close)) / _bar_range(bar)
+
+
+def _lower_shadow_ratio(bar: RawBar) -> float:
+    return (min(bar.open, bar.close) - bar.low) / _bar_range(bar)
+
+
+def _close_position(bar: RawBar) -> float:
+    return (bar.close - bar.low) / _bar_range(bar)
+
+
+def _pct_change(start: float, end: float) -> float:
+    return 0.0 if start == 0 else (end - start) / start
+
+
+def _is_bullish(bar: RawBar, min_body_ratio: float = 0.18) -> bool:
+    return bar.close > bar.open and _body_ratio(bar) >= min_body_ratio
+
+
+def _is_bearish(bar: RawBar, min_body_ratio: float = 0.18) -> bool:
+    return bar.close < bar.open and _body_ratio(bar) >= min_body_ratio
+
+
+def _is_red_three_soldiers(first: RawBar, second: RawBar, third: RawBar) -> bool:
+    bars = [first, second, third]
+    return (
+        all(_is_bullish(item, 0.22) and _close_position(item) >= 0.58 for item in bars)
+        and first.close < second.close < third.close
+        and second.open >= min(first.open, first.close) * 0.985
+        and third.open >= min(second.open, second.close) * 0.985
+    )
+
+
+def _is_three_black_crows(first: RawBar, second: RawBar, third: RawBar) -> bool:
+    bars = [first, second, third]
+    return (
+        all(_is_bearish(item, 0.22) and _close_position(item) <= 0.42 for item in bars)
+        and first.close > second.close > third.close
+        and second.open <= max(first.open, first.close) * 1.015
+        and third.open <= max(second.open, second.close) * 1.015
+    )
+
+
+def _is_morning_star(first: RawBar, second: RawBar, third: RawBar) -> bool:
+    middle = (first.open + first.close) / 2
+    return (
+        _is_bearish(first, 0.34)
+        and _body_ratio(second) <= 0.26
+        and _is_bullish(third, 0.32)
+        and third.close >= middle
+        and second.low <= min(first.low, third.low) * 1.02
+    )
+
+
+def _is_evening_star(first: RawBar, second: RawBar, third: RawBar) -> bool:
+    middle = (first.open + first.close) / 2
+    return (
+        _is_bullish(first, 0.34)
+        and _body_ratio(second) <= 0.26
+        and _is_bearish(third, 0.32)
+        and third.close <= middle
+        and second.high >= max(first.high, third.high) * 0.98
+    )
+
+
+def _is_bullish_engulfing(previous: RawBar, current: RawBar) -> bool:
+    return (
+        _is_bearish(previous, 0.2)
+        and _is_bullish(current, 0.25)
+        and current.open <= previous.close * 1.01
+        and current.close >= previous.open * 0.99
+    )
+
+
+def _is_bearish_engulfing(previous: RawBar, current: RawBar) -> bool:
+    return (
+        _is_bullish(previous, 0.2)
+        and _is_bearish(current, 0.25)
+        and current.open >= previous.close * 0.99
+        and current.close <= previous.open * 1.01
+    )
+
+
+def _is_hammer(bar: RawBar) -> bool:
+    return _lower_shadow_ratio(bar) >= 0.48 and _upper_shadow_ratio(bar) <= 0.18 and _body_ratio(bar) <= 0.36
+
+
+def _is_shooting_star(bar: RawBar) -> bool:
+    return _upper_shadow_ratio(bar) >= 0.48 and _lower_shadow_ratio(bar) <= 0.18 and _body_ratio(bar) <= 0.36
 
 
 def _sma(values: np.ndarray, period: int) -> np.ndarray:
