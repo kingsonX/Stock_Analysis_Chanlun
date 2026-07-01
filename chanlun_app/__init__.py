@@ -9,13 +9,15 @@ from .data_provider import DataProviderError, TushareClient
 from .mx_provider import MXDataProvider, MXProviderError
 from .review_service import ReviewService
 from .smart_picker import SmartPickerService
+from .system_config_store import SystemConfigStore, SystemConfigStoreError, mysql_dsn_from_env
 from .theme_board_service import ThemeBoardService
+from .theme_research_service import ThemeResearchError, ThemeResearchService
 from .trading_profile import TradingProfileService
 from .watchtower_service import WatchtowerService
 
 TRADING_PROFILE_EXTERNAL_TIMEOUT_SECONDS = 3
-TRADING_PROFILE_AI_TIMEOUT_SECONDS = 12
-REVIEW_AI_TIMEOUT_SECONDS = 10
+TRADING_PROFILE_AI_TIMEOUT_SECONDS = 35
+REVIEW_AI_TIMEOUT_SECONDS = 45
 
 
 def create_app(
@@ -27,10 +29,12 @@ def create_app(
     review_client: ReviewService | None = None,
     watchtower_client: WatchtowerService | None = None,
     theme_board_client: ThemeBoardService | None = None,
+    theme_research_client: ThemeResearchService | None = None,
+    system_config_client: SystemConfigStore | None = None,
 ):
     from pathlib import Path
 
-    from flask import Flask, jsonify, render_template, request
+    from flask import Flask, Response, jsonify, render_template, request, stream_with_context
 
     app = Flask(__name__)
     app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
@@ -53,6 +57,8 @@ def create_app(
         picker_client=smart_picker,
     )
     theme_board_service = theme_board_client or ThemeBoardService(data_client=client)
+    theme_research_service = theme_research_client or ThemeResearchService(dsn=mysql_dsn_from_env())
+    system_config_store = system_config_client or SystemConfigStore(dsn=mysql_dsn_from_env())
 
     def json_error(message: str, status_code: int):
         return jsonify({"error": {"message": message, "status_code": status_code}}), status_code
@@ -437,6 +443,111 @@ def create_app(
             return jsonify(theme_board_service.detail(trade_date=trade_date, ts_code=ts_code, name=name))
         except DataProviderError as exc:
             return json_error(exc.message, exc.status_code)
+
+    @app.post("/api/theme-research/start")
+    def theme_research_start():
+        payload = request.get_json(silent=True) or {}
+        theme_name = str(payload.get("theme_name") or "").strip()
+        market = str(payload.get("market") or "A股").strip() or "A股"
+        analysis_depth = str(payload.get("analysis_depth") or "standard").strip() or "standard"
+        time_horizon = str(payload.get("time_horizon") or "短中线").strip() or "短中线"
+        if not theme_name:
+            return json_error("请输入行业、题材或概念名称。", 400)
+        try:
+            return jsonify(
+                theme_research_service.start_task(
+                    theme_name=theme_name,
+                    market=market,
+                    analysis_depth=analysis_depth,
+                    time_horizon=time_horizon,
+                )
+            )
+        except ThemeResearchError as exc:
+            return json_error(exc.message, exc.status_code)
+
+    @app.get("/api/theme-research/stream/<task_id>")
+    def theme_research_stream(task_id: str):
+        try:
+            stream = theme_research_service.event_stream(str(task_id or "").strip())
+        except ThemeResearchError as exc:
+            return json_error(exc.message, exc.status_code)
+        return Response(
+            stream_with_context(stream),
+            mimetype="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    @app.get("/api/theme-research/report/<task_id>")
+    def theme_research_report(task_id: str):
+        try:
+            return jsonify(theme_research_service.get_report(str(task_id or "").strip()))
+        except ThemeResearchError as exc:
+            return json_error(exc.message, exc.status_code)
+
+    @app.get("/api/theme-research/reports")
+    def theme_research_reports():
+        limit = _safe_int(request.args.get("limit"), 12, 1, 50)
+        page = _safe_int(request.args.get("page"), 1, 1, 9999)
+        page_size = _safe_int(request.args.get("page_size"), limit, 1, 50)
+        try:
+            return jsonify(theme_research_service.list_reports(limit=limit, page=page, page_size=page_size))
+        except ThemeResearchError as exc:
+            return json_error(exc.message, exc.status_code)
+
+    @app.get("/api/system-configs")
+    def system_config_list():
+        try:
+            return jsonify(
+                {
+                    "enabled": system_config_store.enabled,
+                    "items": system_config_store.list_entries(),
+                }
+            )
+        except SystemConfigStoreError as exc:
+            return json_error(str(exc), 500)
+
+    @app.get("/api/system-configs/<config_key>")
+    def system_config_detail(config_key: str):
+        try:
+            item = system_config_store.get_entry(config_key)
+        except SystemConfigStoreError as exc:
+            return json_error(str(exc), 500)
+        if not item:
+            return json_error("未找到对应系统配置。", 404)
+        return jsonify({"item": item})
+
+    @app.post("/api/system-configs")
+    def system_config_upsert():
+        payload = request.get_json(silent=True) or {}
+        config_key = str(payload.get("config_key") or "").strip()
+        if not config_key:
+            return json_error("配置键不能为空。", 400)
+        try:
+            item = system_config_store.upsert_entry(
+                config_key=config_key,
+                config_value=str(payload.get("config_value") or ""),
+                label=str(payload.get("label") or ""),
+                category=str(payload.get("category") or ""),
+                description=str(payload.get("description") or ""),
+                is_secret=bool(payload.get("is_secret", True)),
+                is_enabled=bool(payload.get("is_enabled", True)),
+            )
+            return jsonify({"status": "ok", "item": item})
+        except SystemConfigStoreError as exc:
+            return json_error(str(exc), 500)
+
+    @app.delete("/api/system-configs/<config_key>")
+    def system_config_delete(config_key: str):
+        try:
+            deleted = system_config_store.delete_entry(config_key)
+        except SystemConfigStoreError as exc:
+            return json_error(str(exc), 500)
+        if not deleted:
+            return json_error("未找到对应系统配置。", 404)
+        return jsonify({"status": "ok", "deleted": True, "config_key": config_key.upper()})
 
     @app.errorhandler(404)
     def not_found(_exc):

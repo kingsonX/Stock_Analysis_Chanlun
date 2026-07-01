@@ -18,14 +18,16 @@ services:
         value: "1"
       - key: MYSQL_POOL_MAX_SIZE
         value: "4"
-      - key: CLAUDE_BASE_URL
-        value: "https://code.newcli.com/claude"
-      - key: CLAUDE_API_KEY
+      - key: DEEPSEEK_BASE_URL
+        value: "https://api.deepseek.com"
+      - key: DEEPSEEK_API_KEY
         sync: false
-      - key: CLAUDE_MODEL
-        value: "Claude Sonnet 4.6"
-      - key: CLAUDE_API_VERSION
-        value: "2023-06-01"
+      - key: DEEPSEEK_MODEL
+        value: "deepseek-v4-pro"
+      - key: DEEPSEEK_MAX_TOKENS
+        value: "1800"
+      - key: DEEPSEEK_REASONING_EFFORT
+        value: "high"
       - key: PYTHON_VERSION
         value: "3.11.11"
       - key: FLASK_DEBUG

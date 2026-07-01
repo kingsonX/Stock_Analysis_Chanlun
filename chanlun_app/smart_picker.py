@@ -11,7 +11,8 @@ import urllib.request
 from .chanlun import analyze_klines
 from .config import LEVELS, default_date_range
 from .data_provider import DataProviderError, StockRecord, TushareClient
-from .mx_provider import MXDataProvider, MXProviderError, _env_value
+from .mx_provider import MXDataProvider, MXProviderError
+from .system_config_store import managed_config_value
 from .trading_profile import (
     MXBaseClient,
     MXNewsProvider,
@@ -113,8 +114,8 @@ class MXWatchlistProvider(MXBaseClient):
         if not cleaned_group:
             raise MXProviderError("缺少自选股组名称。", 400)
 
-        eastmoney_header = _env_value("EASTMONEY_HEADER")
-        eastmoney_appkey = _env_value("EASTMONEY_APPKEY")
+        eastmoney_header = managed_config_value("EASTMONEY_HEADER")
+        eastmoney_appkey = managed_config_value("EASTMONEY_APPKEY")
         if eastmoney_header and eastmoney_appkey:
             return self._manage_group_with_eastmoney_web(
                 action=cleaned_action,

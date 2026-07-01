@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import re
 import time
 import logging
@@ -13,8 +12,13 @@ import pandas as pd
 
 from .config import BASE_DIR, LEVELS, STOCK_CACHE_FILE
 from .hot_money_store import HotMoneyDailyTradeStore, HotMoneyStoreError
-from .mysql_store import build_mysql_dsn
 from .stock_basic_store import StockBasicCacheStore, StockBasicStoreError
+from .system_config_store import (
+    managed_config_value,
+    mysql_dsn_from_env as _shared_mysql_dsn_from_env,
+    raw_env_value as _shared_raw_env_value,
+    safe_env_int as _shared_safe_env_int,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -109,7 +113,7 @@ class TushareClient:
         hot_money_store: HotMoneyDailyTradeStore | None = None,
         stock_basic_store: StockBasicCacheStore | None = None,
     ):
-        self.token = token or _env_value("TUSHARE_TOKEN")
+        self.token = token or managed_config_value("TUSHARE_TOKEN")
         self.stock_cache_file = stock_cache_file
         self.cache_ttl_seconds = cache_ttl_seconds
         self.board_cache_ttl_seconds = board_cache_ttl_seconds
@@ -232,10 +236,12 @@ class TushareClient:
         if not frames:
             raise DataProviderError(f"Tushare 未返回{config['label']}列表，请检查接口权限或稍后重试。", 502)
 
+        df = pd.concat(frames, ignore_index=True).fillna("")
+        for column in ("ts_code", "name", "idx_type"):
+            if column not in df.columns:
+                df[column] = ""
         df = (
-            pd.concat(frames, ignore_index=True)
-            .drop_duplicates(subset=["ts_code"])
-            .fillna("")
+            df.drop_duplicates(subset=["ts_code"])
             .sort_values(["idx_type", "name"])
             .reset_index(drop=True)
         )
@@ -1253,56 +1259,12 @@ def _safe_float(value: Any) -> float | None:
 
 
 def _env_value(name: str) -> str | None:
-    value = os.environ.get(name)
-    if value:
-        return value
-
-    env_file = BASE_DIR / ".env"
-    if not env_file.exists():
-        return None
-
-    for line in env_file.read_text(encoding="utf-8").splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#") or "=" not in stripped:
-            continue
-        key, raw_value = stripped.split("=", 1)
-        if key.strip() == name:
-            return raw_value.strip().strip('"').strip("'")
-    return None
+    return _shared_raw_env_value(name)
 
 
 def _safe_env_int(name: str, default: int) -> int:
-    raw = _env_value(name)
-    if not raw:
-        return default
-    try:
-        return int(raw)
-    except ValueError:
-        return default
+    return _shared_safe_env_int(name, default)
 
 
 def _mysql_dsn_from_env() -> str:
-    explicit = _env_value("MYSQL_URL")
-    if explicit:
-        return explicit
-
-    database_url = _env_value("DATABASE_URL")
-    if database_url and database_url.lower().startswith("mysql"):
-        return database_url
-
-    host = _env_value("MYSQL_HOST")
-    user = _env_value("MYSQL_USER")
-    database = _env_value("MYSQL_DATABASE")
-    if not (host and user and database):
-        return ""
-    port = _safe_env_int("MYSQL_PORT", 3306)
-    password = _env_value("MYSQL_PASSWORD") or ""
-    charset = _env_value("MYSQL_CHARSET") or "utf8mb4"
-    return build_mysql_dsn(
-        host=host,
-        port=port,
-        user=user,
-        password=password,
-        database=database,
-        charset=charset,
-    )
+    return _shared_mysql_dsn_from_env()

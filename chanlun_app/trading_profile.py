@@ -6,12 +6,13 @@ import urllib.error
 import urllib.request
 from typing import Any
 
-from .mx_provider import MXDataProvider, MXProviderError, _env_value
+from .mx_provider import MXDataProvider, MXProviderError
+from .system_config_store import managed_config_value
 
 
 class MXBaseClient:
     def __init__(self, api_key: str | None = None, timeout_seconds: int = 20):
-        self.api_key = api_key or _env_value("MX_APIKEY")
+        self.api_key = api_key or managed_config_value("MX_APIKEY")
         self.timeout_seconds = timeout_seconds
 
     def _post_json(self, url: str, payload: dict[str, Any]) -> dict[str, Any]:

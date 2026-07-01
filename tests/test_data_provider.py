@@ -50,6 +50,26 @@ class DataProviderTest(unittest.TestCase):
         self.assertEqual(rows[0]["date"], "20260527")
         self.assertEqual(rows[0]["close"], 10.8)
 
+    def test_load_boards_tolerates_missing_idx_type_column(self):
+        fake_ts = FakeTushareModule()
+        with patch.dict(sys.modules, {"tushare": fake_ts}):
+            client = TushareClient(token="test-token")
+
+            with patch.object(
+                client,
+                "_fetch_board_snapshot",
+                side_effect=[
+                    pd.DataFrame([{"ts_code": "BK0001", "name": "先进封装", "trade_date": "20260627"}]),
+                    pd.DataFrame(),
+                    pd.DataFrame(),
+                ],
+            ):
+                df = client.load_boards(source="dc")
+
+        self.assertEqual(list(df["ts_code"]), ["BK0001"])
+        self.assertIn("idx_type", df.columns)
+        self.assertEqual(df.iloc[0]["idx_type"], "")
+
 
 if __name__ == "__main__":
     unittest.main()

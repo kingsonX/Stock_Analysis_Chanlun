@@ -72,6 +72,30 @@ const state = {
     modalTsCode: "",
     modalName: "",
   },
+  themeResearch: {
+    loaded: false,
+    loading: false,
+    historyLoaded: false,
+    historyPage: 1,
+    historyPageSize: 6,
+    historyTotal: 0,
+    historyTotalPages: 1,
+    currentTaskId: "",
+    currentThemeName: "",
+    events: [],
+    history: [],
+    reportPayload: null,
+    historyRequestId: 0,
+    reportRequestId: 0,
+    stream: null,
+  },
+  systemConfig: {
+    list: [],
+    loaded: false,
+    requestId: 0,
+    saving: false,
+    editingKey: "",
+  },
   watchtower: {
     overview: null,
     requestId: 0,
@@ -194,6 +218,38 @@ const els = {
   themeBoardModalMeta: document.querySelector("#themeBoardModalMeta"),
   themeBoardModalBody: document.querySelector("#themeBoardModalBody"),
   themeBoardModalCloseBtn: document.querySelector("#themeBoardModalCloseBtn"),
+  themeResearchStatusText: document.querySelector("#themeResearchStatusText"),
+  themeResearchInput: document.querySelector("#themeResearchInput"),
+  themeResearchStartBtn: document.querySelector("#themeResearchStartBtn"),
+  themeResearchMarket: document.querySelector("#themeResearchMarket"),
+  themeResearchDepth: document.querySelector("#themeResearchDepth"),
+  themeResearchHorizon: document.querySelector("#themeResearchHorizon"),
+  themeResearchErrorBox: document.querySelector("#themeResearchErrorBox"),
+  themeResearchProgressBox: document.querySelector("#themeResearchProgressBox"),
+  themeResearchPreviewBox: document.querySelector("#themeResearchPreviewBox"),
+  themeResearchReportBox: document.querySelector("#themeResearchReportBox"),
+  themeResearchHistoryMeta: document.querySelector("#themeResearchHistoryMeta"),
+  themeResearchHistoryBox: document.querySelector("#themeResearchHistoryBox"),
+  systemConfigStatusText: document.querySelector("#systemConfigStatusText"),
+  systemConfigRefreshBtn: document.querySelector("#systemConfigRefreshBtn"),
+  systemConfigCreateBtn: document.querySelector("#systemConfigCreateBtn"),
+  systemConfigErrorBox: document.querySelector("#systemConfigErrorBox"),
+  systemConfigListMeta: document.querySelector("#systemConfigListMeta"),
+  systemConfigTableBox: document.querySelector("#systemConfigTableBox"),
+  systemConfigModal: document.querySelector("#systemConfigModal"),
+  systemConfigModalCloseBtn: document.querySelector("#systemConfigModalCloseBtn"),
+  systemConfigForm: document.querySelector("#systemConfigForm"),
+  systemConfigFormTitle: document.querySelector("#systemConfigFormTitle"),
+  systemConfigFormMeta: document.querySelector("#systemConfigFormMeta"),
+  systemConfigKeyInput: document.querySelector("#systemConfigKeyInput"),
+  systemConfigLabelInput: document.querySelector("#systemConfigLabelInput"),
+  systemConfigCategoryInput: document.querySelector("#systemConfigCategoryInput"),
+  systemConfigDescriptionInput: document.querySelector("#systemConfigDescriptionInput"),
+  systemConfigValueInput: document.querySelector("#systemConfigValueInput"),
+  systemConfigSecretInput: document.querySelector("#systemConfigSecretInput"),
+  systemConfigEnabledInput: document.querySelector("#systemConfigEnabledInput"),
+  systemConfigDeleteBtn: document.querySelector("#systemConfigDeleteBtn"),
+  systemConfigResetBtn: document.querySelector("#systemConfigResetBtn"),
   watchtowerStatusText: document.querySelector("#watchtowerStatusText"),
   watchtowerQueryInput: document.querySelector("#watchtowerQueryInput"),
   watchtowerSearchBtn: document.querySelector("#watchtowerSearchBtn"),
@@ -452,6 +508,14 @@ function startThemeBoardFlow(task) {
   return withPageLoading("题材榜单加载中", task);
 }
 
+function startThemeResearchFlow(task) {
+  return withPageLoading("题材研究中", task);
+}
+
+function startSystemConfigFlow(task) {
+  return withPageLoading("系统配置加载中", task);
+}
+
 function switchMainPage(targetId) {
   state.currentPage = targetId;
   els.mainMenu?.querySelectorAll("button[data-page]").forEach((item) => {
@@ -482,8 +546,18 @@ function switchMainPage(targetId) {
     return;
   }
 
+  if (targetId === "themeResearchPage") {
+    ensureThemeResearchLoaded();
+    return;
+  }
+
   if (targetId === "themeBoardPage") {
     ensureThemeBoardLoaded();
+    return;
+  }
+
+  if (targetId === "systemConfigPage") {
+    ensureSystemConfigLoaded();
   }
 }
 
@@ -1373,6 +1447,229 @@ function ensureThemeBoardLoaded() {
   }
   state.themeBoard.loaded = true;
   startThemeBoardFlow(() => loadThemeBoardOverview());
+}
+
+function ensureThemeResearchLoaded() {
+  if (state.themeResearch.loaded) {
+    renderThemeResearch();
+    return;
+  }
+  state.themeResearch.loaded = true;
+  renderThemeResearch();
+  startThemeResearchFlow(() => loadThemeResearchHistory());
+}
+
+function ensureSystemConfigLoaded() {
+  if (state.systemConfig.loaded) {
+    renderSystemConfigList();
+    return;
+  }
+  state.systemConfig.loaded = true;
+  startSystemConfigFlow(() => loadSystemConfigs());
+}
+
+async function loadSystemConfigs(options = {}) {
+  const requestId = ++state.systemConfig.requestId;
+  toggleSystemConfigError("");
+  if (els.systemConfigStatusText) {
+    els.systemConfigStatusText.textContent = "正在读取系统配置表，新的接口请求会优先使用这里的启用配置。";
+  }
+  const data = await fetchJson("/api/system-configs");
+  if (requestId !== state.systemConfig.requestId) return;
+  state.systemConfig.list = Array.isArray(data.items) ? data.items : [];
+  renderSystemConfigList();
+  if (els.systemConfigStatusText) {
+    els.systemConfigStatusText.textContent = data.enabled
+      ? "数据库配置已接管 Tushare、东方财富、DeepSeek 等密钥读取。"
+      : "当前未配置 MySQL，系统配置页暂时只能显示空状态。";
+  }
+  if (!options.keepEditing) {
+    state.systemConfig.editingKey = "";
+    renderSystemConfigList();
+  }
+}
+
+async function loadSystemConfigDetail(configKey, options = {}) {
+  const key = String(configKey || "").trim();
+  if (!key) return;
+  if (!options.silent) {
+    toggleSystemConfigError("");
+  }
+  const data = await fetchJson(`/api/system-configs/${encodeURIComponent(key)}`);
+  const item = data.item || null;
+  if (!item) return;
+  state.systemConfig.editingKey = item.config_key || key.toUpperCase();
+  fillSystemConfigForm(item);
+  renderSystemConfigList();
+  if (options.openModal !== false) {
+    openSystemConfigModal();
+  }
+}
+
+function openSystemConfigModal() {
+  if (!els.systemConfigModal) return;
+  toggleSystemConfigError("");
+  els.systemConfigModal.hidden = false;
+}
+
+function closeSystemConfigModal() {
+  if (!els.systemConfigModal) return;
+  els.systemConfigModal.hidden = true;
+  toggleSystemConfigError("");
+}
+
+function renderSystemConfigList() {
+  if (!els.systemConfigTableBox) return;
+  const items = Array.isArray(state.systemConfig.list) ? state.systemConfig.list : [];
+  if (els.systemConfigListMeta) {
+    els.systemConfigListMeta.textContent = items.length
+      ? `当前共 ${items.length} 条配置，启用项会优先覆盖环境变量；点击“编辑配置”再弹窗修改。`
+      : "当前还没有系统配置，可先新建 Tushare、东方财富或 DeepSeek 密钥。";
+  }
+  if (!items.length) {
+    els.systemConfigTableBox.innerHTML = `<div class="empty">当前还没有系统配置。</div>`;
+    return;
+  }
+  els.systemConfigTableBox.innerHTML = `
+    <table class="pickerTable systemConfigTable">
+      <thead>
+        <tr>
+          <th>配置键</th>
+          <th>分类</th>
+          <th>预览</th>
+          <th>状态</th>
+          <th>更新时间</th>
+          <th>操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${items
+          .map((item) => {
+            const active = state.systemConfig.editingKey && state.systemConfig.editingKey === item.config_key;
+            return `
+              <tr class="${active ? "is-active" : ""}">
+                <td>
+                  <strong>${escapeHtml(item.label || item.config_key)}</strong>
+                  <p class="pickerCellSub">${escapeHtml(item.config_key || "")}</p>
+                </td>
+                <td>${escapeHtml(item.category || "custom")}</td>
+                <td><p class="pickerCellText">${escapeHtml(item.value_preview || "-")}</p></td>
+                <td>${item.is_enabled ? `<span class="pickerToneTag positive">启用</span>` : `<span class="pickerToneTag neutral">停用</span>`}</td>
+                <td>${escapeHtml(item.updated_at || item.created_at || "-")}</td>
+                <td>
+                  <div class="pickerRowActions">
+                    <button type="button" class="miniButton ghostButton" data-system-config-edit="${escapeHtml(item.config_key || "")}">编辑配置</button>
+                  </div>
+                </td>
+              </tr>
+            `;
+          })
+          .join("")}
+      </tbody>
+    </table>
+  `;
+}
+
+function fillSystemConfigForm(item) {
+  if (!item) {
+    resetSystemConfigForm();
+    return;
+  }
+  if (els.systemConfigFormTitle) {
+    els.systemConfigFormTitle.textContent = `编辑配置 · ${item.config_key || ""}`;
+  }
+  if (els.systemConfigFormMeta) {
+    els.systemConfigFormMeta.textContent = item.description
+      ? item.description
+      : "修改并保存后，新的接口请求会优先读取这条数据库配置。";
+  }
+  if (els.systemConfigKeyInput) {
+    els.systemConfigKeyInput.value = item.config_key || "";
+    els.systemConfigKeyInput.readOnly = !!item.config_key;
+  }
+  if (els.systemConfigLabelInput) els.systemConfigLabelInput.value = item.label || "";
+  if (els.systemConfigCategoryInput) els.systemConfigCategoryInput.value = item.category || "custom";
+  if (els.systemConfigDescriptionInput) els.systemConfigDescriptionInput.value = item.description || "";
+  if (els.systemConfigValueInput) els.systemConfigValueInput.value = item.config_value || "";
+  if (els.systemConfigSecretInput) els.systemConfigSecretInput.checked = !!item.is_secret;
+  if (els.systemConfigEnabledInput) els.systemConfigEnabledInput.checked = item.is_enabled !== false;
+  if (els.systemConfigDeleteBtn) {
+    els.systemConfigDeleteBtn.disabled = !(item.config_key && item.source === "mysql");
+  }
+}
+
+function resetSystemConfigForm() {
+  state.systemConfig.editingKey = "";
+  if (els.systemConfigFormTitle) els.systemConfigFormTitle.textContent = "新建配置";
+  if (els.systemConfigFormMeta) els.systemConfigFormMeta.textContent = "支持新增、修改、删除系统密钥与运行参数。";
+  if (els.systemConfigKeyInput) {
+    els.systemConfigKeyInput.value = "";
+    els.systemConfigKeyInput.readOnly = false;
+  }
+  if (els.systemConfigLabelInput) els.systemConfigLabelInput.value = "";
+  if (els.systemConfigCategoryInput) els.systemConfigCategoryInput.value = "tushare";
+  if (els.systemConfigDescriptionInput) els.systemConfigDescriptionInput.value = "";
+  if (els.systemConfigValueInput) els.systemConfigValueInput.value = "";
+  if (els.systemConfigSecretInput) els.systemConfigSecretInput.checked = true;
+  if (els.systemConfigEnabledInput) els.systemConfigEnabledInput.checked = true;
+  if (els.systemConfigDeleteBtn) els.systemConfigDeleteBtn.disabled = true;
+  renderSystemConfigList();
+}
+
+function toggleSystemConfigError(message) {
+  if (!els.systemConfigErrorBox) return;
+  const text = String(message || "").trim();
+  els.systemConfigErrorBox.hidden = !text;
+  els.systemConfigErrorBox.textContent = text;
+}
+
+async function submitSystemConfigForm() {
+  const configKey = String(els.systemConfigKeyInput?.value || "").trim().toUpperCase();
+  if (!configKey) {
+    toggleSystemConfigError("配置键不能为空。");
+    return;
+  }
+  state.systemConfig.saving = true;
+  toggleSystemConfigError("");
+  try {
+    const data = await fetchJson("/api/system-configs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        config_key: configKey,
+        label: String(els.systemConfigLabelInput?.value || "").trim(),
+        category: String(els.systemConfigCategoryInput?.value || "custom").trim(),
+        description: String(els.systemConfigDescriptionInput?.value || "").trim(),
+        config_value: String(els.systemConfigValueInput?.value || ""),
+        is_secret: !!els.systemConfigSecretInput?.checked,
+        is_enabled: !!els.systemConfigEnabledInput?.checked,
+      }),
+    });
+    state.systemConfig.editingKey = data.item?.config_key || configKey;
+    await loadSystemConfigs({ keepEditing: true });
+    closeSystemConfigModal();
+  } catch (err) {
+    toggleSystemConfigError(err.message || "保存系统配置失败。");
+  } finally {
+    state.systemConfig.saving = false;
+  }
+}
+
+async function deleteCurrentSystemConfig() {
+  const configKey = String(state.systemConfig.editingKey || els.systemConfigKeyInput?.value || "").trim().toUpperCase();
+  if (!configKey) {
+    toggleSystemConfigError("当前没有可删除的配置。");
+    return;
+  }
+  toggleSystemConfigError("");
+  try {
+    await fetchJson(`/api/system-configs/${encodeURIComponent(configKey)}`, { method: "DELETE" });
+    resetSystemConfigForm();
+    await loadSystemConfigs({ keepEditing: false });
+    closeSystemConfigModal();
+  } catch (err) {
+    toggleSystemConfigError(err.message || "删除系统配置失败。");
+  }
 }
 
 function syncPickerFiltersFromControls() {
@@ -2313,6 +2610,1206 @@ function hideReviewError() {
   els.reviewErrorBox.textContent = "";
 }
 
+function setThemeResearchStatus(message) {
+  if (els.themeResearchStatusText) {
+    els.themeResearchStatusText.textContent = message;
+  }
+}
+
+function showThemeResearchError(message) {
+  if (!els.themeResearchErrorBox) return;
+  els.themeResearchErrorBox.textContent = message;
+  els.themeResearchErrorBox.hidden = false;
+}
+
+function hideThemeResearchError() {
+  if (!els.themeResearchErrorBox) return;
+  els.themeResearchErrorBox.hidden = true;
+  els.themeResearchErrorBox.textContent = "";
+}
+
+function closeThemeResearchStream() {
+  if (state.themeResearch.stream) {
+    state.themeResearch.stream.close();
+    state.themeResearch.stream = null;
+  }
+}
+
+async function loadThemeResearchHistory(options = {}) {
+  const requestId = ++state.themeResearch.historyRequestId;
+  const page = Math.max(1, intValue(options.page ?? state.themeResearch.historyPage) || 1);
+  const pageSize = Math.max(1, intValue(options.pageSize ?? state.themeResearch.historyPageSize) || 6);
+  if (!options.silent) {
+    hideThemeResearchError();
+    setThemeResearchStatus("正在读取最近的题材研究报告...");
+  }
+  try {
+    const data = await fetchJson(`/api/theme-research/reports?page=${page}&page_size=${pageSize}&limit=${pageSize}`, {
+      timeoutMs: 15000,
+      timeoutMessage: "题材研究历史加载超时，请稍后重试。",
+    });
+    if (requestId !== state.themeResearch.historyRequestId) return;
+    state.themeResearch.history = Array.isArray(data.items) ? data.items : [];
+    state.themeResearch.historyPage = intValue(data.page) || page;
+    state.themeResearch.historyPageSize = intValue(data.page_size) || pageSize;
+    state.themeResearch.historyTotal = intValue(data.total);
+    state.themeResearch.historyTotalPages = intValue(data.total_pages) || 1;
+    state.themeResearch.historyLoaded = true;
+    renderThemeResearchHistory();
+    if (!options.silent && !state.themeResearch.currentTaskId) {
+      setThemeResearchStatus(
+        state.themeResearch.history.length
+          ? "已加载最近题材研究历史，可直接点开历史报告，也可以重新发起新调研。"
+          : "当前还没有历史题材研究报告，输入题材后可直接开始调研。"
+      );
+    }
+  } catch (err) {
+    if (requestId !== state.themeResearch.historyRequestId) return;
+    state.themeResearch.history = [];
+    state.themeResearch.historyPage = page;
+    state.themeResearch.historyPageSize = pageSize;
+    state.themeResearch.historyTotal = 0;
+    state.themeResearch.historyTotalPages = 1;
+    state.themeResearch.historyLoaded = true;
+    showThemeResearchError(err.message);
+    renderThemeResearchHistory();
+  }
+}
+
+async function loadThemeResearchReport(taskId, options = {}) {
+  const cleanTaskId = String(taskId || "").trim();
+  if (!cleanTaskId) return;
+  const requestId = ++state.themeResearch.reportRequestId;
+  if (!options.keepEvents) {
+    state.themeResearch.events = [];
+  }
+  if (!options.silent) {
+    hideThemeResearchError();
+    setThemeResearchStatus(`正在读取题材研究报告 ${cleanTaskId}...`);
+  }
+  try {
+    const data = await fetchJson(`/api/theme-research/report/${encodeURIComponent(cleanTaskId)}`, {
+      timeoutMs: 18000,
+      timeoutMessage: "题材研究报告加载超时，请稍后重试。",
+    });
+    if (requestId !== state.themeResearch.reportRequestId) return;
+    state.themeResearch.currentTaskId = cleanTaskId;
+    state.themeResearch.currentThemeName = data.theme_name || state.themeResearch.currentThemeName || "";
+    state.themeResearch.reportPayload = data;
+    state.themeResearch.loading = false;
+    renderThemeResearch();
+    if (!options.silent) {
+      setThemeResearchStatus(`已打开 ${data.theme_name || cleanTaskId} 的题材研究报告。`);
+    }
+  } catch (err) {
+    if (requestId !== state.themeResearch.reportRequestId) return;
+    state.themeResearch.loading = false;
+    showThemeResearchError(err.message);
+    renderThemeResearch();
+  }
+}
+
+async function startThemeResearchTask() {
+  const themeName = String(els.themeResearchInput?.value || "").trim();
+  if (!themeName) {
+    showThemeResearchError("请输入行业、题材或概念名称。");
+    return;
+  }
+  hideThemeResearchError();
+  closeThemeResearchStream();
+  state.themeResearch.loading = true;
+  state.themeResearch.currentTaskId = "";
+  state.themeResearch.currentThemeName = themeName;
+  state.themeResearch.events = [];
+  state.themeResearch.reportPayload = null;
+  renderThemeResearch();
+  setThemeResearchStatus(`正在创建“${themeName}”的题材研究任务...`);
+  const payload = {
+    theme_name: themeName,
+    market: els.themeResearchMarket?.value || "A股",
+    analysis_depth: els.themeResearchDepth?.value || "standard",
+    time_horizon: els.themeResearchHorizon?.value || "短中线",
+  };
+  try {
+    const data = await fetchJson("/api/theme-research/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      timeoutMs: 15000,
+      timeoutMessage: "题材研究任务创建超时，请稍后重试。",
+    });
+    state.themeResearch.currentTaskId = data.task_id || "";
+    setThemeResearchStatus(`题材研究任务已创建：${state.themeResearch.currentTaskId}，正在建立实时调研流...`);
+    renderThemeResearch();
+    openThemeResearchStream(state.themeResearch.currentTaskId);
+  } catch (err) {
+    state.themeResearch.loading = false;
+    showThemeResearchError(err.message);
+    renderThemeResearch();
+  }
+}
+
+function openThemeResearchStream(taskId) {
+  const cleanTaskId = String(taskId || "").trim();
+  if (!cleanTaskId) return;
+  if (typeof EventSource === "undefined") {
+    state.themeResearch.loading = false;
+    showThemeResearchError("当前浏览器不支持 SSE，无法实时查看题材研究进度。");
+    renderThemeResearch();
+    return;
+  }
+  closeThemeResearchStream();
+  const stream = new EventSource(`/api/theme-research/stream/${encodeURIComponent(cleanTaskId)}`);
+  state.themeResearch.stream = stream;
+  const handlePayload = (payload) => {
+    if (!payload || (payload.task_id && payload.task_id !== state.themeResearch.currentTaskId)) return;
+    upsertThemeResearchEvent(payload);
+    if (payload.message) {
+      setThemeResearchStatus(payload.message);
+    }
+    if (payload.event_type === "final_report") {
+      state.themeResearch.loading = false;
+      state.themeResearch.reportPayload = {
+        task_id: cleanTaskId,
+        theme_name: state.themeResearch.currentThemeName,
+        status: "completed",
+        report: payload.report || {},
+        created_at: payload.created_at || "",
+        updated_at: payload.created_at || "",
+      };
+      renderThemeResearch();
+      void loadThemeResearchReport(cleanTaskId, { silent: true, keepEvents: true });
+      void loadThemeResearchHistory({ silent: true, page: state.themeResearch.historyPage || 1 });
+      return;
+    }
+    if (payload.event_type === "task_failed") {
+      state.themeResearch.loading = false;
+      if (payload.message) {
+        showThemeResearchError(payload.message);
+      }
+    }
+    renderThemeResearch();
+  };
+  [
+    "task_started",
+    "step_update",
+    "tool_call_started",
+    "tool_call_finished",
+    "tool_call_failed",
+    "data_preview",
+    "final_report",
+    "task_failed",
+  ].forEach((eventName) => {
+    stream.addEventListener(eventName, (event) => {
+      try {
+        const payload = JSON.parse(event.data || "{}");
+        handlePayload(payload);
+      } catch (err) {
+        showThemeResearchError(`题材研究流解析失败：${err.message}`);
+      }
+    });
+  });
+  stream.onerror = () => {
+    const completed = Boolean(state.themeResearch.reportPayload?.report);
+    const failed = state.themeResearch.events.some((item) => item.event_type === "task_failed");
+    if (completed || failed || stream.readyState === EventSource.CLOSED) {
+      closeThemeResearchStream();
+      state.themeResearch.loading = false;
+      renderThemeResearch();
+      return;
+    }
+    state.themeResearch.loading = false;
+    showThemeResearchError("题材研究实时连接已中断，请稍后查看历史报告或重新发起调研。");
+    closeThemeResearchStream();
+    renderThemeResearch();
+  };
+}
+
+function upsertThemeResearchEvent(payload) {
+  const item = {
+    event_type: payload.event_type || "step_update",
+    task_id: payload.task_id || state.themeResearch.currentTaskId || "",
+    step: Number(payload.step || 0),
+    status: payload.status || "",
+    title: payload.title || "",
+    message: payload.message || "",
+    data_preview: Array.isArray(payload.data_preview) ? payload.data_preview : [],
+    created_at: payload.created_at || "",
+  };
+  const key = `${item.event_type}|${item.step}|${item.title}|${item.message}|${item.created_at}`;
+  const exists = state.themeResearch.events.some(
+    (event) => `${event.event_type}|${event.step}|${event.title}|${event.message}|${event.created_at}` === key
+  );
+  if (!exists) {
+    state.themeResearch.events.push(item);
+  }
+  if (state.themeResearch.events.length > 120) {
+    state.themeResearch.events = state.themeResearch.events.slice(-120);
+  }
+}
+
+function renderThemeResearch() {
+  renderThemeResearchControls();
+  renderThemeResearchProgress();
+  renderThemeResearchPreview();
+  renderThemeResearchReport();
+  renderThemeResearchHistory();
+}
+
+function renderThemeResearchControls() {
+  if (els.themeResearchStartBtn) {
+    els.themeResearchStartBtn.disabled = state.themeResearch.loading;
+    els.themeResearchStartBtn.textContent = state.themeResearch.loading ? "调研中..." : "开始调研";
+  }
+}
+
+function renderThemeResearchProgress() {
+  if (!els.themeResearchProgressBox) return;
+  const event = getLatestThemeResearchProgressEvent();
+  if (!event) {
+    els.themeResearchProgressBox.innerHTML = `<div class="empty">${state.themeResearch.loading ? "调研任务已创建，正在等待首个步骤返回..." : "点击“开始调研”后，这里会实时显示调研步骤。"}</div>`;
+    return;
+  }
+  els.themeResearchProgressBox.innerHTML = `
+    <article class="themeResearchProgressItem themeResearchProgressItemLatest">
+      <div class="themeResearchProgressHeader">
+        <span class="profileVerdict tone-${themeResearchTone(event.status)}">${escapeHtml(themeResearchStatusLabel(event.status))}</span>
+        <strong>Step ${intValue(event.step)} · ${escapeHtml(event.title || themeResearchEventLabel(event.event_type))}</strong>
+      </div>
+      <p>${escapeHtml(event.message || "等待更多步骤结果。")}</p>
+      <div class="themeResearchProgressMeta">
+        <span>${escapeHtml(themeResearchEventLabel(event.event_type))}</span>
+        <span>${escapeHtml(event.created_at || "实时更新")}</span>
+        <span>${Array.isArray(event.data_preview) && event.data_preview.length ? `预览 ${event.data_preview.length} 条` : "暂无预览"}</span>
+      </div>
+    </article>
+  `;
+}
+
+function renderThemeResearchPreview() {
+  if (!els.themeResearchPreviewBox) return;
+  const previewEvent = getLatestThemeResearchPreviewEvent();
+  if (!previewEvent) {
+    els.themeResearchPreviewBox.innerHTML = `<div class="empty">${state.themeResearch.loading ? "等待妙想、Tushare 或评分步骤返回数据预览..." : "暂时没有步骤预览。"}</div>`;
+    return;
+  }
+  els.themeResearchPreviewBox.innerHTML = `
+    ${renderThemeResearchPreviewCard(previewEvent)}
+  `;
+}
+
+function renderThemeResearchPreviewCard(item) {
+  const previewRows = (item.data_preview || []).slice(0, 5);
+  return `
+    <article class="themeResearchPreviewCard">
+      <div class="themeResearchPreviewHeader">
+        <strong>${escapeHtml(item.title || themeResearchEventLabel(item.event_type))}</strong>
+        <span>${previewRows.length} 条</span>
+      </div>
+      <div class="themeResearchPreviewRows">
+        ${previewRows
+          .map(
+            (row) => `
+              <article class="themeResearchPreviewRow">
+                <div class="themeResearchPreviewLead">
+                  <strong>${escapeHtml(row.title || row.name || "未命名数据")}</strong>
+                  <span class="profileVerdict tone-${themeResearchEvidenceTone(row.evidence_level)}">${escapeHtml(row.evidence_level || "待核实")}</span>
+                </div>
+                <p>${escapeHtml(row.summary || row.source || "暂无摘要")}</p>
+                <div class="themeResearchProgressMeta">
+                  <span>${escapeHtml(row.source || "系统")}</span>
+                  <span>${escapeHtml(row.publish_time || "实时")}</span>
+                </div>
+              </article>
+            `
+          )
+          .join("")}
+      </div>
+    </article>
+  `;
+}
+
+function renderThemeResearchReport() {
+  if (!els.themeResearchReportBox) return;
+  const payload = state.themeResearch.reportPayload;
+  if (!payload) {
+    els.themeResearchReportBox.innerHTML = `<div class="empty">${state.themeResearch.loading ? "正在等待最终研究报告..." : "调研完成后，这里会展示结构化报告。"}</div>`;
+    return;
+  }
+  const report = payload.report || {};
+  const atlas = buildThemeResearchAtlas(report, payload);
+  els.themeResearchReportBox.innerHTML = `
+    <div class="themeResearchAtlasBoard">
+      <section class="themeResearchAtlasHeader">
+        <div class="themeResearchAtlasTitle">
+          <div class="themeResearchHeroMeta">任务 ${escapeHtml(payload.task_id || report.task_id || "-")}</div>
+          <h3>${escapeHtml(atlas.themeName)}</h3>
+          <p>${escapeHtml(atlas.keywordsText)}</p>
+        </div>
+        <div class="themeResearchAtlasMeta">
+          ${renderThemeResearchAtlasChip("产业阶段", atlas.stage, "neutral")}
+          ${renderThemeResearchAtlasChip("拆分维度", atlas.splitDimension, "positive")}
+          ${renderThemeResearchAtlasChip("证伪结论", atlas.overallResult, atlas.overallTone)}
+          ${renderThemeResearchAtlasChip("参与方式", atlas.suitableFor, "neutral")}
+        </div>
+      </section>
+      ${renderThemeResearchAtlasTable(atlas)}
+      <p class="themeResearchAtlasRisk">${escapeHtml(report.risk_disclaimer || "本报告仅供研究，不构成投资建议。")}</p>
+    </div>
+  `;
+}
+
+function renderThemeResearchDefinition(definition) {
+  const drivers = Array.isArray(definition.current_drivers) ? definition.current_drivers : [];
+  const cards = [
+    { label: "终端系统", value: definition.terminal_system || "待核实" },
+    { label: "下游需求", value: definition.demand_source || "待核实" },
+    { label: "产业阶段", value: definition.stage || "待核实" },
+    { label: "当前驱动", value: drivers.length ? drivers.join(" / ") : "待核实" },
+  ];
+  return `
+    <div class="themeResearchMetricGrid">
+      ${cards
+        .map(
+          (item) => `
+            <article class="reviewStatCard">
+              <span>${escapeHtml(item.label)}</span>
+              <strong>${escapeHtml(item.value)}</strong>
+            </article>
+          `
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function renderThemeResearchConclusion(conclusion) {
+  const cards = [
+    { label: "最值得关注的环节", items: conclusion.best_chain_segments || [] },
+    { label: "核心公司", items: conclusion.core_companies || [] },
+    { label: "情绪映射公司", items: conclusion.sentiment_only_companies || [] },
+  ];
+  return `
+    <div class="themeResearchMetricGrid">
+      ${cards
+        .map(
+          (card) => `
+            <article class="themeResearchFactCard">
+              <strong>${escapeHtml(card.label)}</strong>
+              ${renderThemeResearchSimpleList(card.items, "暂无结论")}
+            </article>
+          `
+        )
+        .join("")}
+      <article class="themeResearchFactCard">
+        <strong>更适合的参与方式</strong>
+        <p>${escapeHtml(conclusion.suitable_for || "待核实")}</p>
+      </article>
+    </div>
+  `;
+}
+
+function renderThemeResearchFalsification(falsification) {
+  return `
+    <div class="themeResearchFactStack">
+      <article class="themeResearchFactCard">
+        <strong>总体结论</strong>
+        <p>${escapeHtml(falsification.overall_result || "待核实")}</p>
+      </article>
+      <article class="themeResearchFactCard">
+        <strong>公告核查</strong>
+        ${renderThemeResearchComplexList(falsification.announcement_check || [], "暂无公告核查结果")}
+      </article>
+      <article class="themeResearchFactCard">
+        <strong>主业财务核查</strong>
+        ${renderThemeResearchComplexList(falsification.financial_check || [], "暂无财务核查结果")}
+      </article>
+      <article class="themeResearchFactCard">
+        <strong>收入贡献测算</strong>
+        ${renderThemeResearchComplexList(falsification.revenue_contribution_check || [], "暂无收入贡献测算")}
+      </article>
+    </div>
+  `;
+}
+
+function renderThemeResearchChainMap(chainMap) {
+  const sections = [
+    { label: "Tier-0 终端系统层", value: chainMap.tier_0 || {} },
+    { label: "Tier-1 子系统层", value: chainMap.tier_1 || [] },
+    { label: "Tier-2 关键器件 / 材料层", value: chainMap.tier_2 || [] },
+    { label: "Tier-3 制造工艺与壁垒层", value: chainMap.tier_3 || [] },
+    { label: "Tier-4 A股映射层", value: chainMap.tier_4 || [] },
+  ];
+  return `
+    <div class="themeResearchFactStack">
+      ${sections
+        .map(
+          (section) => `
+            <article class="themeResearchFactCard">
+              <strong>${escapeHtml(section.label)}</strong>
+              ${Array.isArray(section.value)
+                ? renderThemeResearchComplexList(section.value, "暂无数据")
+                : renderThemeResearchKeyValueSection(section.value, "暂无数据")}
+            </article>
+          `
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function renderThemeResearchAnchorClassification(anchorClassification) {
+  const sections = [
+    { label: "A类 股权锚点", value: anchorClassification.equity_anchor || [] },
+    { label: "B类 业务锚点", value: anchorClassification.business_anchor || [] },
+    { label: "C类 情绪映射", value: anchorClassification.sentiment_mapping || [] },
+  ];
+  return `
+    <div class="themeResearchMetricGrid">
+      ${sections
+        .map(
+          (section) => `
+            <article class="themeResearchFactCard">
+              <strong>${escapeHtml(section.label)}</strong>
+              ${renderThemeResearchComplexList(section.value, "暂无分层结果")}
+            </article>
+          `
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function renderThemeResearchCompanyLayers(companyLayers) {
+  const sections = [
+    { label: "核心成长型", value: companyLayers.core_growth || [] },
+    { label: "稳健价值型", value: companyLayers.stable_value || [] },
+    { label: "概念弹性型", value: companyLayers.concept_elasticity || [] },
+    { label: "情绪陷阱型", value: companyLayers.sentiment_trap || [] },
+  ];
+  return `
+    <div class="themeResearchMetricGrid">
+      ${sections
+        .map(
+          (section) => `
+            <article class="themeResearchFactCard">
+              <strong>${escapeHtml(section.label)}</strong>
+              ${renderThemeResearchComplexList(section.value, "暂无公司")}
+            </article>
+          `
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function renderThemeResearchScoringTable(rows) {
+  if (!Array.isArray(rows) || !rows.length) {
+    return `<div class="empty">暂时没有评分结果。</div>`;
+  }
+  return `
+    <div class="mxTableWrap">
+      <table class="mxTable themeResearchScoreTable">
+        <thead>
+          <tr>
+            <th>公司</th>
+            <th>代码</th>
+            <th>产业相关性</th>
+            <th>稀缺性</th>
+            <th>国产化空间</th>
+            <th>业绩真实性</th>
+            <th>景气确定性</th>
+            <th>综合评分</th>
+            <th>定性</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows
+            .map(
+              (row) => `
+                <tr>
+                  <td>${escapeHtml(row.company || "-")}</td>
+                  <td>${escapeHtml(row.ts_code || "-")}</td>
+                  <td>${escapeHtml(String(row.industry_relevance ?? "-"))}</td>
+                  <td>${escapeHtml(String(row.scarcity ?? "-"))}</td>
+                  <td>${escapeHtml(String(row.localization_space ?? "-"))}</td>
+                  <td>${escapeHtml(String(row.earnings_reality ?? "-"))}</td>
+                  <td>${escapeHtml(String(row.prosperity_certainty ?? "-"))}</td>
+                  <td><strong>${escapeHtml(String(row.total_score ?? "-"))}</strong></td>
+                  <td>${escapeHtml(row.qualitative || "-")}</td>
+                </tr>
+              `
+            )
+            .join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderThemeResearchSources(sources) {
+  if (!Array.isArray(sources) || !sources.length) {
+    return `<div class="empty">暂无证据来源。</div>`;
+  }
+  return `
+    <div class="themeResearchFactStack">
+      ${sources
+        .slice(0, 24)
+        .map(
+          (item) => `
+            <article class="themeResearchFactCard">
+              <div class="themeResearchPreviewLead">
+                <strong>${escapeHtml(item.title || item.source || "来源")}</strong>
+                <span class="profileVerdict tone-${themeResearchEvidenceTone(item.evidence_level)}">${escapeHtml(item.evidence_level || "待核实")}</span>
+              </div>
+              <p>${escapeHtml(item.summary || "暂无摘要")}</p>
+              <div class="themeResearchProgressMeta">
+                <span>${escapeHtml(item.source || "系统")}</span>
+                <span>${escapeHtml(item.publish_time || "待核实")}</span>
+              </div>
+            </article>
+          `
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function renderThemeResearchKeyValueSection(payload, emptyText) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload) || !Object.keys(payload).length) {
+    return `<div class="empty">${escapeHtml(emptyText)}</div>`;
+  }
+  return `
+    <div class="themeResearchKeyValueList">
+      ${Object.entries(payload)
+        .map(
+          ([key, value]) => `
+            <article class="themeResearchKeyValueItem">
+              <strong>${escapeHtml(themeResearchFieldLabel(key))}</strong>
+              <p>${escapeHtml(themeResearchValueText(value))}</p>
+            </article>
+          `
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function renderThemeResearchSimpleList(items, emptyText) {
+  if (!Array.isArray(items) || !items.length) {
+    return `<p>${escapeHtml(emptyText)}</p>`;
+  }
+  return `
+    <ul class="themeResearchSimpleList">
+      ${items.map((item) => `<li>${escapeHtml(themeResearchValueText(item))}</li>`).join("")}
+    </ul>
+  `;
+}
+
+function renderThemeResearchComplexList(items, emptyText) {
+  if (!Array.isArray(items) || !items.length) {
+    return `<div class="empty">${escapeHtml(emptyText)}</div>`;
+  }
+  return `
+    <div class="themeResearchComplexList">
+      ${items
+        .map(
+          (item) => `
+            <article class="themeResearchComplexItem">
+              ${renderThemeResearchComplexItem(item)}
+            </article>
+          `
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function renderThemeResearchComplexItem(item) {
+  if (item === null || item === undefined) {
+    return `<p>待核实</p>`;
+  }
+  if (typeof item === "string" || typeof item === "number" || typeof item === "boolean") {
+    return `<p>${escapeHtml(String(item))}</p>`;
+  }
+  if (Array.isArray(item)) {
+    return renderThemeResearchSimpleList(item, "暂无条目");
+  }
+  const lead = item.company_name || item.company || item.title || item.name || item.stock_code || "条目";
+  const bodyParts = [];
+  [
+    item.reason,
+    item.summary,
+    item.conclusion,
+    item.industry_position,
+    item.chain_role,
+    item.earnings_realization,
+  ].forEach((value) => {
+    const text = String(value || "").trim();
+    if (text) bodyParts.push(text);
+  });
+  if (Array.isArray(item.risk_points) && item.risk_points.length) {
+    bodyParts.push(`风险：${item.risk_points.join(" / ")}`);
+  }
+  if (item.evidence_level) {
+    bodyParts.push(`证据等级 ${item.evidence_level}`);
+  }
+  return `
+    <strong>${escapeHtml(lead)}</strong>
+    <p>${escapeHtml(bodyParts.join("；") || themeResearchValueText(item))}</p>
+  `;
+}
+
+function renderThemeResearchHistory() {
+  if (els.themeResearchHistoryMeta) {
+    els.themeResearchHistoryMeta.textContent = state.themeResearch.historyTotal
+      ? `共 ${state.themeResearch.historyTotal} 份报告 · 第 ${state.themeResearch.historyPage} / ${state.themeResearch.historyTotalPages} 页`
+      : "支持回看最近的题材研究任务。";
+  }
+  if (!els.themeResearchHistoryBox) return;
+  if (!state.themeResearch.historyLoaded && !state.themeResearch.history.length) {
+    els.themeResearchHistoryBox.innerHTML = `<div class="empty">正在加载历史报告...</div>`;
+    return;
+  }
+  if (!state.themeResearch.history.length) {
+    els.themeResearchHistoryBox.innerHTML = `<div class="empty">当前还没有历史报告。</div>`;
+    return;
+  }
+  els.themeResearchHistoryBox.innerHTML = `
+    <div class="themeResearchHistoryScroll">
+      <div class="themeResearchHistoryList">
+        ${state.themeResearch.history
+          .map(
+            (item) => `
+              <button
+                type="button"
+                class="themeResearchHistoryItem${item.task_id === state.themeResearch.currentTaskId ? " active" : ""}"
+                data-theme-research-task="${escapeHtml(item.task_id || "")}"
+                data-theme-research-name="${escapeHtml(item.theme_name || "")}"
+              >
+                <div class="themeResearchHistoryLead">
+                  <strong>${escapeHtml(item.theme_name || item.task_id || "未命名题材")}</strong>
+                  <span class="profileVerdict tone-${themeResearchTone(item.status)}">${escapeHtml(themeResearchStatusLabel(item.status))}</span>
+                </div>
+                <small>${escapeHtml(item.updated_at || item.created_at || "")}</small>
+                <span class="themeResearchHistoryTaskId">${escapeHtml(item.task_id || "")}</span>
+              </button>
+            `
+          )
+          .join("")}
+      </div>
+    </div>
+    ${renderReviewPager({
+      page: state.themeResearch.historyPage,
+      totalPages: state.themeResearch.historyTotalPages,
+      totalItems: state.themeResearch.historyTotal,
+      pageSize: state.themeResearch.historyPageSize,
+      action: "theme-research-history",
+    })}
+  `;
+}
+
+function getLatestThemeResearchProgressEvent() {
+  const events = (state.themeResearch.events || []).filter((item) => item.event_type !== "data_preview");
+  return events.length ? events[events.length - 1] : null;
+}
+
+function getLatestThemeResearchPreviewEvent() {
+  const events = (state.themeResearch.events || []).filter((item) => Array.isArray(item.data_preview) && item.data_preview.length);
+  return events.length ? events[events.length - 1] : null;
+}
+
+function renderThemeResearchAtlasChip(label, value, tone = "neutral") {
+  return `
+    <article class="themeResearchAtlasChip">
+      <span>${escapeHtml(label)}</span>
+      <strong class="tone-${escapeHtml(tone)}">${escapeHtml(value || "待核实")}</strong>
+    </article>
+  `;
+}
+
+function renderThemeResearchAtlasTable(atlas) {
+  if (!atlas.totalRows) {
+    return `<div class="empty">当前报告还没有可展示的树形图谱数据。</div>`;
+  }
+  return `
+    <div class="themeResearchAtlasTableWrap">
+      <table class="themeResearchTreeTable">
+        <thead>
+          <tr>
+            <th>题材</th>
+            <th>一级拆分</th>
+            <th>细分</th>
+            <th>股票</th>
+            <th>评分</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${atlas.groups
+            .map((group, groupIndex) =>
+              group.items
+                .map(
+                  (item, itemIndex) => `
+                    <tr>
+                      ${groupIndex === 0 && itemIndex === 0 ? renderThemeResearchThemeCell(atlas) : ""}
+                      ${itemIndex === 0 ? renderThemeResearchGroupCell(group) : ""}
+                      ${renderThemeResearchSegmentCell(item)}
+                      <td class="themeResearchTreeStockCell">
+                        ${renderThemeResearchTreeCompanies(item.companies || [])}
+                      </td>
+                      <td class="themeResearchTreeScoreCell">
+                        <div class="themeResearchTreeScore">
+                          <strong>${escapeHtml(item.scoreText)}</strong>
+                          <span class="profileVerdict tone-${escapeHtml(item.scoreTone || "neutral")}">${escapeHtml(item.scoreVerdict || "等待评分")}</span>
+                          <small>${escapeHtml(item.scoreMeta || "待核实")}</small>
+                        </div>
+                      </td>
+                    </tr>
+                  `
+                )
+                .join("")
+            )
+            .join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderThemeResearchThemeCell(atlas) {
+  return `
+    <td class="themeResearchTreeThemeCell" rowspan="${atlas.totalRows}">
+      <div class="themeResearchTreeTheme">
+        <div class="themeResearchTreeThemeGlyphs">${themeResearchThemeGlyphs(atlas.themeName)}</div>
+        <span>${escapeHtml(atlas.stage)}</span>
+        <small>${escapeHtml(atlas.suitableFor)}</small>
+      </div>
+    </td>
+  `;
+}
+
+function renderThemeResearchGroupCell(group) {
+  return `
+    <td class="themeResearchTreeGroupCell" rowspan="${group.items.length}">
+      <div class="themeResearchTreeGroup">
+        <strong>${escapeHtml(group.label)}</strong>
+        <span>${escapeHtml(group.summary)}</span>
+        <small>${escapeHtml(group.countLabel)}</small>
+      </div>
+    </td>
+  `;
+}
+
+function renderThemeResearchSegmentCell(item) {
+  return `
+    <td class="themeResearchTreeSegmentCell">
+      <div class="themeResearchTreeSegment">
+        <strong>${escapeHtml(item.segmentLabel || "待核实")}</strong>
+        <span>${escapeHtml(item.segmentSummary || "待核实")}</span>
+      </div>
+    </td>
+  `;
+}
+
+function renderThemeResearchTreeCompanies(companies) {
+  if (!Array.isArray(companies) || !companies.length) {
+    return `<div class="themeResearchTreeCompanyList"><p class="themeResearchTreeEmptyNote">暂无可确认的 A 股映射公司。</p></div>`;
+  }
+  return `
+    <div class="themeResearchTreeCompanyList">
+      ${companies
+        .map(
+          (company) => `
+            <article class="themeResearchTreeCompanyChip">
+              <div class="themeResearchTreeCompanyMain">
+                <strong>${escapeHtml(company.companyName || "待核实")}</strong>
+                <span class="themeResearchTreeCompanyCode">${escapeHtml(company.tsCode || "待核实")}</span>
+                ${company.scoreText && company.scoreText !== "待核实" ? `<span class="profileVerdict tone-${escapeHtml(company.scoreTone || "neutral")}">${escapeHtml(company.scoreText)} 分</span>` : ""}
+                ${company.isCore ? '<span class="profileVerdict tone-positive">核心</span>' : ""}
+              </div>
+              <div class="themeResearchTreeCompanyMeta">
+                <small>${escapeHtml(company.noteText || "待核实")}</small>
+              </div>
+            </article>
+          `
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function buildThemeResearchAtlas(report, payload) {
+  if (report.industry_tree && Array.isArray(report.industry_tree.children) && report.industry_tree.children.length) {
+    return buildThemeResearchAtlasFromTree(report, payload);
+  }
+  return buildThemeResearchAtlasFromLegacy(report, payload);
+}
+
+function buildThemeResearchAtlasFromTree(report, payload) {
+  const themeName = report.normalized_name || payload.theme_name || report.theme_name || "题材研究";
+  const definition = report.industry_definition || {};
+  const finalConclusion = report.final_conclusion || {};
+  const falsification = report.falsification || {};
+  const keywords = Array.isArray(report.keywords) ? report.keywords.filter(Boolean) : [];
+  const tree = report.industry_tree || {};
+  const leafRows = flattenThemeResearchIndustryTree(tree.children || []);
+  const groups = [];
+  const grouped = new Map();
+  leafRows.forEach((row) => {
+    const groupLabel = row.path[0] || "待核实";
+    const group = grouped.get(groupLabel) || {
+      label: groupLabel,
+      items: [],
+      companyCount: 0,
+    };
+    const companies = normalizeThemeResearchTreeCompanies(row.companies || [], finalConclusion.core_companies || []);
+    const scoreValues = companies.map((item) => item.scoreValue).filter((value) => Number.isFinite(value));
+    const averageScore = scoreValues.length
+      ? scoreValues.reduce((sum, value) => sum + value, 0) / scoreValues.length
+      : null;
+    const scoreView = themeResearchScoreView(averageScore);
+    group.items.push({
+      segmentLabel: row.path.slice(1).join(" / ") || row.path[0] || "待核实",
+      segmentSummary: themeResearchCompactText(row.summary || "待核实", 36),
+      companies,
+      scoreValue: averageScore,
+      scoreText: scoreView.text,
+      scoreTone: scoreView.tone,
+      scoreVerdict: scoreView.verdict,
+      scoreMeta: companies.length ? `${companies.length} 家公司均值` : "暂无公司映射",
+    });
+    group.companyCount += companies.length;
+    grouped.set(groupLabel, group);
+  });
+  grouped.forEach((group) => {
+    group.summary = `${group.items.length} 个细分 / ${group.companyCount || 0} 家公司`;
+    groups.push(group);
+  });
+
+  return {
+    themeName,
+    stage: definition.stage || "待核实",
+    suitableFor: finalConclusion.suitable_for || "待核实",
+    splitDimension: tree.dimension || "待核实",
+    overallResult: falsification.overall_result || "待核实",
+    overallTone: themeResearchAtlasResultTone(falsification.overall_result || ""),
+    keywordsText: keywords.length ? keywords.join(" / ") : "等待关键词归纳",
+    groups,
+    totalRows: groups.reduce((sum, group) => sum + group.items.length, 0),
+  };
+}
+
+function buildThemeResearchAtlasFromLegacy(report, payload) {
+  const themeName = report.normalized_name || payload.theme_name || report.theme_name || "题材研究";
+  const definition = report.industry_definition || {};
+  const finalConclusion = report.final_conclusion || {};
+  const falsification = report.falsification || {};
+  const keywords = Array.isArray(report.keywords) ? report.keywords.filter(Boolean) : [];
+  const layerDefinitions = [
+    { key: "core_growth", label: "核心成长" },
+    { key: "stable_value", label: "稳健价值" },
+    { key: "concept_elasticity", label: "概念弹性" },
+    { key: "sentiment_trap", label: "情绪陷阱" },
+  ];
+  const companyLayers = report.company_layers || {};
+  const scoringRows = Array.isArray(report.scoring_table) ? report.scoring_table : [];
+  const tier4Rows = Array.isArray(report.industry_chain_map?.tier_4) ? report.industry_chain_map.tier_4 : [];
+  const anchorRows = buildThemeResearchAnchorRows(report.anchor_classification || {});
+  const coreSet = new Set((finalConclusion.core_companies || []).map((item) => String(item || "").trim()));
+  const groups = layerDefinitions
+    .map((definitionItem) => {
+      const rawItems = Array.isArray(companyLayers[definitionItem.key]) ? companyLayers[definitionItem.key] : [];
+      const items = rawItems
+        .map((item) => buildThemeResearchAtlasItem(item, definitionItem.label, scoringRows, tier4Rows, anchorRows, coreSet))
+        .filter((item) => item && item.companyName)
+        .map((item) => {
+          const scoreView = themeResearchScoreView(item.scoreValue);
+          return {
+            segmentLabel: item.companyName,
+            segmentSummary: themeResearchCompactText(item.stockMeta || "待核实", 36),
+            companies: [
+              {
+                companyName: item.companyName,
+                tsCode: item.tsCode,
+                scoreValue: item.scoreValue,
+                scoreText: item.scoreText,
+                scoreTone: item.scoreTone,
+                noteText: themeResearchCompactText(item.qualitative || item.conclusion || "待核实", 42),
+                isCore: item.isCore,
+              },
+            ],
+            scoreValue: item.scoreValue,
+            scoreText: item.scoreText,
+            scoreTone: scoreView.tone,
+            scoreVerdict: scoreView.verdict,
+            scoreMeta: "单股映射",
+          };
+        });
+      return items.length
+        ? {
+            label: definitionItem.label,
+            summary: `${items.length} 家公司`,
+            items,
+          }
+        : null;
+    })
+    .filter(Boolean);
+  return {
+    themeName,
+    stage: definition.stage || "待核实",
+    suitableFor: finalConclusion.suitable_for || "待核实",
+    splitDimension: "按公司分层兜底",
+    overallResult: falsification.overall_result || "待核实",
+    overallTone: themeResearchAtlasResultTone(falsification.overall_result || ""),
+    keywordsText: keywords.length ? keywords.join(" / ") : "等待关键词归纳",
+    groups,
+    totalRows: groups.reduce((sum, group) => sum + group.items.length, 0),
+  };
+}
+
+function flattenThemeResearchIndustryTree(nodes, path = []) {
+  const rows = [];
+  (nodes || []).forEach((node) => {
+    const cleanName = String(node?.name || "").trim();
+    if (!cleanName) return;
+    const nextPath = [...path, cleanName];
+    const childNodes = Array.isArray(node?.children) ? node.children : [];
+    const companies = Array.isArray(node?.companies) ? node.companies : [];
+    if (childNodes.length) {
+      rows.push(...flattenThemeResearchIndustryTree(childNodes, nextPath));
+      return;
+    }
+    rows.push({
+      path: nextPath,
+      summary: String(node?.summary || "").trim(),
+      companies,
+    });
+  });
+  return rows;
+}
+
+function normalizeThemeResearchTreeCompanies(companies, coreCompanies) {
+  const coreSet = new Set((coreCompanies || []).map((item) => String(item || "").trim()));
+  return (companies || []).map((item) => {
+    const scoreValue = Number(item?.score);
+    const qualitative = String(item?.qualitative || "").trim();
+    const conclusion = String(item?.conclusion || "").trim();
+    const chainRole = String(item?.chain_role || "").trim();
+    const anchorType = themeResearchAnchorText(item?.anchor_type || "");
+    const noteParts = [anchorType, chainRole, qualitative || conclusion].filter(Boolean);
+    const companyName = String(item?.company_name || item?.company || item?.name || "").trim() || "待核实";
+    const scoreView = themeResearchScoreView(scoreValue);
+    return {
+      companyName,
+      tsCode: String(item?.stock_code || item?.ts_code || "").trim().toUpperCase(),
+      scoreValue: Number.isFinite(scoreValue) ? scoreValue : null,
+      scoreText: scoreView.text,
+      scoreTone: scoreView.tone,
+      noteText: themeResearchCompactText(noteParts.join(" / ") || "待核实", 42),
+      isCore: coreSet.has(companyName),
+    };
+  });
+}
+
+function finalizeThemeResearchAtlasGroup(label, items) {
+  const cleanItems = (items || []).filter(Boolean);
+  if (!cleanItems.length) return null;
+  cleanItems.sort((left, right) => {
+    if (right.isCore !== left.isCore) return right.isCore ? 1 : -1;
+    return (right.scoreValue || -1) - (left.scoreValue || -1);
+  });
+  const scoreValues = cleanItems.map((item) => item.scoreValue).filter((value) => Number.isFinite(value));
+  const averageScore = scoreValues.length
+    ? `${formatCompactValue(scoreValues.reduce((sum, value) => sum + value, 0) / scoreValues.length)} 分`
+    : "暂无评分";
+  return {
+    label,
+    items: cleanItems,
+    countLabel: `${cleanItems.length} 只股票`,
+    summary: averageScore,
+  };
+}
+
+function buildThemeResearchAtlasItem(sourceItem, layerLabel, scoringRows, tier4Rows, anchorRows, coreSet) {
+  const companyName = String(sourceItem.company_name || sourceItem.company || sourceItem.name || "").trim();
+  const tsCode = String(sourceItem.stock_code || sourceItem.ts_code || "").trim().toUpperCase();
+  if (!companyName && !tsCode) return null;
+  const scoreRow = themeResearchFindCompanyRow(scoringRows, companyName, tsCode);
+  const tier4Row = themeResearchFindCompanyRow(tier4Rows, companyName, tsCode);
+  const anchorRow = themeResearchFindCompanyRow(anchorRows, companyName, tsCode);
+  const scoreValue = Number(scoreRow?.total_score);
+  const qualitative = scoreRow?.qualitative || sourceItem.qualitative || "";
+  const conclusion = sourceItem.conclusion || sourceItem.reason || qualitative || "待核实";
+  const noteParts = [
+    tsCode,
+    themeResearchCompactChainRole(tier4Row?.chain_role || tier4Row?.industry_position || sourceItem.chain_role || sourceItem.industry_position || ""),
+    themeResearchAnchorText(tier4Row?.anchor_type || sourceItem.anchor_type || anchorRow?.anchor_type || anchorRow?.anchor_label || ""),
+    tier4Row?.evidence_level || anchorRow?.evidence_level ? `证据 ${(tier4Row?.evidence_level || anchorRow?.evidence_level)}` : "",
+  ].filter(Boolean);
+  const scoreView = themeResearchScoreView(scoreValue);
+  return {
+    identityKey: themeResearchIdentityKey(companyName, tsCode),
+    companyName: companyName || tsCode,
+    tsCode,
+    layerLabel,
+    scoreValue: Number.isFinite(scoreValue) ? scoreValue : null,
+    scoreText: scoreView.text,
+    scoreTone: scoreView.tone,
+    qualitative,
+    conclusion,
+    stockMeta: themeResearchCompactText(noteParts.join(" / ") || "暂无更多映射说明。", 42),
+    isCore: coreSet.has(companyName),
+  };
+}
+
+function buildThemeResearchAnchorRows(anchorClassification) {
+  return [
+    ...((anchorClassification.equity_anchor || []).map((item) => ({ ...item, anchor_label: "股权锚点" }))),
+    ...((anchorClassification.business_anchor || []).map((item) => ({ ...item, anchor_label: "业务锚点" }))),
+    ...((anchorClassification.sentiment_mapping || []).map((item) => ({ ...item, anchor_label: "情绪映射" }))),
+  ];
+}
+
+function themeResearchFindCompanyRow(rows, companyName, tsCode) {
+  const cleanName = String(companyName || "").trim();
+  const cleanCode = String(tsCode || "").trim().toUpperCase();
+  return (rows || []).find((row) => {
+    const rowName = String(row?.company_name || row?.company || row?.name || row?.title || "").trim();
+    const rowCode = String(row?.stock_code || row?.ts_code || "").trim().toUpperCase();
+    return (cleanCode && rowCode && cleanCode === rowCode) || (cleanName && rowName && cleanName === rowName);
+  }) || null;
+}
+
+function themeResearchIdentityKey(companyName, tsCode) {
+  return `${String(tsCode || "").trim().toUpperCase()}|${String(companyName || "").trim()}`;
+}
+
+function themeResearchCompactChainRole(value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  if (text.includes("业务映射")) return "业务映射";
+  if (text.includes("股权映射")) return "股权映射";
+  if (text.includes("情绪映射")) return "情绪映射";
+  if (text.length <= 20) return text;
+  return `${text.slice(0, 20)}…`;
+}
+
+function themeResearchAnchorText(value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  if (text === "A") return "股权锚点";
+  if (text === "B") return "业务锚点";
+  if (text === "C") return "情绪映射";
+  return text;
+}
+
+function themeResearchThemeGlyphs(value) {
+  const text = String(value || "").trim();
+  if (/^[\u4e00-\u9fa5]{2,6}$/.test(text)) {
+    return text
+      .split("")
+      .map((char) => `<span>${escapeHtml(char)}</span>`)
+      .join("");
+  }
+  return `<strong>${escapeHtml(text || "题材")}</strong>`;
+}
+
+function themeResearchAtlasResultTone(result) {
+  const text = String(result || "");
+  if (text.includes("部分")) return "neutral";
+  if (text.includes("失败")) return "caution";
+  if (text.includes("通过")) return "positive";
+  return "neutral";
+}
+
+function themeResearchScoreView(scoreValue) {
+  if (!Number.isFinite(scoreValue)) {
+    return { text: "待核实", verdict: "等待评分", tone: "neutral" };
+  }
+  if (scoreValue >= 8) {
+    return { text: formatCompactValue(scoreValue), verdict: "重点研究", tone: "positive" };
+  }
+  if (scoreValue >= 6) {
+    return { text: formatCompactValue(scoreValue), verdict: "观察验证", tone: "neutral" };
+  }
+  if (scoreValue >= 4) {
+    return { text: formatCompactValue(scoreValue), verdict: "偏概念", tone: "neutral" };
+  }
+  return { text: formatCompactValue(scoreValue), verdict: "谨慎回避", tone: "caution" };
+}
+
+function themeResearchCompactText(value, limit = 36) {
+  const text = String(value || "").trim();
+  if (!text) return "待核实";
+  if (text.length <= limit) return text;
+  return `${text.slice(0, Math.max(0, limit - 1))}…`;
+}
+
+function themeResearchTone(status) {
+  if (status === "success" || status === "completed") return "positive";
+  if (status === "error" || status === "failed") return "caution";
+  return "neutral";
+}
+
+function themeResearchEvidenceTone(level) {
+  if (level === "S" || level === "A") return "positive";
+  if (level === "C") return "caution";
+  return "neutral";
+}
+
+function themeResearchStatusLabel(status) {
+  if (status === "success" || status === "completed") return "已完成";
+  if (status === "error" || status === "failed") return "失败";
+  if (status === "partial") return "部分完成";
+  if (status === "running") return "进行中";
+  return status || "更新";
+}
+
+function themeResearchEventLabel(eventType) {
+  return {
+    task_started: "任务已启动",
+    step_update: "步骤更新",
+    tool_call_started: "工具开始调用",
+    tool_call_finished: "工具调用完成",
+    tool_call_failed: "工具调用失败",
+    data_preview: "数据预览",
+    final_report: "最终报告",
+    task_failed: "任务失败",
+  }[eventType] || "步骤更新";
+}
+
+function themeResearchFieldLabel(key) {
+  return {
+    terminal_system: "终端系统",
+    demand_source: "下游需求",
+    stage: "产业阶段",
+    current_drivers: "当前驱动",
+    value_location: "价值量所在",
+    barrier: "壁垒",
+    supply_constraint: "供给约束",
+    demand_driver: "需求驱动力",
+    a_share_uniqueness: "A股唯一性",
+    earnings_timeline: "业绩兑现时间表",
+    volume: "量",
+    price: "价",
+    competition: "竞争",
+    policy_capital: "政策/资本",
+  }[key] || key;
+}
+
+function themeResearchValueText(value) {
+  if (value === null || value === undefined) return "待核实";
+  if (typeof value === "string") return value || "待核实";
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (Array.isArray(value)) return value.length ? value.map((item) => themeResearchValueText(item)).join(" / ") : "待核实";
+  if (typeof value === "object") {
+    return Object.entries(value)
+      .map(([key, item]) => `${themeResearchFieldLabel(key)}：${themeResearchValueText(item)}`)
+      .join("；");
+  }
+  return String(value);
+}
+
 function setThemeBoardStatus(message) {
   if (els.themeBoardStatusText) {
     els.themeBoardStatusText.textContent = message;
@@ -2346,7 +3843,7 @@ async function loadThemeBoardOverview() {
   closeThemeBoardModal();
   renderThemeBoard();
   hideThemeBoardError();
-  setThemeBoardStatus("正在聚合开盘啦题材热度与成分股...");
+  setThemeBoardStatus("正在聚合开盘啦题材榜单与股票明细...");
   try {
     const dateValue = normalizeDateInput(els.themeBoardDate?.value || "");
     const suffix = dateValue ? `?trade_date=${encodeURIComponent(dateValue)}` : "";
@@ -2354,7 +3851,7 @@ async function loadThemeBoardOverview() {
     if (requestId !== state.themeBoard.requestId) return;
     state.themeBoard.overview = data;
     state.themeBoard.loaded = true;
-    setThemeBoardStatus(`题材榜单已更新到 ${formatDate(data.trade_date || dateValue)}，先看题材热度，再点开成分股找核心票。`);
+    setThemeBoardStatus(`题材榜单已更新到 ${formatDate(data.trade_date || dateValue)}，先看题材热度，再点开题材股票找核心票。`);
   } catch (err) {
     if (requestId !== state.themeBoard.requestId) return;
     state.themeBoard.overview = { status: "error", message: err.message };
@@ -2388,8 +3885,8 @@ function renderThemeBoardSummary() {
   const summary = overview.summary || {};
   const cards = [
     { label: "题材数", value: intValue(summary.theme_count), note: "当日可聚合题材" },
-    { label: "成分股数", value: intValue(summary.stock_count), note: "去重后的题材股票" },
-    { label: "龙一题材", value: summary.leader_name || "-", note: `成分股 ${intValue(summary.leader_stock_count)} 只` },
+    { label: "上榜股数", value: intValue(summary.stock_count), note: "去重后的题材股票" },
+    { label: "龙一题材", value: summary.leader_name || "-", note: `上榜股 ${intValue(summary.leader_stock_count)} 只` },
     { label: "题材热度", value: intValue(summary.leader_hot_total), note: `榜单个股 ${intValue(summary.kpl_stock_count)} 只` },
   ];
   els.themeBoardSummaryBox.innerHTML = cards
@@ -2441,12 +3938,12 @@ function renderThemeBoardCard(item) {
         <span class="profileVerdict tone-neutral">热度 ${intValue(item.hot_total)}</span>
       </div>
       <div class="themeBoardMetrics">
-        <span>成分股 ${intValue(item.stock_count)} 只</span>
+        <span>上榜股 ${intValue(item.stock_count)} 只</span>
         <span>均值 ${escapeHtml(String(item.hot_avg ?? 0))}</span>
         <span>龙一 ${escapeHtml(topStock.name || "-")}</span>
         <span>人气 ${intValue(topStock.hot_num)}</span>
       </div>
-      ${sampleStocks.length ? `<p>${escapeHtml(sampleStocks.join(" / "))}</p>` : `<p>暂无题材成分股摘要。</p>`}
+      ${sampleStocks.length ? `<p>${escapeHtml(sampleStocks.join(" / "))}</p>` : `<p>暂无题材股票摘要。</p>`}
       ${item.sample_desc ? `<small>${escapeHtml(item.sample_desc)}</small>` : ""}
     </article>
   `;
@@ -2471,16 +3968,16 @@ function renderThemeBoardInsight() {
       <article class="reviewFocusItem">
         <strong>当前龙一</strong>
         <p>${escapeHtml(leader.name || "暂无数据")}</p>
-        <div class="reviewFocusMeta">成分股 ${intValue(leader.stock_count)} 只 · 热度 ${intValue(leader.hot_total)}</div>
+        <div class="reviewFocusMeta">上榜股 ${intValue(leader.stock_count)} 只 · 热度 ${intValue(leader.hot_total)}</div>
       </article>
       <article class="reviewFocusItem">
         <strong>第二梯队</strong>
         <p>${escapeHtml(runnerUp.name || "暂无数据")}</p>
-        <div class="reviewFocusMeta">成分股 ${intValue(runnerUp.stock_count)} 只 · 热度 ${intValue(runnerUp.hot_total)}</div>
+        <div class="reviewFocusMeta">上榜股 ${intValue(runnerUp.stock_count)} 只 · 热度 ${intValue(runnerUp.hot_total)}</div>
       </article>
       <article class="reviewFocusItem">
         <strong>使用方式</strong>
-        <p>先看题材热度密度，再点开题材成分股，优先核对龙一和前排辨识度个股。</p>
+        <p>先看题材热度密度，再点开题材股票，优先核对龙一和前排辨识度个股。</p>
       </article>
     </div>
   `;
@@ -2495,13 +3992,13 @@ async function openThemeBoardModal(tsCode, name) {
   state.themeBoard.modalName = cleanName;
   state.themeBoard.detail = { status: "loading" };
   if (els.themeBoardModalTitle) {
-    els.themeBoardModalTitle.textContent = cleanName || "题材成分股明细";
+    els.themeBoardModalTitle.textContent = cleanName || "题材股票明细";
   }
   if (els.themeBoardModalMeta) {
-    els.themeBoardModalMeta.textContent = `正在加载 ${cleanName || cleanTsCode} 的成分股数据...`;
+    els.themeBoardModalMeta.textContent = `正在加载 ${cleanName || cleanTsCode} 的题材股票数据...`;
   }
   if (els.themeBoardModalBody) {
-    els.themeBoardModalBody.innerHTML = `<div class="empty">正在加载题材成分股数据...</div>`;
+    els.themeBoardModalBody.innerHTML = `<div class="empty">正在加载题材股票数据...</div>`;
   }
   if (els.themeBoardModal) {
     els.themeBoardModal.hidden = false;
@@ -2528,26 +4025,26 @@ function renderThemeBoardModal() {
   const detail = state.themeBoard.detail;
   if (!els.themeBoardModalBody || !els.themeBoardModalTitle || !els.themeBoardModalMeta) return;
   if (!detail || detail.status === "loading") {
-    els.themeBoardModalTitle.textContent = state.themeBoard.modalName || "题材成分股明细";
-    els.themeBoardModalMeta.textContent = "正在加载题材成分股数据...";
-    els.themeBoardModalBody.innerHTML = `<div class="empty">正在加载题材成分股数据...</div>`;
+    els.themeBoardModalTitle.textContent = state.themeBoard.modalName || "题材股票明细";
+    els.themeBoardModalMeta.textContent = "正在加载题材股票数据...";
+    els.themeBoardModalBody.innerHTML = `<div class="empty">正在加载题材股票数据...</div>`;
     return;
   }
   if (detail.status === "error") {
-    els.themeBoardModalTitle.textContent = state.themeBoard.modalName || "题材成分股明细";
-    els.themeBoardModalMeta.textContent = "题材成分股加载失败";
-    els.themeBoardModalBody.innerHTML = `<div class="mxError">${escapeHtml(detail.message || "题材成分股加载失败。")}</div>`;
+    els.themeBoardModalTitle.textContent = state.themeBoard.modalName || "题材股票明细";
+    els.themeBoardModalMeta.textContent = "题材股票加载失败";
+    els.themeBoardModalBody.innerHTML = `<div class="mxError">${escapeHtml(detail.message || "题材股票加载失败。")}</div>`;
     return;
   }
   const theme = detail.theme || {};
   const items = detail.items || [];
-  els.themeBoardModalTitle.textContent = theme.name || state.themeBoard.modalName || "题材成分股明细";
-  els.themeBoardModalMeta.textContent = `题材日期 ${formatDate(detail.trade_date || "")} · 成分股 ${intValue(theme.stock_count)} 只 · 总热度 ${intValue(theme.hot_total)}`;
+  els.themeBoardModalTitle.textContent = theme.name || state.themeBoard.modalName || "题材股票明细";
+  els.themeBoardModalMeta.textContent = `题材日期 ${formatDate(detail.trade_date || "")} · 股票 ${intValue(theme.stock_count)} 只 · 总热度 ${intValue(theme.hot_total)}`;
   els.themeBoardModalBody.innerHTML = items.length
     ? `
       <div class="reviewPanelStack">
         <div class="reviewPanelMeta">
-          <small>点击股票可直接跳转到股票分析；题材描述保留开盘啦题材成分接口原文。</small>
+          <small>点击股票可直接跳转到股票分析；优先展示题材成分接口明细，缺失时回退到榜单题材原文。</small>
         </div>
         <table class="reviewTable">
           <thead>
@@ -2571,7 +4068,7 @@ function renderThemeBoardModal() {
         </table>
       </div>
     `
-    : `<div class="empty">当前题材没有可展示的成分股数据。</div>`;
+    : `<div class="empty">当前题材没有可展示的股票数据。</div>`;
 }
 
 async function loadReviewOverview() {
@@ -6006,7 +7503,30 @@ function bindEvents() {
     }
   });
   els.reviewRefreshBtn?.addEventListener("click", () => startReviewFlow(() => loadReviewOverview()));
+  els.themeResearchStartBtn?.addEventListener("click", () => startThemeResearchFlow(() => startThemeResearchTask()));
+  els.themeResearchInput?.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      startThemeResearchFlow(() => startThemeResearchTask());
+    }
+  });
   els.themeBoardRefreshBtn?.addEventListener("click", () => startThemeBoardFlow(() => loadThemeBoardOverview()));
+  els.systemConfigRefreshBtn?.addEventListener("click", () => startSystemConfigFlow(() => loadSystemConfigs({ keepEditing: true })));
+  els.systemConfigCreateBtn?.addEventListener("click", () => {
+    resetSystemConfigForm();
+    openSystemConfigModal();
+  });
+  els.systemConfigForm?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    startSystemConfigFlow(() => submitSystemConfigForm());
+  });
+  els.systemConfigDeleteBtn?.addEventListener("click", () => startSystemConfigFlow(() => deleteCurrentSystemConfig()));
+  els.systemConfigResetBtn?.addEventListener("click", resetSystemConfigForm);
+  els.systemConfigTableBox?.addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-system-config-edit]");
+    if (!button) return;
+    startSystemConfigFlow(() => loadSystemConfigDetail(button.dataset.systemConfigEdit || ""));
+  });
   els.pickerRunBtn?.addEventListener("click", () => startSmartPickerFlow(() => runSmartPicker("combined")));
   els.pickerEastmoneyBatchBtn?.addEventListener("click", openPickerEastmoneyModalWithLoading);
   els.pickerRunConditionBtn?.addEventListener("click", () => startSmartPickerFlow(() => runSmartPicker("condition")));
@@ -6204,6 +7724,26 @@ function bindEvents() {
     }
   });
 
+  document.querySelector("#themeResearchPage")?.addEventListener("click", (event) => {
+    const pagerTrigger = event.target.closest("[data-review-page-action]");
+    if (pagerTrigger && pagerTrigger.dataset.reviewPageAction === "theme-research-history") {
+      const page = pagerTrigger.dataset.reviewPage || "1";
+      void startThemeResearchFlow(() => loadThemeResearchHistory({ page, silent: true }));
+      return;
+    }
+    const historyTrigger = event.target.closest("[data-theme-research-task]");
+    if (!historyTrigger) return;
+    const taskId = historyTrigger.dataset.themeResearchTask || "";
+    const themeName = historyTrigger.dataset.themeResearchName || "";
+    closeThemeResearchStream();
+    state.themeResearch.loading = false;
+    state.themeResearch.currentThemeName = themeName;
+    if (els.themeResearchInput && themeName) {
+      els.themeResearchInput.value = themeName;
+    }
+    void startThemeResearchFlow(() => loadThemeResearchReport(taskId, { keepEvents: false }));
+  });
+
   els.reviewModal?.addEventListener("click", (event) => {
     if (event.target.closest("[data-review-modal-close]")) {
       closeReviewModal();
@@ -6270,7 +7810,16 @@ function bindEvents() {
     event.preventDefault();
     submitPickerEastmoneyBatch("add_group");
   });
+  els.systemConfigModal?.addEventListener("click", (event) => {
+    if (event.target.closest("[data-system-config-modal-close]")) {
+      closeSystemConfigModal();
+    }
+  });
   document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && els.systemConfigModal && !els.systemConfigModal.hidden) {
+      closeSystemConfigModal();
+      return;
+    }
     if (event.key === "Escape" && els.pickerEastmoneyModal && !els.pickerEastmoneyModal.hidden) {
       closePickerEastmoneyModal();
       return;

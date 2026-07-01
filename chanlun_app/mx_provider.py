@@ -1,14 +1,12 @@
 from __future__ import annotations
 
 import json
-import os
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
-from .config import BASE_DIR
+from .system_config_store import managed_config_value, raw_env_value
 
 
 class MXProviderError(Exception):
@@ -38,7 +36,7 @@ class MXDataProvider:
     BASE_URL = "https://mkapi2.dfcfs.com/finskillshub/api/claw/query"
 
     def __init__(self, api_key: str | None = None, timeout_seconds: int = 20):
-        self.api_key = api_key or _env_value("MX_APIKEY")
+        self.api_key = api_key or managed_config_value("MX_APIKEY")
         self.timeout_seconds = timeout_seconds
 
     def summary(self, ts_code: str = "", name: str = "") -> dict[str, Any]:
@@ -259,19 +257,4 @@ def _flatten(value: Any) -> str:
 
 
 def _env_value(name: str) -> str | None:
-    value = os.environ.get(name)
-    if value:
-        return value
-
-    env_file = Path(BASE_DIR) / ".env"
-    if not env_file.exists():
-        return None
-
-    for line in env_file.read_text(encoding="utf-8").splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#") or "=" not in stripped:
-            continue
-        key, raw_value = stripped.split("=", 1)
-        if key.strip() == name:
-            return raw_value.strip().strip('"').strip("'")
-    return None
+    return raw_env_value(name)
