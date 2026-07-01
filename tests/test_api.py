@@ -319,8 +319,8 @@ class FakeAIClient:
         self.last_call = {"stock": stock, "analysis": analysis, "profile_payload": profile_payload}
         return {
             "status": "ok",
-            "provider": "火山方舟",
-            "model": "doubao-seed-2-0-lite",
+            "provider": "DeepSeek",
+            "model": "deepseek-v4-pro",
             "facts": {"stock": stock},
             "analysis": {
                 "summary": "结构有点，但环境和容量还需要确认。",
@@ -416,8 +416,8 @@ class FakeReviewClient:
         payload = dict(review_payload)
         payload["ai_review"] = {
             "status": "ok",
-            "provider": "火山方舟",
-            "model": "doubao-seed-2-0-lite",
+            "provider": "DeepSeek",
+            "model": "deepseek-v4-pro",
             "analysis": {
                 "summary": "金融线更强，先看前排承接。",
                 "market_stage": "主流试错",
@@ -578,6 +578,205 @@ class FakeThemeBoardClient:
         }
 
 
+class FakeThemeResearchClient:
+    def __init__(self):
+        self.last_start = None
+        self.last_report_task_id = None
+        self.last_list_limit = None
+        self.last_list_page = None
+        self.last_list_page_size = None
+        self.last_stream_task_id = None
+        self.report = {
+            "task_id": "theme_research_20260627_0001",
+            "theme_name": "HBM",
+            "status": "completed",
+            "report": {
+                "task_id": "theme_research_20260627_0001",
+                "theme_name": "HBM",
+                "normalized_name": "高带宽存储器",
+                "keywords": ["HBM", "高带宽存储器", "先进封装", "存储芯片"],
+                "industry_definition": {
+                    "terminal_system": "AI 服务器",
+                    "demand_source": "AI 算力与高性能计算",
+                    "stage": "景气上行期",
+                    "current_drivers": ["AI算力", "先进封装", "国产替代"],
+                },
+                "industry_tree": {
+                    "theme": "高带宽存储器",
+                    "dimension": "按产业链技术路线拆分",
+                    "dimension_reason": "HBM 更适合按技术链路做 MECE 拆分。",
+                    "children": [
+                        {
+                            "name": "先进封装",
+                            "summary": "封装与互连环节",
+                            "evidence_level": "A",
+                            "children": [
+                                {
+                                    "name": "2.5D/3D 封装",
+                                    "summary": "HBM 核心封装路线",
+                                    "evidence_level": "A",
+                                    "companies": [
+                                        {
+                                            "company_name": "通富微电",
+                                            "stock_code": "002156.SZ",
+                                            "anchor_type": "B",
+                                            "chain_role": "封装映射",
+                                            "score": 8.0,
+                                            "qualitative": "核心产业链公司，可重点研究",
+                                            "conclusion": "核心",
+                                            "evidence_level": "A",
+                                        }
+                                    ],
+                                }
+                            ],
+                        }
+                    ],
+                },
+                "falsification": {
+                    "announcement_check": ["核心公司需继续核对量产进度。"],
+                    "financial_check": ["部分公司利润兑现仍需跟踪。"],
+                    "revenue_contribution_check": ["新业务收入占比整体仍待放量。"],
+                    "overall_result": "部分通过，需观察",
+                },
+                "industry_chain_map": {
+                    "tier_0": {"terminal": "AI 服务器"},
+                    "tier_1": ["GPU 模组", "高性能存储子系统"],
+                    "tier_2": ["HBM 芯片", "封装基板"],
+                    "tier_3": ["2.5D/3D 封装", "TSV"],
+                    "tier_4": [{"company_name": "通富微电", "stock_code": "002156.SZ", "evidence_level": "A"}],
+                },
+                "anchor_classification": {
+                    "equity_anchor": [],
+                    "business_anchor": [{"company_name": "通富微电", "stock_code": "002156.SZ", "reason": "先进封装映射"}],
+                    "sentiment_mapping": [{"company_name": "某概念股", "stock_code": "300001.SZ", "reason": "主要是情绪映射"}],
+                },
+                "core_questions": {
+                    "value_location": "高价值量集中在先进封装与高端存储",
+                    "barrier": "工艺、良率和客户认证",
+                },
+                "prosperity_analysis": {
+                    "volume": "扩产和订单增加",
+                    "price": "高端存储仍有议价能力",
+                },
+                "company_layers": {
+                    "core_growth": [{"company_name": "通富微电", "stock_code": "002156.SZ", "conclusion": "核心"}],
+                    "stable_value": [{"company_name": "长电科技", "stock_code": "600584.SH", "conclusion": "观察"}],
+                    "concept_elasticity": [],
+                    "sentiment_trap": [],
+                },
+                "scoring_table": [
+                    {
+                        "company": "通富微电",
+                        "ts_code": "002156.SZ",
+                        "industry_relevance": 9,
+                        "scarcity": 8,
+                        "localization_space": 8,
+                        "earnings_reality": 7,
+                        "prosperity_certainty": 7,
+                        "total_score": 8.0,
+                        "qualitative": "核心产业链公司，可重点研究",
+                    }
+                ],
+                "final_conclusion": {
+                    "best_chain_segments": ["先进封装", "高端存储"],
+                    "core_companies": ["通富微电", "长电科技"],
+                    "sentiment_only_companies": ["某概念股"],
+                    "suitable_for": "中线趋势",
+                },
+                "sources": [{"title": "HBM 新闻", "source": "东方财富妙想", "evidence_level": "B"}],
+                "risk_disclaimer": "本报告仅供研究，不构成投资建议。",
+            },
+            "created_at": "2026-06-27 10:00:00",
+            "updated_at": "2026-06-27 10:05:00",
+        }
+
+    def start_task(self, theme_name="", market="A股", analysis_depth="standard", time_horizon="短中线"):
+        self.last_start = {
+            "theme_name": theme_name,
+            "market": market,
+            "analysis_depth": analysis_depth,
+            "time_horizon": time_horizon,
+        }
+        return {"task_id": "theme_research_20260627_0001", "status": "created"}
+
+    def event_stream(self, task_id):
+        self.last_stream_task_id = task_id
+        yield 'event: task_started\ndata: {"event_type":"task_started","task_id":"theme_research_20260627_0001","step":0,"status":"running","title":"调研任务已创建","message":"开始调研题材“HBM”。","data_preview":[]}\n\n'
+        yield 'event: step_update\ndata: {"event_type":"step_update","task_id":"theme_research_20260627_0001","step":1,"status":"success","title":"题材标准化","message":"标准题材名：高带宽存储器","data_preview":[{"title":"HBM","source":"DeepSeek","publish_time":"","summary":"题材关键词","evidence_level":"A"}]}\n\n'
+        yield 'event: final_report\ndata: {"event_type":"final_report","task_id":"theme_research_20260627_0001","status":"success","title":"最终报告生成完成","message":"题材研究报告已生成，可直接查看完整结论。","report":{"theme_name":"HBM"}}\n\n'
+
+    def get_report(self, task_id):
+        self.last_report_task_id = task_id
+        return self.report
+
+    def list_reports(self, limit=12, page=1, page_size=None):
+        self.last_list_limit = limit
+        self.last_list_page = page
+        self.last_list_page_size = page_size
+        return {
+            "page": page,
+            "page_size": page_size or limit,
+            "total": 9,
+            "total_pages": 2,
+            "items": [
+                {
+                    "task_id": "theme_research_20260627_0001",
+                    "theme_name": "HBM",
+                    "status": "completed",
+                    "created_at": "2026-06-27 10:00:00",
+                    "updated_at": "2026-06-27 10:05:00",
+                }
+            ]
+        }
+
+
+class FakeSystemConfigClient:
+    def __init__(self):
+        self.enabled = True
+        self.items = {
+            "TUSHARE_TOKEN": {
+                "config_key": "TUSHARE_TOKEN",
+                "label": "Tushare Token",
+                "category": "tushare",
+                "config_value": "ts-demo-token",
+                "value_preview": "ts-d********oken",
+                "is_secret": True,
+                "is_enabled": True,
+                "description": "Tushare Pro 数据接口密钥。",
+                "created_at": "2026-06-27 09:00:00",
+                "updated_at": "2026-06-27 10:00:00",
+                "source": "mysql",
+            }
+        }
+
+    def list_entries(self):
+        return [{key: value for key, value in item.items() if key != "config_value"} for item in self.items.values()]
+
+    def get_entry(self, config_key):
+        return self.items.get(str(config_key or "").strip().upper())
+
+    def upsert_entry(self, config_key, config_value, label="", category="", description="", is_secret=True, is_enabled=True):
+        cleaned_key = str(config_key or "").strip().upper()
+        item = {
+            "config_key": cleaned_key,
+            "label": label or cleaned_key,
+            "category": category or "custom",
+            "config_value": config_value,
+            "value_preview": "***" if is_secret else config_value,
+            "is_secret": bool(is_secret),
+            "is_enabled": bool(is_enabled),
+            "description": description,
+            "created_at": "2026-06-27 09:00:00",
+            "updated_at": "2026-06-27 10:00:00",
+            "source": "mysql",
+        }
+        self.items[cleaned_key] = item
+        return item
+
+    def delete_entry(self, config_key):
+        return self.items.pop(str(config_key or "").strip().upper(), None) is not None
+
+
 @unittest.skipIf(create_app is None, "Flask 未安装，跳过 API 测试。")
 class ApiTest(unittest.TestCase):
     def setUp(self):
@@ -589,6 +788,8 @@ class ApiTest(unittest.TestCase):
         self.fake_review = FakeReviewClient()
         self.fake_watchtower = FakeWatchtowerClient()
         self.fake_theme_board = FakeThemeBoardClient()
+        self.fake_theme_research = FakeThemeResearchClient()
+        self.fake_system_config = FakeSystemConfigClient()
         self.app = create_app(
             data_client=self.fake,
             mx_client=self.fake_mx,
@@ -598,6 +799,8 @@ class ApiTest(unittest.TestCase):
             review_client=self.fake_review,
             watchtower_client=self.fake_watchtower,
             theme_board_client=self.fake_theme_board,
+            theme_research_client=self.fake_theme_research,
+            system_config_client=self.fake_system_config,
         ).test_client()
 
     def test_search_supports_fuzzy_name(self):
@@ -999,6 +1202,99 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(data["theme"]["name"], "先进封装")
         self.assertEqual(data["items"][0]["name"], "通富微电")
         self.assertEqual(self.fake_theme_board.last_detail["ts_code"], "000352.KP")
+
+    def test_theme_research_start(self):
+        response = self.app.post(
+            "/api/theme-research/start",
+            json={
+                "theme_name": "HBM",
+                "market": "A股",
+                "analysis_depth": "standard",
+                "time_horizon": "短中线",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertEqual(data["task_id"], "theme_research_20260627_0001")
+        self.assertEqual(self.fake_theme_research.last_start["theme_name"], "HBM")
+
+    def test_theme_research_stream(self):
+        response = self.app.get("/api/theme-research/stream/theme_research_20260627_0001")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.mimetype, "text/event-stream")
+        body = response.get_data(as_text=True)
+        self.assertEqual(self.fake_theme_research.last_stream_task_id, "theme_research_20260627_0001")
+        self.assertIn("event: task_started", body)
+        self.assertIn("event: final_report", body)
+
+    def test_theme_research_report(self):
+        response = self.app.get("/api/theme-research/report/theme_research_20260627_0001")
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertEqual(self.fake_theme_research.last_report_task_id, "theme_research_20260627_0001")
+        self.assertEqual(data["report"]["normalized_name"], "高带宽存储器")
+        self.assertEqual(data["report"]["final_conclusion"]["suitable_for"], "中线趋势")
+
+    def test_theme_research_reports(self):
+        response = self.app.get("/api/theme-research/reports?limit=6&page=2&page_size=4")
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertEqual(self.fake_theme_research.last_list_limit, 6)
+        self.assertEqual(self.fake_theme_research.last_list_page, 2)
+        self.assertEqual(self.fake_theme_research.last_list_page_size, 4)
+        self.assertEqual(data["page"], 2)
+        self.assertEqual(data["total_pages"], 2)
+        self.assertEqual(data["items"][0]["theme_name"], "HBM")
+
+    def test_theme_research_requires_theme_name(self):
+        response = self.app.post("/api/theme-research/start", json={"theme_name": ""})
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("请输入行业、题材或概念名称", response.get_json()["error"]["message"])
+
+    def test_system_config_list(self):
+        response = self.app.get("/api/system-configs")
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertTrue(data["enabled"])
+        self.assertEqual(data["items"][0]["config_key"], "TUSHARE_TOKEN")
+        self.assertNotIn("config_value", data["items"][0])
+
+    def test_system_config_detail(self):
+        response = self.app.get("/api/system-configs/TUSHARE_TOKEN")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["item"]["config_value"], "ts-demo-token")
+
+    def test_system_config_upsert(self):
+        response = self.app.post(
+            "/api/system-configs",
+            json={
+                "config_key": "DEEPSEEK_MODEL",
+                "config_value": "deepseek-v4-pro",
+                "label": "DeepSeek 模型",
+                "category": "deepseek",
+                "description": "默认模型",
+                "is_secret": False,
+                "is_enabled": True,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertEqual(data["item"]["config_key"], "DEEPSEEK_MODEL")
+        self.assertEqual(self.fake_system_config.items["DEEPSEEK_MODEL"]["config_value"], "deepseek-v4-pro")
+
+    def test_system_config_delete(self):
+        response = self.app.delete("/api/system-configs/TUSHARE_TOKEN")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn("TUSHARE_TOKEN", self.fake_system_config.items)
 
 
 if __name__ == "__main__":

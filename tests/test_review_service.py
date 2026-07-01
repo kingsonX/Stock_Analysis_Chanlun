@@ -89,14 +89,14 @@ class FakeReviewDataClient:
 
 class FakeReviewExplainer(ClaudeProfileExplainer):
     def __init__(self):
-        super().__init__(api_key="test-key", base_url="https://ark.cn-beijing.volces.com/api/coding/v3", model="doubao-seed-2-0-lite")
+        super().__init__(api_key="test-key", base_url="https://api.deepseek.com", model="deepseek-v4-pro")
 
     def explain_review(self, review_payload):
         self.last_payload = review_payload
         return {
             "status": "ok",
-            "provider": "火山方舟",
-            "model": "doubao-seed-2-0-lite",
+            "provider": "DeepSeek",
+            "model": "deepseek-v4-pro",
             "facts": {"trade_date": review_payload.get("trade_date", "")},
             "analysis": {
                 "summary": "指数偏强，情绪修复，主线往金融与互金集中。",

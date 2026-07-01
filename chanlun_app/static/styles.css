@@ -1273,6 +1273,574 @@ body.modalOpen {
   gap: 12px;
 }
 
+.themeResearchShell {
+  align-items: start;
+}
+
+.themeResearchWorkspace {
+  display: grid;
+  gap: 18px;
+}
+
+.themeResearchTopbar {
+  align-items: end;
+}
+
+.themeResearchActions {
+  align-items: end;
+  flex-wrap: wrap;
+}
+
+.themeResearchInputField {
+  min-width: min(420px, 100%);
+}
+
+.themeResearchControlGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.themeResearchControlGrid label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.themeResearchControlGrid select,
+.themeResearchInputField input {
+  min-height: 42px;
+}
+
+.themeResearchGrid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.themeResearchProgressBox,
+.themeResearchPreviewBox,
+.themeResearchReportBox,
+.themeResearchHistoryBox {
+  min-height: 160px;
+}
+
+.themeResearchProgressBox,
+.themeResearchPreviewBox {
+  display: grid;
+  align-content: start;
+}
+
+.themeResearchReportBox {
+  min-height: 320px;
+}
+
+.themeResearchHistoryBox {
+  min-height: clamp(440px, 72vh, 760px);
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 12px;
+}
+
+.themeResearchProgressList,
+.themeResearchPreviewList,
+.themeResearchReportStack,
+.themeResearchFactStack,
+.themeResearchHistoryList {
+  display: grid;
+  gap: 12px;
+}
+
+.themeResearchProgressItem,
+.themeResearchPreviewCard,
+.themeResearchFactCard,
+.themeResearchKeyValueItem,
+.themeResearchHistoryItem {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.04);
+}
+
+.themeResearchProgressItem,
+.themeResearchPreviewCard,
+.themeResearchFactCard {
+  padding: 14px 16px;
+}
+
+.themeResearchProgressItemLatest,
+.themeResearchPreviewCard {
+  min-height: 100%;
+}
+
+.themeResearchProgressHeader,
+.themeResearchPreviewHeader,
+.themeResearchPreviewLead,
+.themeResearchHero {
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  align-items: start;
+}
+
+.themeResearchProgressHeader strong,
+.themeResearchPreviewHeader strong,
+.themeResearchPreviewLead strong,
+.themeResearchHero h3,
+.themeResearchFactCard strong {
+  font-size: 15px;
+  line-height: 1.45;
+}
+
+.themeResearchProgressItem p,
+.themeResearchPreviewRow p,
+.themeResearchFactCard p,
+.themeResearchKeyValueItem p,
+.themeResearchHero p {
+  margin: 6px 0 0;
+  color: var(--muted);
+  line-height: 1.65;
+}
+
+.themeResearchProgressMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.themeResearchPreviewRows,
+.themeResearchComplexList {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.themeResearchPreviewRow,
+.themeResearchComplexItem {
+  padding-top: 10px;
+  border-top: 1px dashed var(--line);
+}
+
+.themeResearchPreviewRow:first-child,
+.themeResearchComplexItem:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.themeResearchHero {
+  padding: 18px 20px;
+  border-radius: 16px;
+  background: linear-gradient(135deg, rgba(17, 74, 108, 0.06), rgba(37, 111, 146, 0.12));
+  border: 1px solid rgba(37, 111, 146, 0.16);
+}
+
+.themeResearchHeroMeta {
+  color: var(--muted);
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+
+.themeResearchHero h3 {
+  margin: 0;
+  font-size: 22px;
+}
+
+.themeResearchHeroSide {
+  display: grid;
+  gap: 8px;
+  justify-items: end;
+  text-align: right;
+}
+
+.themeResearchMetricGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.themeResearchFactCard {
+  display: grid;
+  gap: 8px;
+}
+
+.themeResearchFactCard > strong {
+  color: var(--ink);
+}
+
+.themeResearchTwoCol {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.themeResearchKeyValueList {
+  display: grid;
+  gap: 10px;
+}
+
+.themeResearchKeyValueItem {
+  padding: 12px 14px;
+}
+
+.themeResearchSimpleList {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--ink);
+  display: grid;
+  gap: 6px;
+}
+
+.themeResearchHistoryItem {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+  padding: 14px 16px;
+  text-align: left;
+  cursor: pointer;
+  transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.themeResearchHistoryItem:hover,
+.themeResearchHistoryItem.active {
+  transform: translateY(-1px);
+  border-color: rgba(37, 111, 146, 0.28);
+  box-shadow: 0 16px 28px rgba(15, 23, 42, 0.08);
+}
+
+.themeResearchHistoryItem span,
+.themeResearchHistoryItem small {
+  color: var(--muted);
+}
+
+.themeResearchHistoryLead {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: start;
+}
+
+.themeResearchHistoryLead strong {
+  font-size: 17px;
+  line-height: 1.3;
+}
+
+.themeResearchHistoryTaskId {
+  font-size: 11px;
+  color: var(--muted);
+  word-break: break-all;
+}
+
+.themeResearchHistoryScroll {
+  min-height: 0;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.themeResearchRawJson {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+  padding: 14px 16px;
+}
+
+.themeResearchRawJson summary {
+  cursor: pointer;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.themeResearchRawJson pre {
+  margin: 12px 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.themeResearchScoreTable td strong {
+  color: var(--ink);
+}
+
+.themeResearchSidePanel {
+  gap: 16px;
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.themeResearchHistoryPanel {
+  min-height: calc(100vh - 56px);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.themeResearchAtlasBoard {
+  display: grid;
+  gap: 16px;
+}
+
+.themeResearchAtlasHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: stretch;
+  padding: 18px 20px;
+  border-radius: 18px;
+  border: 1px solid rgba(198, 143, 52, 0.2);
+  background:
+    radial-gradient(circle at top right, rgba(244, 114, 35, 0.12), transparent 34%),
+    linear-gradient(180deg, #fffaf1 0%, #fff 100%);
+}
+
+.themeResearchAtlasTitle {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.themeResearchAtlasTitle h3 {
+  margin: 0;
+  font-size: 24px;
+  line-height: 1.2;
+}
+
+.themeResearchAtlasTitle p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.themeResearchAtlasMeta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  min-width: min(420px, 100%);
+}
+
+.themeResearchAtlasChip {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(198, 143, 52, 0.14);
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.themeResearchAtlasChip span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.themeResearchAtlasChip strong {
+  font-size: 15px;
+  line-height: 1.4;
+  color: var(--ink);
+}
+
+.themeResearchAtlasChip strong.tone-positive {
+  color: var(--buy);
+}
+
+.themeResearchAtlasChip strong.tone-caution {
+  color: var(--sell);
+}
+
+.themeResearchAtlasTableWrap {
+  overflow: auto;
+  border: 1px solid rgba(207, 170, 96, 0.42);
+  border-radius: 18px;
+  background: linear-gradient(180deg, #fffdfa 0%, #ffffff 100%);
+}
+
+.themeResearchTreeTable {
+  width: 100%;
+  min-width: 860px;
+  border-collapse: separate;
+  border-spacing: 0;
+  table-layout: fixed;
+}
+
+.themeResearchTreeTable thead th {
+  padding: 12px 14px;
+  background: #fff7e7;
+  color: #8b6a27;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  border-bottom: 1px solid rgba(207, 170, 96, 0.42);
+}
+
+.themeResearchTreeTable td {
+  padding: 0;
+  border-bottom: 1px solid rgba(207, 170, 96, 0.32);
+  vertical-align: stretch;
+}
+
+.themeResearchTreeTable tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.themeResearchTreeThemeCell {
+  width: 14%;
+  background: linear-gradient(180deg, #fffaf2 0%, #fff 100%);
+}
+
+.themeResearchTreeGroupCell {
+  width: 16%;
+  background: rgba(255, 249, 237, 0.72);
+}
+
+.themeResearchTreeSegmentCell {
+  width: 17%;
+  background: rgba(255, 249, 237, 0.72);
+}
+
+.themeResearchTreeStockCell {
+  width: 37%;
+}
+
+.themeResearchTreeScoreCell {
+  width: 14%;
+  background: linear-gradient(180deg, rgba(250, 250, 252, 0.96) 0%, rgba(247, 247, 249, 0.92) 100%);
+}
+
+.themeResearchTreeTheme,
+.themeResearchTreeGroup,
+.themeResearchTreeSegment,
+.themeResearchTreeStock,
+.themeResearchTreeScore {
+  height: 100%;
+  display: grid;
+  align-content: center;
+  gap: 8px;
+  padding: 16px 18px;
+}
+
+.themeResearchTreeTheme {
+  justify-items: center;
+  text-align: center;
+}
+
+.themeResearchTreeThemeGlyphs {
+  display: grid;
+  gap: 6px;
+  color: #d75a1c;
+  font-size: 34px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.themeResearchTreeThemeGlyphs strong {
+  color: #d75a1c;
+  font-size: 28px;
+  line-height: 1.15;
+}
+
+.themeResearchTreeTheme span,
+.themeResearchTreeGroup span,
+.themeResearchTreeStock p {
+  color: var(--muted);
+}
+
+.themeResearchTreeTheme small,
+.themeResearchTreeGroup small,
+.themeResearchTreeScore small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.themeResearchTreeGroup {
+  border-left: 4px solid rgba(207, 170, 96, 0.52);
+}
+
+.themeResearchTreeGroup strong {
+  font-size: 20px;
+  line-height: 1.2;
+}
+
+.themeResearchTreeSegment {
+  border-left: 2px solid rgba(207, 170, 96, 0.32);
+}
+
+.themeResearchTreeSegment strong {
+  font-size: 18px;
+  line-height: 1.25;
+}
+
+.themeResearchTreeCompanyList {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+}
+
+.themeResearchTreeCompanyChip {
+  display: grid;
+  gap: 6px;
+  padding-bottom: 10px;
+  border-bottom: 1px dashed rgba(207, 170, 96, 0.28);
+}
+
+.themeResearchTreeCompanyChip:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.themeResearchTreeCompanyMain,
+.themeResearchTreeCompanyMeta {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.themeResearchTreeCompanyMain strong {
+  font-size: 16px;
+  line-height: 1.25;
+}
+
+.themeResearchTreeCompanyCode {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.themeResearchTreeCompanyMeta small {
+  flex: 1 1 100%;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.themeResearchTreeEmptyNote {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.themeResearchTreeScore {
+  justify-items: center;
+  text-align: center;
+  gap: 10px;
+}
+
+.themeResearchTreeScore strong {
+  font-size: 26px;
+  line-height: 1;
+  color: #cf5f1e;
+}
+
+.themeResearchTreeScore .profileVerdict {
+  white-space: nowrap;
+}
+
+.themeResearchAtlasRisk {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
 .themeBoardShell {
   align-items: start;
 }
@@ -3797,6 +4365,78 @@ body.hasAnalysisJumpLoading {
   animation: analysisJumpSpin 0.9s linear infinite;
 }
 
+.systemConfigShell {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.systemConfigWorkspace {
+  min-height: calc(100vh - 32px);
+}
+
+.systemConfigModalDialog {
+  width: min(860px, calc(100vw - 48px));
+}
+
+.systemConfigForm {
+  display: grid;
+  gap: 14px;
+}
+
+.systemConfigFormGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.systemConfigOptionRow {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.systemConfigFormActions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.systemConfigTable tbody tr.is-active {
+  background: rgba(25, 118, 164, 0.06);
+}
+
+.systemConfigTable td {
+  vertical-align: top;
+}
+
+.systemConfigTable th:last-child,
+.systemConfigTable td:last-child {
+  width: 132px;
+  text-align: right;
+}
+
+@media (max-width: 1180px) {
+  .systemConfigFormGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .themeResearchControlGrid,
+  .themeResearchGrid,
+  .themeResearchTwoCol {
+    grid-template-columns: 1fr;
+  }
+
+  .themeResearchAtlasHeader {
+    display: grid;
+  }
+
+  .themeResearchAtlasMeta {
+    grid-template-columns: 1fr;
+    min-width: 0;
+  }
+}
+
 @keyframes analysisJumpSpin {
   from {
     transform: rotate(0deg);
@@ -3963,6 +4603,23 @@ th {
   .pickerSidePanel {
     position: static;
     max-height: none;
+  }
+
+  .themeResearchHistoryPanel {
+    min-height: 0;
+  }
+
+  .themeResearchHistoryBox {
+    min-height: 320px;
+  }
+
+  .themeResearchTreeTable {
+    min-width: 720px;
+  }
+
+  .themeResearchTreeThemeGlyphs {
+    grid-auto-flow: column;
+    font-size: 24px;
   }
 
   .reviewSidePanel {

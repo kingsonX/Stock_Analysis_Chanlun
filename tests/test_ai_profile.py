@@ -6,19 +6,20 @@ from chanlun_app.ai_profile import AIProviderError, ClaudeProfileExplainer, _cha
 
 class FakeExplainer(ClaudeProfileExplainer):
     def __init__(self, response_payload=None, api_key="test-key"):
-        super().__init__(api_key=api_key, model="Claude Sonnet 4.6")
+        super().__init__(api_key=api_key, model="deepseek-v4-pro")
         self.response_payload = response_payload or {
-            "content": [
+            "choices": [
                 {
-                    "type": "text",
-                    "text": (
-                        '{"summary":"结构有点，但还要等确认。","overall_verdict":"候选观察",'
-                        '"buy_judgement":"可以跟踪，不宜追高。","confidence":"中",'
-                        '"chan_view":{"verdict":"候选观察","buyable":"买点仍需确认","reason":"结构在演化。","basis":["有买点候选"],"conditions":["不破失效价"]},'
-                        '"yangjia_view":{"verdict":"轮动平衡","buyable":"情绪一般，只看强票","reason":"市场并非全面扩散。","basis":["赚钱效应一般"],"conditions":["主流继续发酵"]},'
-                        '"zhang_view":{"verdict":"容量中等","buyable":"容量可跟踪，别重仓","reason":"流动性够看。","basis":["成交额不低"],"conditions":["资金继续承接"]},'
-                        '"risks":["跌破失效价会破坏假设"],"watch_points":["观察是否放量离开中枢"]}'
-                    ),
+                    "message": {
+                        "content": (
+                            '{"summary":"结构有点，但还要等确认。","overall_verdict":"候选观察",'
+                            '"buy_judgement":"可以跟踪，不宜追高。","confidence":"中",'
+                            '"chan_view":{"verdict":"候选观察","buyable":"买点仍需确认","reason":"结构在演化。","basis":["有买点候选"],"conditions":["不破失效价"]},'
+                            '"yangjia_view":{"verdict":"轮动平衡","buyable":"情绪一般，只看强票","reason":"市场并非全面扩散。","basis":["赚钱效应一般"],"conditions":["主流继续发酵"]},'
+                            '"zhang_view":{"verdict":"容量中等","buyable":"容量可跟踪，别重仓","reason":"流动性够看。","basis":["成交额不低"],"conditions":["资金继续承接"]},'
+                            '"risks":["跌破失效价会破坏假设"],"watch_points":["观察是否放量离开中枢"]}'
+                        )
+                    },
                 }
             ]
         }
@@ -30,7 +31,7 @@ class FakeExplainer(ClaudeProfileExplainer):
 
 class FakeArkExplainer(ClaudeProfileExplainer):
     def __init__(self, response_payload=None, api_key="test-key"):
-        super().__init__(api_key=api_key, base_url="https://ark.cn-beijing.volces.com/api/coding/v3", model="doubao-seed-2-0-lite")
+        super().__init__(api_key=api_key, base_url="https://api.deepseek.com", model="deepseek-v4-pro")
         self.response_payload = response_payload or {
             "choices": [
                 {
@@ -55,21 +56,22 @@ class FakeArkExplainer(ClaudeProfileExplainer):
 
 class FakeReviewExplainer(ClaudeProfileExplainer):
     def __init__(self, response_payload=None, api_key="test-key"):
-        super().__init__(api_key=api_key, model="Claude Sonnet 4.6")
+        super().__init__(api_key=api_key, model="deepseek-v4-pro")
         self.response_payload = response_payload or {
-            "content": [
+            "choices": [
                 {
-                    "type": "text",
-                    "text": (
-                        '{"summary":"指数偏强，情绪回暖，先看金融主线承接。","market_stage":"主流试错",'
-                        '"index_review":{"summary":"三大指数共振修复。","signals":["上证翻红","创业板更强"]},'
-                        '"emotion_cycle":{"phase":"分歧转强（弱转强）","summary":"赚钱效应回暖。","signals":["涨停家数明显占优"]},'
-                        '"tape_review":{"summary":"热点向金融集中。","hot_themes":["银行概念前排最强"],"fund_flow":["龙虎榜净买入偏金融"],"limit_watch":["三板高度仍可观察"]},'
-                        '"news_review":{"summary":"消息催化仍围绕金融。","catalysts":["金融链消息持续发酵"],"ladder_focus":["连板高度暂看3板"]},'
-                        '"watch_points":["先看银行概念扩散"],"risk_points":["若炸板抬升先回防守"],'
-                        '"focus_boards":[{"name":"银行概念","reason":"最有主流承接","action":"先看前排封板质量"}],'
-                        '"focus_stocks":[{"ts_code":"000001.SZ","name":"平安银行","reason":"辨识度最高","action":"观察是否继续获得资金共振"}]}'
-                    ),
+                    "message": {
+                        "content": (
+                            '{"summary":"指数偏强，情绪回暖，先看金融主线承接。","market_stage":"主流试错",'
+                            '"index_review":{"summary":"三大指数共振修复。","signals":["上证翻红","创业板更强"]},'
+                            '"emotion_cycle":{"phase":"分歧转强（弱转强）","summary":"赚钱效应回暖。","signals":["涨停家数明显占优"]},'
+                            '"tape_review":{"summary":"热点向金融集中。","hot_themes":["银行概念前排最强"],"fund_flow":["龙虎榜净买入偏金融"],"limit_watch":["三板高度仍可观察"]},'
+                            '"news_review":{"summary":"消息催化仍围绕金融。","catalysts":["金融链消息持续发酵"],"ladder_focus":["连板高度暂看3板"]},'
+                            '"watch_points":["先看银行概念扩散"],"risk_points":["若炸板抬升先回防守"],'
+                            '"focus_boards":[{"name":"银行概念","reason":"最有主流承接","action":"先看前排封板质量"}],'
+                            '"focus_stocks":[{"ts_code":"000001.SZ","name":"平安银行","reason":"辨识度最高","action":"观察是否继续获得资金共振"}]}'
+                        )
+                    },
                 }
             ]
         }
@@ -102,18 +104,21 @@ class AIProfileTest(unittest.TestCase):
         )
 
         self.assertEqual(result["status"], "ok")
-        self.assertEqual(result["model"], "Claude Sonnet 4.6")
+        self.assertEqual(result["model"], "deepseek-v4-pro")
         self.assertEqual(result["analysis"]["overall_verdict"], "候选观察")
-        self.assertEqual(explainer.last_payload["messages"][0]["role"], "user")
-        self.assertIn("返回格式要求", explainer.last_payload["messages"][0]["content"])
+        self.assertEqual(explainer.last_payload["messages"][0]["role"], "system")
+        self.assertEqual(explainer.last_payload["stream"], False)
+        self.assertEqual(explainer.last_payload["thinking"], {"type": "enabled"})
+        self.assertEqual(explainer.last_payload["reasoning_effort"], "high")
+        self.assertIn("返回格式要求", explainer.last_payload["messages"][1]["content"])
 
     def test_explainer_requires_api_key(self):
         with patch("chanlun_app.ai_profile._env_value", return_value=None):
-            explainer = ClaudeProfileExplainer(api_key="", base_url="https://ark.cn-beijing.volces.com/api/coding/v3", model="doubao-seed-2-0-lite")
+            explainer = ClaudeProfileExplainer(api_key="", base_url="https://api.deepseek.com", model="deepseek-v4-pro")
             with self.assertRaises(AIProviderError):
                 explainer.explain(stock={"name": "平安银行"}, analysis={}, profile_payload={"profile": {}})
 
-    def test_ark_explainer_uses_openai_compatible_payload(self):
+    def test_deepseek_explainer_uses_openai_compatible_payload(self):
         explainer = FakeArkExplainer()
         result = explainer.explain(
             stock={"name": "平安银行", "symbol": "000001", "ts_code": "000001.SZ", "industry": "银行"},
@@ -122,23 +127,24 @@ class AIProfileTest(unittest.TestCase):
         )
 
         self.assertEqual(result["status"], "ok")
-        self.assertEqual(result["provider"], "火山方舟")
-        self.assertEqual(result["model"], "doubao-seed-2-0-lite")
+        self.assertEqual(result["provider"], "DeepSeek")
+        self.assertEqual(result["model"], "deepseek-v4-pro")
         self.assertEqual(explainer.last_payload["messages"][0]["role"], "system")
-        self.assertEqual(explainer.last_payload["temperature"], 0.6)
-        self.assertEqual(explainer.last_payload["thinking"], {"type": "disabled"})
+        self.assertEqual(explainer.last_payload["temperature"], 0.3)
+        self.assertEqual(explainer.last_payload["thinking"], {"type": "enabled"})
+        self.assertEqual(explainer.last_payload["stream"], False)
         self.assertEqual(result["analysis"]["overall_verdict"], "候选观察")
 
-    def test_chat_completion_url_supports_ark_api_v3(self):
+    def test_chat_completion_url_supports_deepseek_api_v1(self):
         self.assertEqual(
-            _chat_completions_url("https://ark.cn-beijing.volces.com/api/v3"),
-            "https://ark.cn-beijing.volces.com/api/v3/chat/completions",
+            _chat_completions_url("https://api.deepseek.com/v1"),
+            "https://api.deepseek.com/v1/chat/completions",
         )
 
-    def test_chat_completion_url_supports_ark_coding_api_v3(self):
+    def test_chat_completion_url_supports_deepseek_root(self):
         self.assertEqual(
-            _chat_completions_url("https://ark.cn-beijing.volces.com/api/coding/v3"),
-            "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+            _chat_completions_url("https://api.deepseek.com"),
+            "https://api.deepseek.com/v1/chat/completions",
         )
 
     def test_review_explainer_returns_structured_review(self):
@@ -163,8 +169,9 @@ class AIProfileTest(unittest.TestCase):
         self.assertEqual(result["analysis"]["market_stage"], "主流试错")
         self.assertEqual(result["analysis"]["emotion_cycle"]["phase"], "分歧转强（弱转强）")
         self.assertEqual(result["analysis"]["focus_boards"][0]["name"], "银行概念")
-        self.assertEqual(explainer.last_payload["messages"][0]["role"], "user")
-        self.assertIn("指数复盘", explainer.last_payload["messages"][0]["content"])
+        self.assertEqual(explainer.last_payload["messages"][0]["role"], "system")
+        self.assertEqual(explainer.last_payload["stream"], False)
+        self.assertIn("指数复盘", explainer.last_payload["messages"][1]["content"])
 
 
 if __name__ == "__main__":

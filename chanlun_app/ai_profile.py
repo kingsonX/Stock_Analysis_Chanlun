@@ -5,7 +5,7 @@ import urllib.error
 import urllib.request
 from typing import Any
 
-from .mx_provider import _env_value
+from .system_config_store import managed_config_value
 from .trading_profile import _flatten
 
 
@@ -16,12 +16,11 @@ class AIProviderError(Exception):
         self.status_code = status_code
 
 
-class ClaudeProfileExplainer:
-    BASE_URL = "https://api.anthropic.com"
-    API_VERSION = "2023-06-01"
-    OPENAI_BASE_URL = "https://ark.cn-beijing.volces.com/api/coding/v3"
-    OPENAI_MODEL = "doubao-seed-2-0-lite"
-    OPENAI_THINKING = {"type": "disabled"}
+class DeepSeekProfileExplainer:
+    BASE_URL = "https://api.deepseek.com"
+    MODEL = "deepseek-v4-pro"
+    THINKING = {"type": "enabled"}
+    REASONING_EFFORT = "high"
 
     def __init__(
         self,
@@ -30,48 +29,21 @@ class ClaudeProfileExplainer:
         model: str | None = None,
         timeout_seconds: int = 120,
     ):
-        ark_key = _env_value("ARK_API_KEY")
-        ark_base_url = _env_value("ARK_BASE_URL")
-        ark_endpoint_id = _env_value("ARK_ENDPOINT_ID")
-        ark_model = _env_value("ARK_MODEL")
-        kimi_key = _env_value("KIMI_API_KEY")
-        kimi_base_url = _env_value("KIMI_BASE_URL")
-        kimi_model = _env_value("KIMI_MODEL")
-        claude_key = _env_value("CLAUDE_API_KEY")
-        claude_base_url = _env_value("CLAUDE_BASE_URL")
-        claude_model = _env_value("CLAUDE_MODEL")
-        explicit_provider = _provider_from_model(model) or (_provider_kind(base_url, default="") if base_url else "")
-        default_provider = explicit_provider or ("openai" if (ark_key or kimi_key) else "anthropic")
-
-        self.api_key = api_key or ark_key or kimi_key or claude_key
-        if base_url:
-            self.base_url = base_url
-        elif explicit_provider == "anthropic":
-            self.base_url = claude_base_url or self.BASE_URL
-        elif explicit_provider == "openai":
-            self.base_url = ark_base_url or kimi_base_url or self.OPENAI_BASE_URL
-        else:
-            self.base_url = ark_base_url or kimi_base_url or claude_base_url or (self.OPENAI_BASE_URL if (ark_key or kimi_key) else self.BASE_URL)
-        self.provider = _provider_kind(self.base_url, default=default_provider)
-        self.openai_vendor = _openai_vendor(self.base_url, model or ark_model or kimi_model or "")
-        self.provider_label = _provider_label(self.provider, self.openai_vendor)
-        self.model = (
-            model
-            or (ark_endpoint_id or ark_model or kimi_model if self.provider == "openai" else claude_model)
-            or (self.OPENAI_MODEL if self.provider == "openai" else "Claude Sonnet 4.6")
-        )
-        self.api_version = _env_value("CLAUDE_API_VERSION") or self.API_VERSION
-        default_max_tokens = 900 if self.openai_vendor == "ark" else (1400 if self.provider == "openai" else 1800)
-        self.max_tokens = _safe_int(
-            _env_value("ARK_MAX_TOKENS") or _env_value("KIMI_MAX_TOKENS") or _env_value("CLAUDE_MAX_TOKENS"),
-            default_max_tokens,
-        )
+        self.api_key = api_key or _env_value("DEEPSEEK_API_KEY")
+        self.base_url = base_url or _env_value("DEEPSEEK_BASE_URL") or self.BASE_URL
+        self.model = model or _env_value("DEEPSEEK_MODEL") or self.MODEL
+        self.provider = "openai"
+        self.openai_vendor = "deepseek"
+        self.provider_label = "DeepSeek"
+        self.max_tokens = _safe_int(_env_value("DEEPSEEK_MAX_TOKENS"), 1800)
+        self.reasoning_effort = (
+            _env_value("DEEPSEEK_REASONING_EFFORT") or self.REASONING_EFFORT
+        ).strip().lower() or self.REASONING_EFFORT
         self.timeout_seconds = timeout_seconds
 
     def explain(self, stock: dict[str, Any], analysis: dict[str, Any], profile_payload: dict[str, Any]) -> dict[str, Any]:
         if not self.api_key:
-            missing_env = "ARK_API_KEY" if self.provider == "openai" else "CLAUDE_API_KEY"
-            raise AIProviderError(f"缺少 {missing_env} 环境变量，暂时无法生成 {self.provider_label} 研究解读。", 500)
+            raise AIProviderError(f"缺少 DEEPSEEK_API_KEY 环境变量，暂时无法生成 {self.provider_label} 研究解读。", 500)
 
         facts = _build_fact_packet(stock=stock, analysis=analysis, profile_payload=profile_payload)
         payload = self._build_payload(facts)
@@ -93,8 +65,7 @@ class ClaudeProfileExplainer:
 
     def explain_review(self, review_payload: dict[str, Any]) -> dict[str, Any]:
         if not self.api_key:
-            missing_env = "ARK_API_KEY" if self.provider == "openai" else "CLAUDE_API_KEY"
-            raise AIProviderError(f"缺少 {missing_env} 环境变量，暂时无法生成 {self.provider_label} 复盘结论。", 500)
+            raise AIProviderError(f"缺少 DEEPSEEK_API_KEY 环境变量，暂时无法生成 {self.provider_label} 复盘结论。", 500)
 
         facts = _build_review_fact_packet(review_payload)
         payload = self._build_review_payload(facts)
@@ -117,28 +88,22 @@ class ClaudeProfileExplainer:
         user_prompt = (
             "下面是当前股票的结构化事实，请严格基于这些事实输出 JSON，不要输出任何解释性前缀或 Markdown 代码块。\n"
             "输出务必简洁：summary、buy_judgement、reason 控制在两句话内；basis、conditions、risks、watch_points 各最多 3 条，单条尽量不超过 24 个字。\n"
+            "facts 里的 news、market_scan、overall 等字段可视为已联网检索后的事实层，必须优先引用，不得自行脑补额外催化。\n"
             f"返回格式要求：{_response_contract_text()}\n"
             f"事实数据：{json.dumps(facts, ensure_ascii=False)}"
         )
-        if self.provider == "openai":
-            payload = {
-                "model": self.model,
-                "max_tokens": self.max_tokens,
-                "temperature": 0.6,
-                "messages": [
-                    {"role": "system", "content": _system_prompt()},
-                    {"role": "user", "content": user_prompt},
-                ],
-            }
-            if self.openai_vendor in {"moonshot", "ark"}:
-                payload["thinking"] = self.OPENAI_THINKING
-            return payload
-
         return {
             "model": self.model,
             "max_tokens": self.max_tokens,
-            "system": _system_prompt(),
-            "messages": [{"role": "user", "content": user_prompt}],
+            "temperature": 0.3,
+            "stream": False,
+            "thinking": self.THINKING,
+            "reasoning_effort": self.reasoning_effort,
+            "response_format": {"type": "json_object"},
+            "messages": [
+                {"role": "system", "content": _system_prompt()},
+                {"role": "user", "content": user_prompt},
+            ],
         }
 
     def _build_review_payload(self, facts: dict[str, Any]) -> dict[str, Any]:
@@ -148,41 +113,31 @@ class ClaudeProfileExplainer:
             "你必须覆盖四个部分：指数复盘、情绪周期、盘面复盘、消息复盘。"
             "情绪周期必须参考事实里的 emotion_cycle，不要擅自切换到没有证据的阶段。"
             "同时更新关注板块和关注股票，且只能使用事实里已经给出的候选。"
+            "facts 里已带入联网后的复盘事实层与消息线索，优先基于这些内容归纳，不得虚构新消息。"
             "输出务必是合法 JSON，不要加 Markdown 代码块或额外说明。\n"
             "一句话复盘、阶段判断、各分块 summary 保持短句；列表每项尽量不超过 24 个字。\n"
             f"返回格式要求：{_review_response_contract_text()}\n"
             f"事实数据：{json.dumps(facts, ensure_ascii=False)}"
         )
         system_prompt = _review_system_prompt()
-        if self.provider == "openai":
-            payload = {
-                "model": self.model,
-                "max_tokens": max(self.max_tokens, 1600),
-                "temperature": 0.6,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-            }
-            if self.openai_vendor in {"moonshot", "ark"}:
-                payload["thinking"] = self.OPENAI_THINKING
-            return payload
-
         return {
             "model": self.model,
-            "max_tokens": max(self.max_tokens, 1800),
-            "system": system_prompt,
-            "messages": [{"role": "user", "content": user_prompt}],
+            "max_tokens": max(self.max_tokens, 3600),
+            "temperature": 0.3,
+            "stream": False,
+            "thinking": self.THINKING,
+            "reasoning_effort": self.reasoning_effort,
+            "response_format": {"type": "json_object"},
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
         }
 
     def _post_json(self, payload: dict[str, Any]) -> dict[str, Any]:
-        url = _chat_completions_url(self.base_url) if self.provider == "openai" else _messages_url(self.base_url)
+        url = _chat_completions_url(self.base_url)
         headers = {"Content-Type": "application/json"}
-        if self.provider == "openai":
-            headers["Authorization"] = f"Bearer {self.api_key}"
-        else:
-            headers["x-api-key"] = self.api_key
-            headers["anthropic-version"] = self.api_version
+        headers["Authorization"] = f"Bearer {self.api_key}"
 
         request = urllib.request.Request(
             url,
@@ -210,13 +165,17 @@ class ClaudeProfileExplainer:
             raise AIProviderError(f"{self.provider_label} 返回内容不是有效 JSON。", 502) from exc
 
     def _extract_content(self, result: dict[str, Any]) -> str:
-        if self.provider == "openai":
-            return _extract_openai_json_content(result, self.provider_label)
-        return _extract_json_content(result, self.provider_label)
+        return _extract_openai_json_content(result, self.provider_label)
 
 
-OpenAIProfileExplainer = ClaudeProfileExplainer
-KimiProfileExplainer = ClaudeProfileExplainer
+ClaudeProfileExplainer = DeepSeekProfileExplainer
+OpenAIProfileExplainer = DeepSeekProfileExplainer
+KimiProfileExplainer = DeepSeekProfileExplainer
+ArkProfileExplainer = DeepSeekProfileExplainer
+
+
+def _env_value(name: str) -> str | None:
+    return managed_config_value(name)
 
 
 def _http_error_message(provider_label: str, status_code: int, body: str) -> str:
@@ -228,18 +187,14 @@ def _http_error_message(provider_label: str, status_code: int, body: str) -> str
     message = _flatten(error.get("message") or body or f"HTTP {status_code}")
     if status_code == 401:
         return f"{provider_label} 鉴权失败：{message}"
-    if provider_label == "火山方舟" and status_code == 404 and (
-        "does not exist or you do not have access" in message.lower()
-        or "accessing the model via model id is not allowed" in message.lower()
-    ):
-        return (
-            f"{provider_label} 请求失败：{message}。"
-            "请确认 `model` 使用的是已开通的模型或推理接入点 ID（常见为 `ep-` 开头），而不是无权限的模型名。"
-        )
+    if status_code == 402:
+        return f"{provider_label} 余额或套餐不可用：{message}"
+    if status_code == 429:
+        return f"{provider_label} 请求过于频繁：{message}"
     return f"{provider_label} 请求失败：{message}"
 
 
-def _extract_json_content(result: dict[str, Any], provider_label: str = "Claude") -> str:
+def _extract_json_content(result: dict[str, Any], provider_label: str = "DeepSeek") -> str:
     texts: list[str] = []
     content = result.get("content") or []
     for item in content:
@@ -363,66 +318,40 @@ def _review_response_contract_text() -> str:
     )
 
 
-def _messages_url(base_url: str) -> str:
-    cleaned = (base_url or ClaudeProfileExplainer.BASE_URL).rstrip("/")
-    if cleaned.endswith("/messages"):
-        return cleaned
-    if cleaned.endswith("/v1"):
-        return f"{cleaned}/messages"
-    return f"{cleaned}/v1/messages"
-
-
 def _chat_completions_url(base_url: str) -> str:
-    cleaned = (base_url or ClaudeProfileExplainer.OPENAI_BASE_URL).rstrip("/")
+    cleaned = (base_url or DeepSeekProfileExplainer.BASE_URL).rstrip("/")
     if cleaned.endswith("/chat/completions"):
         return cleaned
-    if cleaned.endswith("/v1") or cleaned.endswith("/api/v3") or cleaned.endswith("/api/coding/v3"):
+    if cleaned.endswith("/v1") or cleaned.endswith("/api/v3"):
         return f"{cleaned}/chat/completions"
     return f"{cleaned}/v1/chat/completions"
 
 
-def _provider_kind(base_url: str | None, default: str = "anthropic") -> str:
+def _provider_kind(base_url: str | None, default: str = "openai") -> str:
     cleaned = (base_url or "").lower()
-    if "moonshot" in cleaned or "openai" in cleaned or "chat/completions" in cleaned or "volces" in cleaned or "ark." in cleaned or "/api/v3" in cleaned:
+    if "deepseek" in cleaned or "openai" in cleaned or "chat/completions" in cleaned or "/api/v3" in cleaned:
         return "openai"
-    if "anthropic" in cleaned or cleaned.endswith("/messages"):
-        return "anthropic"
     return default
 
 
 def _provider_from_model(model: str | None) -> str:
     text = _flatten(model or "").lower()
-    if (
-        "kimi" in text
-        or text.startswith("ark-")
-        or "ark-code" in text
-        or text.startswith("doubao-")
-        or text.startswith("deepseek-")
-        or text.startswith("glm-")
-    ):
+    if text.startswith("deepseek-") or text == "deepseek-chat" or text == "deepseek-reasoner":
         return "openai"
-    if "claude" in text:
-        return "anthropic"
     return ""
 
 
 def _openai_vendor(base_url: str | None, model: str | None) -> str:
     cleaned_base = (base_url or "").lower()
     cleaned_model = _flatten(model or "").lower()
-    if "moonshot" in cleaned_base or "kimi" in cleaned_model:
-        return "moonshot"
-    if "volces" in cleaned_base or "ark." in cleaned_base or cleaned_model.startswith("ark-") or "ark-code" in cleaned_model:
-        return "ark"
+    if "deepseek" in cleaned_base or cleaned_model.startswith("deepseek-") or cleaned_model in {"deepseek-chat", "deepseek-reasoner"}:
+        return "deepseek"
     return "generic"
 
 
 def _provider_label(provider: str, openai_vendor: str) -> str:
-    if provider != "openai":
-        return "Claude"
-    if openai_vendor == "moonshot":
-        return "Kimi"
-    if openai_vendor == "ark":
-        return "火山方舟"
+    if provider == "openai" and openai_vendor == "deepseek":
+        return "DeepSeek"
     return "OpenAI兼容模型"
 
 
